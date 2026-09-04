@@ -5,9 +5,10 @@
 <script lang="ts">
   import { t } from "../../lib/i18n.svelte";
 
-  type TabId = "inspector" | "ai-edit" | "properties";
+  type TabId = "inspector" | "ai-edit" | "properties" | "captions";
   const tabs: { id: TabId; labelKey: string; phaseKey: string }[] = [
     { id: "inspector", labelKey: "rightPanel.tabInspector", phaseKey: "rightPanel.phaseInspector" },
+    { id: "captions", labelKey: "rightPanel.tabCaptions", phaseKey: "" },
     { id: "ai-edit", labelKey: "rightPanel.tabAiEdit", phaseKey: "rightPanel.phaseAiEdit" },
     { id: "properties", labelKey: "rightPanel.tabProperties", phaseKey: "rightPanel.phaseProperties" },
   ];
@@ -16,6 +17,7 @@
   let activeTab = $derived(tabs.find((tab) => tab.id === active)!);
 
   import PanelPlaceholder from "./PanelPlaceholder.svelte";
+  import CaptionsPanel from "../captions/CaptionsPanel.svelte";
 </script>
 
 <div class="stack">
@@ -31,7 +33,11 @@
     {/each}
   </div>
   <div class="panel-body">
-    <PanelPlaceholder title={t(activeTab.labelKey)} phase={t(activeTab.phaseKey)} />
+    {#if active === "captions"}
+      <CaptionsPanel />
+    {:else}
+      <PanelPlaceholder title={t(activeTab.labelKey)} phase={t(activeTab.phaseKey)} />
+    {/if}
   </div>
 </div>
 

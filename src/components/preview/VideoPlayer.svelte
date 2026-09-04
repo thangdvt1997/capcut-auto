@@ -28,6 +28,7 @@
   import { timeline } from "../../stores/timeline.svelte";
   import { usToSec } from "../../timeline/algebra";
   import { t } from "../../lib/i18n.svelte";
+  import CaptionOverlay from "./CaptionOverlay.svelte";
 
   const SPEEDS = [0.25, 0.5, 1, 1.5, 2];
   // Ratio labels are numeric aspect ratios (16:9, 9:16, …) except "custom",
@@ -253,6 +254,11 @@
         {:else if selected.kind === "audio"}
           <div class="audio-placeholder">♫ {selected.filename}</div>
         {/if}
+        <!-- Karaoke/active-word caption overlay (master prompt §27) — sits
+             on top of whatever preview content this frame currently shows,
+             driven by the shared timeline playhead, not this panel's own
+             media selection (see CaptionOverlay.svelte doc comment). -->
+        <CaptionOverlay />
       </div>
     </div>
 
@@ -333,6 +339,7 @@
     overflow: hidden;
   }
   .canvas-frame {
+    position: relative;
     max-width: 100%;
     max-height: 100%;
     height: 100%;
