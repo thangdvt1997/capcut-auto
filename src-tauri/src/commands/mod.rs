@@ -9,4 +9,5 @@ pub mod media;
 pub mod project;
 pub mod render;
 pub mod timeline;
+pub mod transcription;
 pub mod vad;

@@ -33,6 +33,7 @@
   import SyncGroupDialog from "./SyncGroupDialog.svelte";
   import SilenceDetector from "../silence/SilenceDetector.svelte";
   import { silenceDetector } from "../../stores/silenceDetector.svelte";
+  import { renderStore } from "../../stores/render.svelte";
   import { t } from "../../lib/i18n.svelte";
 
   // Phase 5 (master prompt §12/§39): both new dialogs are toolbar-triggered
@@ -311,6 +312,16 @@
         title={timeline.selectedClipIds.size < 2 ? t("timelinePanel.syncGroupNeedsTwo") : t("timelinePanel.syncGroupButton")}
       >
         {t("timelinePanel.syncGroupButton")}
+      </button>
+    </span>
+    <span class="tl-toolbar-group">
+      <button
+        class="btn btn-ghost"
+        disabled={!timeline.project}
+        onclick={() => renderStore.openDialog()}
+        title={t("timelinePanel.exportButton")}
+      >
+        {t("timelinePanel.exportButton")}
       </button>
     </span>
     <span class="tl-toolbar-spacer"></span>

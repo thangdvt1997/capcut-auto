@@ -211,6 +211,13 @@ pub struct Caption {
     pub style_id: Option<String>,
 }
 
+/// Sentence/segment-level transcript entry, extended (Phase 7, master
+/// prompt §14 "Prefer word-level timestamps") with a `words` breakdown —
+/// additive, pre-1.0 internal schema evolution, mirroring `Caption`'s
+/// existing `words: Vec<Word>` field above rather than inventing a second
+/// shape for the same idea. Empty (`vec![]`) for any entry produced before
+/// this field existed, or by a transcription provider that only reports
+/// segment-level timing.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct TranscriptEntry {
     pub id: String,
@@ -219,6 +226,7 @@ pub struct TranscriptEntry {
     pub start_us: i64,
     pub end_us: i64,
     pub confidence: f32,
+    pub words: Vec<Word>,
     pub is_filler: bool,
 }
 

@@ -1,8 +1,16 @@
 <!--
-  Menu/toolbar strip (master-prompt §48). The File/Edit/View/Help entries
-  are inert labels in Phase 2 (no menu actions exist yet to wire them to —
-  Project Manager, undo/redo etc. land in later phases). The two real,
-  working pieces are:
+  Menu/toolbar strip (master-prompt §48). Edit/View/Help are still inert
+  labels (no actions exist yet to wire them to — undo/redo already live as
+  real Timeline toolbar buttons, not here). **File is now a real dropdown**
+  (Phase 6 pass): "Export…" opens the Export/Render dialog
+  (`stores/render.svelte.ts` / `ExportDialog.svelte`, mounted once in
+  `App.svelte`) and "Export to FCPXML…" is the one-line FCPXML save action
+  the Phase 6 task brief allowed as in-scope (full CapCut-adapter-flavored
+  export UI is Phase 9's job, not this one). This is the "File > Export…"
+  placement half of Phase 6's two-entry-point decision — the other entry
+  point is a toolbar button in `Timeline.svelte`, matching Phase 5's
+  Silence Detector precedent (see that component's own doc comment).
+  The two other real, working pieces are:
     - the "New Project" button, which calls the actual `new_project` Rust
       command through the specta-generated bindings and proves the
       ProjectV1 schema round-trips over IPC;
@@ -14,11 +22,13 @@
   import type { ShellInfo, ProjectV1 } from "../../types/bindings";
   import { t, currentLocale, setLocale, type Locale } from "../../lib/i18n.svelte";
   import { timeline } from "../../stores/timeline.svelte";
+  import { renderStore } from "../../stores/render.svelte";
 
   let shellInfo: ShellInfo | null = $state(null);
   let shellInfoError: string | null = $state(null);
   let lastProject: ProjectV1 | null = $state(null);
   let projectError: string | null = $state(null);
+  let fileMenuOpen = $state(false);
 
   $effect(() => {
     commands
@@ -45,10 +55,17 @@
     }
   }
 
-  const menuKeys = ["topBar.menuFile", "topBar.menuEdit", "topBar.menuView", "topBar.menuHelp"];
+  const inertMenuKeys = ["topBar.menuEdit", "topBar.menuView", "topBar.menuHelp"];
 
   function onLocaleChange(e: Event) {
     setLocale((e.currentTarget as HTMLSelectElement).value as Locale);
+  }
+
+  function onFileMenuKeydown(e: KeyboardEvent): void {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      fileMenuOpen = false;
+    }
   }
 </script>
 
@@ -58,7 +75,44 @@
     {t("common.appName")}
   </span>
 
-  {#each menuKeys as key (key)}
+  <div class="file-menu">
+    <button
+      class="menu-item menu-item-button"
+      aria-haspopup="true"
+      aria-expanded={fileMenuOpen}
+      onclick={() => (fileMenuOpen = !fileMenuOpen)}
+    >
+      {t("topBar.menuFile")}
+    </button>
+    {#if fileMenuOpen}
+      <div class="file-menu-backdrop" role="presentation" onclick={() => (fileMenuOpen = false)}></div>
+      <div class="file-menu-dropdown" role="menu" tabindex="-1" onkeydown={onFileMenuKeydown}>
+        <button
+          class="file-menu-option"
+          role="menuitem"
+          onclick={() => {
+            fileMenuOpen = false;
+            renderStore.openDialog();
+          }}
+        >
+          {t("topBar.menuExport")}
+        </button>
+        <button
+          class="file-menu-option"
+          role="menuitem"
+          disabled={!timeline.project || renderStore.fcpxmlExporting}
+          onclick={() => {
+            fileMenuOpen = false;
+            void renderStore.exportFcpxml();
+          }}
+        >
+          {renderStore.fcpxmlExporting ? t("topBar.menuExportFcpxmlBusy") : t("topBar.menuExportFcpxml")}
+        </button>
+      </div>
+    {/if}
+  </div>
+
+  {#each inertMenuKeys as key (key)}
     <span class="menu-item">{t(key)}</span>
   {/each}
 
@@ -70,6 +124,12 @@
     <span class="status-chip">{t("topBar.projectStatus", { name: lastProject.project.name, id: lastProject.project.id.slice(0, 8) })}</span>
   {:else if projectError}
     <span class="status-chip" style:color="var(--neg)">{t("topBar.newProjectFailed", { error: projectError })}</span>
+  {/if}
+
+  {#if renderStore.fcpxmlError}
+    <span class="status-chip" style:color="var(--neg)">{t("topBar.exportFcpxmlFailed", { error: renderStore.fcpxmlError })}</span>
+  {:else if renderStore.fcpxmlLastPath}
+    <span class="status-chip">{t("topBar.exportFcpxmlDone")}</span>
   {/if}
 
   <span class="topbar-spacer"></span>
@@ -111,5 +171,56 @@
     color: var(--foreground);
     font: inherit;
     font-size: 11px;
+  }
+  .file-menu {
+    position: relative;
+  }
+  .menu-item-button {
+    background: none;
+    border: none;
+    color: inherit;
+    font: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .menu-item-button[aria-expanded="true"] {
+    color: var(--foreground);
+  }
+  .file-menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+  }
+  .file-menu-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 6px;
+    min-width: 190px;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: 0 10px 30px hsl(0 0% 0% / 0.4);
+    z-index: 100;
+    overflow: hidden;
+  }
+  .file-menu-option {
+    text-align: left;
+    padding: 8px 12px;
+    background: none;
+    border: none;
+    color: var(--foreground);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .file-menu-option:hover:not(:disabled) {
+    background: var(--surface-2);
+  }
+  .file-menu-option:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 </style>

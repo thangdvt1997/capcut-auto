@@ -391,6 +391,74 @@ async segmentMediaSilence(mediaId: string, params: VadParams) : Promise<Result<S
 async buildSilenceCutlist(sourceMediaId: string, mediaDurationUs: number, segments: SpeechSegment[], cutParams: CutParams) : Promise<Cut[]> {
     return await TAURI_INVOKE("build_silence_cutlist", { sourceMediaId, mediaDurationUs, segments, cutParams });
 },
+async detectFillerWords(entries: TranscriptEntry[], dictionary: FillerDictionary, cutParams: CutParams) : Promise<Cut[]> {
+    return await TAURI_INVOKE("detect_filler_words", { entries, dictionary, cutParams });
+},
+async listInstalledModels() : Promise<Result<InstalledModel[], AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_installed_models") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listAvailableModels() : Promise<Result<AvailableModel[], AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_available_models") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async downloadModel(modelId: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("download_model", { modelId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cancelModelDownload(modelId: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_model_download", { modelId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteModel(modelId: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_model", { modelId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Starts a background transcription job against `media_path`'s audio
+ * (extracted via `audio::pcm::extract_pcm`, the same 16kHz-mono pipeline
+ * `vad` uses) using the installed model `model_id`. Returns a `job_id`
+ * immediately; the real result — `Vec<TranscriptEntry>` with per-word
+ * timestamps, `media_id` already filled in, `is_filler: false`, ready to
+ * merge into `ProjectV1::transcript` — arrives via the final
+ * `transcription:progress` event (`done: true`).
+ */
+async transcribeMedia(mediaId: string, mediaPath: string, modelId: string, language: string | null) : Promise<Result<string, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcribe_media", { mediaId, mediaPath, modelId, language }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cancelTranscription(jobId: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_transcription", { jobId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async listRenderPresets() : Promise<RenderPreset[]> {
     return await TAURI_INVOKE("list_render_presets");
 },
@@ -459,6 +527,11 @@ export type Animation = { id: string; clip_id: string; kind: AnimationKind; name
 export type AnimationKind = "in" | "out" | "loop" | "group"
 export type AppErrorPayload = { code: string; message: string; details: string | null; recoverable: boolean; suggested_action: string | null }
 export type AudioCodec = "aac" | "opus" | "vorbis"
+/**
+ * Catalog entry cross-referenced with what's actually on disk / actively
+ * downloading (master prompt §60 "Available models").
+ */
+export type AvailableModel = { entry: ModelCatalogEntry; installed: boolean; download_in_progress: boolean }
 export type CanvasRatioPreset = "16:9" | "9:16" | "1:1" | "4:5" | "custom"
 export type CanvasV1 = { width: number; height: number; fps: Rational; ratio_preset: CanvasRatioPreset }
 export type Caption = { id: string; track_id: string; start_us: number; end_us: number; text: string; words: Word[]; style_id: string | null }
@@ -529,6 +602,23 @@ export type FfmpegDiagnostics = { ffmpeg_path: string; ffprobe_path: string; ffm
  * `crate::ffmpeg::binaries` module doc comment for the full story.
  */
 source_note: string }
+/**
+ * Custom-dictionary support (§16 "Allow custom dictionary"): a caller
+ * supplies additional words/phrases, and independently controls whether
+ * the EN+VI built-ins are included at all (additive-by-default, but a
+ * caller who wants ONLY their own dictionary can set `use_defaults: false`).
+ */
+export type FillerDictionary = { 
+/**
+ * Include `DEFAULT_EN_FILLERS` and `DEFAULT_VI_FILLERS`.
+ */
+use_defaults: boolean; 
+/**
+ * Additional words/phrases on top of (or, if `use_defaults` is false,
+ * instead of) the built-in defaults. Matched with the same
+ * tokenized/case-insensitive rules as the defaults.
+ */
+custom_dictionary: string[] }
 export type HardwareEncoderReport = { encoders: DetectedEncoder[]; 
 /**
  * The master prompt's own display example: `"Encoder: NVIDIA NVENC"` or
@@ -538,6 +628,11 @@ export type HardwareEncoderReport = { encoders: DetectedEncoder[];
  */
 active_encoder_label: string }
 export type ImportResult = { source_path: string; media: MediaItem | null; error: AppErrorPayload | null }
+/**
+ * A model found actually installed on disk (master prompt §60 "Installed
+ * models").
+ */
+export type InstalledModel = { id: ModelId; path: string; size_bytes: number }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type Keyframe = { id: string; clip_id: string; 
 /**
@@ -574,6 +669,28 @@ created_at: string | null;
  * RFC3339, when this row was added to the library.
  */
 imported_at: string; thumbnail_path: string | null; proxy_path: string | null }
+export type ModelCatalogEntry = { id: ModelId; 
+/**
+ * Real ggml filename on disk and in the Hugging Face repo, e.g.
+ * `ggml-tiny.bin`. `large` maps to `ggml-large-v3.bin` — whisper.cpp's
+ * upstream repo has published v1/v2/v3(/v3-turbo) large weights over
+ * time; v3 is the current best-accuracy release as of this writing.
+ */
+filename: string; display_name: string; 
+/**
+ * Verified via a real HEAD request (module doc comment), not an
+ * estimate.
+ */
+approx_size_bytes: number; 
+/**
+ * `true` for every model in this catalog (module doc comment:
+ * English-only `.en` variants are not offered), kept as a field rather
+ * than assumed so the frontend never has to hardcode "all models here
+ * are multilingual" — master prompt §14 explicitly asks for
+ * "language support" as a shown property.
+ */
+multilingual: boolean; download_url: string }
+export type ModelId = "tiny" | "base" | "small" | "medium" | "large"
 export type ProjectMeta = { id: string; name: string; 
 /**
  * RFC3339 timestamp.
@@ -701,7 +818,16 @@ render_index: number; locked: boolean; hidden: boolean; muted: boolean; solo: bo
  */
 clip_ids: string[] }
 export type TrackKind = "video" | "audio" | "caption" | "image" | "overlay" | "effect"
-export type TranscriptEntry = { id: string; media_id: string; text: string; start_us: number; end_us: number; confidence: number; is_filler: boolean }
+/**
+ * Sentence/segment-level transcript entry, extended (Phase 7, master
+ * prompt §14 "Prefer word-level timestamps") with a `words` breakdown —
+ * additive, pre-1.0 internal schema evolution, mirroring `Caption`'s
+ * existing `words: Vec<Word>` field above rather than inventing a second
+ * shape for the same idea. Empty (`vec![]`) for any entry produced before
+ * this field existed, or by a transcription provider that only reports
+ * segment-level timing.
+ */
+export type TranscriptEntry = { id: string; media_id: string; text: string; start_us: number; end_us: number; confidence: number; words: Word[]; is_filler: boolean }
 /**
  * Segmentation parameters — everything `segments_from_scores` needs, and
  * nothing `score_chunks` needs (see module doc comment). i64-microsecond

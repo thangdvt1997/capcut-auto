@@ -14,7 +14,12 @@
     "newProjectFailed": "new_project thất bại: {{error}}",
     "loading": "đang tải…",
     "shellInfoUnavailable": "không lấy được thông tin hệ thống: {{error}}",
-    "shellInfoStatus": "v{{version}} · tauri {{tauriVersion}} · {{os}}/{{arch}}"
+    "shellInfoStatus": "v{{version}} · tauri {{tauriVersion}} · {{os}}/{{arch}}",
+    "menuExport": "Xuất video…",
+    "menuExportFcpxml": "Xuất sang FCPXML…",
+    "menuExportFcpxmlBusy": "Đang xuất FCPXML…",
+    "exportFcpxmlFailed": "Xuất FCPXML thất bại: {{error}}",
+    "exportFcpxmlDone": "Đã xuất FCPXML"
   },
   "leftPanel": {
     "tabMedia": "Thư viện",
@@ -62,7 +67,8 @@
     "lanesRegion": "Các track trên dòng thời gian — kéo để chọn nhiều clip",
     "silenceDetectorButton": "Phát hiện khoảng lặng",
     "syncGroupButton": "Tạo nhóm đồng bộ",
-    "syncGroupNeedsTwo": "Chọn từ 2 clip trở lên để tạo nhóm đồng bộ"
+    "syncGroupNeedsTwo": "Chọn từ 2 clip trở lên để tạo nhóm đồng bộ",
+    "exportButton": "Xuất video"
   },
   "mediaLibrary": {
     "importFiles": "Nhập tệp",
@@ -150,5 +156,47 @@
     "manualSectionTitle": "Độ lệch thủ công (ms)",
     "manualHint": "Nhập độ lệch của từng clip tính bằng mili giây so với nhóm.",
     "createManualButton": "Tạo nhóm đồng bộ"
+  },
+  "exportDialog": {
+    "title": "Xuất video",
+    "close": "Đóng",
+    "presetSectionTitle": "Mẫu cài đặt",
+    "loadingPresets": "Đang tải các mẫu cài đặt…",
+    "settingsSectionTitle": "Cài đặt",
+    "resolutionLabel": "Độ phân giải",
+    "heightLabel": "Chiều cao",
+    "fpsLabel": "Tốc độ khung hình",
+    "containerLabel": "Định dạng tệp",
+    "videoCodecLabel": "Codec video",
+    "encodeSpeedLabel": "Tốc độ mã hóa",
+    "qualityModeLabel": "Chế độ chất lượng",
+    "qualityModeCrf": "Chất lượng (CRF)",
+    "qualityModeBitrate": "Bitrate",
+    "crfLabel": "CRF",
+    "crfHint": "Số càng thấp thì chất lượng càng cao, tệp càng lớn (thường dùng 18–28)",
+    "videoBitrateLabel": "Bitrate video",
+    "audioCodecLabel": "Codec âm thanh",
+    "audioBitrateLabel": "Bitrate âm thanh",
+    "hwSectionTitle": "Tăng tốc phần cứng",
+    "hwDetecting": "Đang dò tìm bộ mã hóa khả dụng…",
+    "hwActiveEncoder": "Bộ mã hóa: {{label}}",
+    "hwForceLabel": "Chỉ định bộ mã hóa",
+    "hwAuto": "Tự động chọn",
+    "hwSoftware": "CPU — Phần mềm",
+    "hwWorking": "khả dụng",
+    "hwNotAvailable": "không khả dụng trên máy này",
+    "outputSectionTitle": "Đầu ra",
+    "chooseOutputButton": "Chọn nơi lưu…",
+    "noOutputChosen": "Chưa chọn nơi lưu",
+    "progressSectionTitle": "Tiến trình",
+    "renderFailed": "Xuất video thất bại: {{error}}",
+    "renderComplete": "Xuất video hoàn tất: {{path}}",
+    "speedLabel": "{{speed}}x",
+    "cancelButton": "Hủy",
+    "cancelling": "Đang hủy…",
+    "newExportButton": "Xuất video mới",
+    "exportButton": "Xuất video",
+    "starting": "Đang bắt đầu…",
+    "closeButton": "Đóng"
   }
 }

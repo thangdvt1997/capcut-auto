@@ -14,7 +14,12 @@
     "newProjectFailed": "new_project failed: {{error}}",
     "loading": "loading…",
     "shellInfoUnavailable": "shell info unavailable: {{error}}",
-    "shellInfoStatus": "v{{version}} · tauri {{tauriVersion}} · {{os}}/{{arch}}"
+    "shellInfoStatus": "v{{version}} · tauri {{tauriVersion}} · {{os}}/{{arch}}",
+    "menuExport": "Export…",
+    "menuExportFcpxml": "Export to FCPXML…",
+    "menuExportFcpxmlBusy": "Exporting FCPXML…",
+    "exportFcpxmlFailed": "FCPXML export failed: {{error}}",
+    "exportFcpxmlDone": "FCPXML exported"
   },
   "leftPanel": {
     "tabMedia": "Media",
@@ -62,7 +67,8 @@
     "lanesRegion": "Timeline tracks — drag to select clips",
     "silenceDetectorButton": "Silence Detector",
     "syncGroupButton": "Create Sync Group",
-    "syncGroupNeedsTwo": "Select 2 or more clips to create a sync group"
+    "syncGroupNeedsTwo": "Select 2 or more clips to create a sync group",
+    "exportButton": "Export"
   },
   "mediaLibrary": {
     "importFiles": "Import Files",
@@ -150,5 +156,47 @@
     "manualSectionTitle": "Manual offsets (ms)",
     "manualHint": "Enter each clip's offset in milliseconds relative to the group.",
     "createManualButton": "Create Sync Group"
+  },
+  "exportDialog": {
+    "title": "Export",
+    "close": "Close",
+    "presetSectionTitle": "Preset",
+    "loadingPresets": "Loading presets…",
+    "settingsSectionTitle": "Settings",
+    "resolutionLabel": "Resolution",
+    "heightLabel": "Height",
+    "fpsLabel": "Frame rate",
+    "containerLabel": "Container",
+    "videoCodecLabel": "Video codec",
+    "encodeSpeedLabel": "Encode speed",
+    "qualityModeLabel": "Quality mode",
+    "qualityModeCrf": "Quality (CRF)",
+    "qualityModeBitrate": "Bitrate",
+    "crfLabel": "CRF",
+    "crfHint": "Lower = higher quality, larger file (18–28 typical)",
+    "videoBitrateLabel": "Video bitrate",
+    "audioCodecLabel": "Audio codec",
+    "audioBitrateLabel": "Audio bitrate",
+    "hwSectionTitle": "Hardware acceleration",
+    "hwDetecting": "Detecting available encoders…",
+    "hwActiveEncoder": "Encoder: {{label}}",
+    "hwForceLabel": "Force encoder",
+    "hwAuto": "Auto-detect",
+    "hwSoftware": "CPU — Software",
+    "hwWorking": "available",
+    "hwNotAvailable": "not available on this machine",
+    "outputSectionTitle": "Output",
+    "chooseOutputButton": "Choose Output Location…",
+    "noOutputChosen": "No output location chosen yet",
+    "progressSectionTitle": "Progress",
+    "renderFailed": "Render failed: {{error}}",
+    "renderComplete": "Render complete: {{path}}",
+    "speedLabel": "{{speed}}x",
+    "cancelButton": "Cancel",
+    "cancelling": "Cancelling…",
+    "newExportButton": "Start New Export",
+    "exportButton": "Export",
+    "starting": "Starting…",
+    "closeButton": "Close"
   }
 }

@@ -41,7 +41,36 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 # licensed and reusable regardless of autocut's own code-license status
 # (docs/architecture-audit.md §3). Backs `vad::silero::SileroVadProvider`.
 voice_activity_detector = "0.2"
+# Rust bindings around whisper.cpp (master prompt §14 Transcription) — the
+# standard, actively-maintained wrapper the master prompt itself suggests
+# evaluating. Its build script (`whisper-rs-sys`) vendors and compiles
+# whisper.cpp's C++ source at *this crate's* build time (needs cmake + a
+# C/C++ toolchain; no system-installed whisper.cpp required), the same
+# "compile the real thing at build time" approach `rusqlite`'s `bundled`
+# feature already uses above for SQLite. Default features = CPU-only; see
+# `[features] cuda` below and `transcription::whisper` module doc comment
+# for the GPU/CUDA story (architecturally wired, not compiled/verified in
+# this environment).
+whisper-rs = "0.16"
+# Blocking HTTP client for resumable model downloads
+# (`transcription::download`, master prompt §60). Default features pull in
+# `rustls` (pure-Rust TLS, no system/vendored OpenSSL to manage for Windows
+# packaging) + gzip. Chosen over `reqwest` because this crate has no async
+# runtime dependency elsewhere for HTTP — downloads run on a background
+# thread (`tauri::async_runtime::spawn_blocking`), the same synchronous
+# shape as every other long-running job in this crate
+# (`media::proxy`/`render::job`), so a blocking client is the simpler fit.
+ureq = "2.12"
 
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+# Enables whisper-rs's `cuda` feature, which links against a real CUDA
+# toolkit (nvcc etc.) at *compile* time. NOT enabled or verified by any
+# build in this repo's current environment (no CUDA SDK in the WSL2 build
+# container, and not confirmed present on the target Windows machine either
+# — see `transcription::whisper` module doc comment and
+# `IMPLEMENTATION_PLAN.md` Phase 7). A future build on a machine with the
+# CUDA toolkit installed can opt in with `cargo build --features cuda` and
+# should re-verify real GPU transcription before calling GPU support done.
+cuda = ["whisper-rs/cuda"]

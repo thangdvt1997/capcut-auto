@@ -82,7 +82,11 @@ The unified project file is the application's own format and the single source o
     }
   ],
   "transcript": [
-    { "id": "uuid", "media_id": "uuid", "text": "string", "start_us": 0, "end_us": 300000, "confidence": 0.94, "is_filler": false }
+    // "words" (Phase 7, master prompt §14 "Prefer word-level timestamps") mirrors
+    // `captions[].words` above — empty for entries with only segment-level timing.
+    { "id": "uuid", "media_id": "uuid", "text": "string", "start_us": 0, "end_us": 300000, "confidence": 0.94,
+      "words": [ { "text": "string", "start_us": 0, "end_us": 300000, "confidence": 0.94 } ],
+      "is_filler": false }
   ],
   "effects": [ { "id": "uuid", "clip_id": "uuid", "kind": "string", "params": {} } ],
   "animations": [ { "id": "uuid", "clip_id": "uuid", "kind": "in | out | loop | group", "name": "string", "duration_us": 500000 } ],
@@ -131,3 +135,5 @@ Standardized Rust error enum, one variant per subsystem (master prompt §56), ea
 `MediaError`, `FfmpegError`, `TranscriptionError`, `AiProviderError`, `CapCutError`, `ProjectError`, `RenderError`, `ModelError`.
 
 `ProjectError` covers this file's own failure modes specifically: `SchemaVersionTooNew`, `CorruptJson`, `MigrationFailed`, `AtomicWriteFailed`, `RecoverySnapshotFound` (surfaced at startup per master prompt §86).
+
+`TranscriptionError` (Phase 7, `src-tauri/src/transcription/error.rs`) covers the Whisper transcription pipeline itself: model not installed, model load failure, unsupported input sample rate, inference failure, cancellation. `ModelError` (same file) covers the separate Model Manager concern — catalog lookups, storage-directory resolution, download failure/cancellation/verification, delete-when-not-installed.

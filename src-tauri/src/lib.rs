@@ -21,6 +21,7 @@ pub mod media;
 pub mod project;
 pub mod render;
 pub mod timeline;
+pub mod transcription;
 pub mod vad;
 
 /// Builds the shared `tauri-specta` command/type registry. Used both by the
@@ -68,6 +69,14 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::vad::score_media_silence,
         commands::vad::segment_media_silence,
         commands::vad::build_silence_cutlist,
+        commands::transcription::detect_filler_words,
+        commands::transcription::list_installed_models,
+        commands::transcription::list_available_models,
+        commands::transcription::download_model,
+        commands::transcription::cancel_model_download,
+        commands::transcription::delete_model,
+        commands::transcription::transcribe_media,
+        commands::transcription::cancel_transcription,
         commands::render::list_render_presets,
         commands::render::detect_hardware_encoders,
         commands::render::start_render_job,
@@ -139,6 +148,19 @@ pub fn run() {
             // same way as `MediaLibrary`/`VadCache` above — see
             // `commands::render::RenderJobs` doc comment.
             tauri::Manager::manage(app, crate::commands::render::RenderJobs::default());
+            // Live model downloads and transcription jobs (Phase 7, master
+            // prompt §14/§60), same `id -> Arc<AtomicBool>` cancellation-map
+            // pattern as `RenderJobs` above — see
+            // `commands::transcription::{ModelDownloadJobs, TranscriptionJobs}`
+            // doc comments.
+            tauri::Manager::manage(
+                app,
+                crate::commands::transcription::ModelDownloadJobs::default(),
+            );
+            tauri::Manager::manage(
+                app,
+                crate::commands::transcription::TranscriptionJobs::default(),
+            );
             Ok(())
         })
         .run(tauri::generate_context!())

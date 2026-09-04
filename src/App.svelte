@@ -13,6 +13,7 @@
   import RightPanel from "./components/layout/RightPanel.svelte";
   import TimelinePanel from "./components/layout/TimelinePanel.svelte";
   import ResizableSplit from "./components/layout/ResizableSplit.svelte";
+  import ExportDialog from "./components/render/ExportDialog.svelte";
 </script>
 
 <main class="shell">
@@ -60,6 +61,13 @@
       {/snippet}
     </ResizableSplit>
   </section>
+
+  <!-- Mounted once here (not inside TopBar/Timeline) since the Export
+       dialog has two entry points — TopBar's "File" menu and Timeline's
+       toolbar button, per Phase 6's placement decision (see
+       ExportDialog.svelte's doc comment) — both should drive one shared
+       `renderStore`-backed dialog instance, not two independent copies. -->
+  <ExportDialog />
 </main>
 
 <style>
