@@ -1,0 +1,38 @@
+[package]
+name = "ai-video-editor"
+version = "0.1.0"
+description = "AI Video Editor — Windows desktop app for AI-assisted video editing"
+authors = ["AI Video Editor contributors"]
+edition = "2021"
+rust-version = "1.77"
+default-run = "ai-video-editor"
+
+[lib]
+name = "ai_video_editor_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# specta 2.x is still pre-1.0-stable-tagged on crates.io (rc only, confirmed
+# by resolving against the crates.io index); pin exact rc versions rather
+# than "2" so `cargo add`/`cargo update` don't silently jump between
+# incompatible rc builds. `serde_json` feature enables `Type` for
+# `serde_json::Value`, used by the intentionally-opaque `Effect::params`/
+# `AiState` fields in `project::types`.
+specta = { version = "2.0.0-rc.22", features = ["derive", "serde_json"] }
+specta-typescript = "0.0.9"
+tauri-specta = { version = "2.0.0-rc.21", features = ["derive", "typescript"] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    # Pure JS/TS checks — fast feedback, doesn't need a Windows runner.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Typecheck (svelte-check + tsc)
+        run: pnpm run check
+
+      - name: Build
+        run: pnpm run build
+
+  windows:
+    # This is a Windows-only desktop app (master prompt: target OS Windows
+    # 10/11 x64). vendor/autocut's Rust/Tauri CI only ran on ubuntu-latest
+    # with sidecars stubbed, and its real Windows build was a separate
+    # workflow_dispatch-only job never exercised on a PR
+    # (docs/architecture-audit.md §6 risk #9). This job closes that gap:
+    # format/lint/test/build all run natively on windows-latest, on every
+    # PR.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Rust format
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: Rust clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Frontend build
+        run: pnpm run build
+
+      - name: Tauri build check (compiles the full app, skips installer packaging)
+        # `--no-bundle` builds the real release binary against the real
+        # frontend bundle without invoking NSIS/WiX, which need signing
+        # setup that's out of scope for Phase 2 CI (see
+        # docs/architecture-audit.md §6 risk #7/#9, Phase 12). Switch to a
+        # full `tauri build` once Phase 12 configures the installer +
+        # signing pipeline.
+        run: pnpm exec tauri build --no-bundle

@@ -1,0 +1,77 @@
+<!--
+  App shell (master-prompt §48 layout):
+    Menu/toolbar (TopBar) on top; below it, a three-pane workspace
+    (Left tabs | Center preview | Right tabs) over a docked Timeline, all
+    built from real, working ResizableSplit panes with localStorage-
+    persisted ratios. Panel *contents* are Phase 2 placeholders — the
+    resizing/layout persistence is the part that actually works.
+-->
+<script lang="ts">
+  import TopBar from "./components/layout/TopBar.svelte";
+  import LeftPanel from "./components/layout/LeftPanel.svelte";
+  import CenterPreview from "./components/layout/CenterPreview.svelte";
+  import RightPanel from "./components/layout/RightPanel.svelte";
+  import TimelinePanel from "./components/layout/TimelinePanel.svelte";
+  import ResizableSplit from "./components/layout/ResizableSplit.svelte";
+</script>
+
+<main class="shell">
+  <TopBar />
+
+  <section class="workspace">
+    <ResizableSplit
+      direction="vertical"
+      initial={0.72}
+      min={0.4}
+      max={0.88}
+      storageKey="ave:split:main-timeline"
+    >
+      {#snippet a()}
+        <ResizableSplit
+          direction="horizontal"
+          initial={0.2}
+          min={0.12}
+          max={0.34}
+          storageKey="ave:split:left"
+        >
+          {#snippet a()}
+            <LeftPanel />
+          {/snippet}
+          {#snippet b()}
+            <ResizableSplit
+              direction="horizontal"
+              initial={0.76}
+              min={0.5}
+              max={0.9}
+              storageKey="ave:split:right"
+            >
+              {#snippet a()}
+                <CenterPreview />
+              {/snippet}
+              {#snippet b()}
+                <RightPanel />
+              {/snippet}
+            </ResizableSplit>
+          {/snippet}
+        </ResizableSplit>
+      {/snippet}
+      {#snippet b()}
+        <TimelinePanel />
+      {/snippet}
+    </ResizableSplit>
+  </section>
+</main>
+
+<style>
+  .shell {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    height: 100vh;
+    overflow: hidden;
+  }
+  .workspace {
+    min-height: 0;
+    overflow: hidden;
+    padding: 8px;
+  }
+</style>

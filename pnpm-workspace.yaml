@@ -1,0 +1,8 @@
+# Not an actual multi-package workspace — this file exists only because
+# pnpm moved dependency-build allowlisting here (pnpm 11's `allowBuilds`
+# key; package.json's `pnpm.onlyBuiltDependencies` field is no longer
+# read). Without this, a fresh `pnpm install` (CI, a new clone) silently
+# skips esbuild's postinstall script and prompts for interactive
+# `pnpm approve-builds`, which a CI runner can never answer.
+allowBuilds:
+  esbuild: true

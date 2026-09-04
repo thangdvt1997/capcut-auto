@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Least-privilege capability for the AI Video Editor main window (pattern from vendor/autocut's shell:allow-open-only discipline, docs/architecture-audit.md §2). Phase 2 grants only core app/window/event access plus the file/folder dialogs the shell's File menu will use. Expand deliberately, one permission at a time, as later phases add features (media import, FFmpeg sidecar shelling, CapCut path probing, etc.) — do not broaden this file speculatively ahead of the feature that needs it.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:default"
+  ]
+}
