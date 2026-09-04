@@ -15,6 +15,8 @@
   import ResizableSplit from "./components/layout/ResizableSplit.svelte";
   import ExportDialog from "./components/render/ExportDialog.svelte";
   import ModelManagerDialog from "./components/transcription/ModelManagerDialog.svelte";
+  import CapCutSettingsDialog from "./components/capcut/CapCutSettingsDialog.svelte";
+  import CapCutExportDialog from "./components/capcut/CapCutExportDialog.svelte";
 </script>
 
 <main class="shell">
@@ -76,6 +78,16 @@
        own "no model installed" prompt — see ModelManagerDialog.svelte's
        doc comment) that should all drive one shared dialog instance. -->
   <ModelManagerDialog />
+
+  <!-- Phase 9: mounted once here for the same "multiple entry points, one
+       shared store-backed dialog" reason as the two dialogs above —
+       `CapCutSettingsDialog` is reachable from TopBar's "CapCut…" button
+       (and from `CapCutExportDialog` itself, via an "Open CapCut Settings…"
+       link shown when no draft directory is known yet);
+       `CapCutExportDialog` is reachable from TopBar's File menu ("Export to
+       CapCut…"). See each component's own doc comment. -->
+  <CapCutSettingsDialog />
+  <CapCutExportDialog />
 </main>
 
 <style>

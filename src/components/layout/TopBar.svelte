@@ -22,6 +22,12 @@
   modelManager.svelte.ts`) in the absence of a built master-prompt §46
   Settings surface — see that component's doc comment for the full
   placement rationale.
+
+  Phase 9 pass: added "Export to CapCut…" to the File dropdown (opens
+  `CapCutExportDialog.svelte` / `stores/capcut.svelte.ts`, mounted once in
+  `App.svelte`, alongside "Export…"/"Export to FCPXML…") and a "CapCut…"
+  button next to "Models…" (opens `CapCutSettingsDialog.svelte`, same
+  no-Settings-surface-yet placement rationale as "Models…" above).
 -->
 <script lang="ts">
   import { commands } from "../../types/bindings";
@@ -30,6 +36,7 @@
   import { timeline } from "../../stores/timeline.svelte";
   import { renderStore } from "../../stores/render.svelte";
   import { modelManagerStore } from "../../stores/modelManager.svelte";
+  import { capcutStore } from "../../stores/capcut.svelte";
 
   let shellInfo: ShellInfo | null = $state(null);
   let shellInfoError: string | null = $state(null);
@@ -115,6 +122,17 @@
         >
           {renderStore.fcpxmlExporting ? t("topBar.menuExportFcpxmlBusy") : t("topBar.menuExportFcpxml")}
         </button>
+        <button
+          class="file-menu-option"
+          role="menuitem"
+          disabled={!timeline.project}
+          onclick={() => {
+            fileMenuOpen = false;
+            capcutStore.openExport();
+          }}
+        >
+          {t("topBar.menuExportCapcut")}
+        </button>
       </div>
     {/if}
   </div>
@@ -137,6 +155,19 @@
     title={t("topBar.modelManagerTooltip")}
   >
     {t("topBar.modelManagerButton")}
+  </button>
+
+  <!-- Phase 9 CapCut/Jianying Settings entry point (master prompt §30) —
+       same placement rationale as the "Models…" button just above: no
+       master prompt §46 Settings surface exists yet to host this as a
+       section, so it's a standalone dialog reachable from here (see
+       CapCutSettingsDialog.svelte's own doc comment). -->
+  <button
+    class="btn btn-ghost"
+    onclick={() => capcutStore.openSettings()}
+    title={t("topBar.capcutSettingsTooltip")}
+  >
+    {t("topBar.capcutSettingsButton")}
   </button>
 
   {#if lastProject}
