@@ -8,6 +8,15 @@
 //! schema is implemented for real here, since Phase 2's task explicitly
 //! calls for the schema to land as real Rust structs.
 
+// `capcut::script::ScriptMaterial::export_json`'s single `serde_json::json!`
+// call covers every one of `draft_content.json`'s ~50 `materials` keys in
+// one literal (matching the real CapCut draft schema key-for-key, per that
+// module's doc comment) — past `serde_json`'s default `json_internal!`
+// recursion limit for a single macro invocation. Raising the crate's
+// recursion limit is the standard fix for a wide (not deep/infinite) macro
+// expansion like this one, per `serde_json`'s own docs.
+#![recursion_limit = "256"]
+
 pub mod ai;
 pub mod audio;
 pub mod capcut;
@@ -33,6 +42,8 @@ pub mod vad;
 pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
     tauri_specta::Builder::<tauri::Wry>::new().commands(tauri_specta::collect_commands![
         commands::diagnostics::get_shell_info,
+        commands::capcut::detect_capcut_installations,
+        commands::capcut::detect_capcut_registry_hints,
         commands::project::new_project,
         commands::media::ffmpeg_diagnostics,
         commands::media::probe_media_file,
@@ -91,6 +102,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::render::start_render_job,
         commands::render::cancel_render_job,
         fcpxml::export::export_fcpxml,
+        capcut::export::export_project_to_capcut_draft,
     ])
 }
 

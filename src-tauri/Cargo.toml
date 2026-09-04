@@ -74,3 +74,13 @@ custom-protocol = ["tauri/custom-protocol"]
 # CUDA toolkit installed can opt in with `cargo build --features cuda` and
 # should re-verify real GPU transcription before calling GPU support done.
 cuda = ["whisper-rs/cuda"]
+
+# Windows-only: `crate::capcut::detect`'s optional/best-effort uninstall
+# registry scan (`IMPLEMENTATION_PLAN.md` Phase 9 "plus optional registry
+# lookups"). Scoped to `cfg(windows)` so it's never resolved/compiled on the
+# Linux WSL2 environment this crate is actually built and tested in (see
+# `HANDOFF.md` "Build/test environment") — the registry module itself is
+# also `#[cfg(target_os = "windows")]`-gated, this just keeps the dependency
+# graph itself Windows-only to match.
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"

@@ -9,6 +9,27 @@ async getShellInfo() : Promise<ShellInfo> {
     return await TAURI_INVOKE("get_shell_info");
 },
 /**
+ * Detects every confirmed CapCut/Jianying draft-root installation on this
+ * machine (filesystem-based — see `crate::capcut::detect` module doc
+ * comment for the full heuristic and its honest limitations). Returns an
+ * empty `Vec`, never an error, when nothing is found — "no installation
+ * found" is an expected, legitimate outcome (e.g. neither app installed,
+ * or running on a non-Windows dev host), not a failure.
+ */
+async detectCapcutInstallations() : Promise<DetectedCapCutInstallation[]> {
+    return await TAURI_INVOKE("detect_capcut_installations");
+},
+/**
+ * Best-effort, additive uninstall-registry hints (see
+ * `crate::capcut::detect::scan_uninstall_registry` doc comment for
+ * confidence caveats). Always succeeds with an empty `Vec` on failure or
+ * on a non-Windows host — never blocks or replaces
+ * [`detect_capcut_installations`].
+ */
+async detectCapcutRegistryHints() : Promise<CapCutRegistryHint[]> {
+    return await TAURI_INVOKE("detect_capcut_registry_hints");
+},
+/**
  * Constructs a brand-new, in-memory `ProjectV1` with sensible defaults.
  * Deliberately does not touch the filesystem: wiring this into a real
  * Project Manager UI (recent projects, save/open, `project.json` on disk)
@@ -584,6 +605,19 @@ async exportFcpxml(project: ProjectV1, outputPath: string) : Promise<Result<null
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Tauri command: export `project` as a CapCut/Jianying draft folder at
+ * `draft_output_path`. Specta-typed, following `fcpxml::export::export_fcpxml`'s
+ * naming/error-envelope convention.
+ */
+async exportProjectToCapcutDraft(project: ProjectV1, draftOutputPath: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("export_project_to_capcut_draft", { project, draftOutputPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -620,6 +654,32 @@ export type AudioCodec = "aac" | "opus" | "vorbis"
 export type AvailableModel = { entry: ModelCatalogEntry; installed: boolean; download_in_progress: boolean }
 export type CanvasRatioPreset = "16:9" | "9:16" | "1:1" | "4:5" | "custom"
 export type CanvasV1 = { width: number; height: number; fps: Rational; ratio_preset: CanvasRatioPreset }
+/**
+ * Which product's AppData folder name a candidate draft root was built
+ * under. Both are checked for every candidate user profile — see this
+ * module's doc comment for why the reference JS's Jianying-only list is
+ * extended here.
+ */
+export type CapCutProduct = 
+/**
+ * China-region 剪映专业版 (Jianying Pro) — `AppData\Local\JianyingPro`.
+ */
+"jianying" | 
+/**
+ * International CapCut — `AppData\Local\CapCut`.
+ */
+"cap_cut"
+/**
+ * One uninstall-registry hit that looks like a CapCut/Jianying install,
+ * found by [`registry::scan_uninstall_entries`]. Deliberately a separate
+ * shape from [`DetectedCapCutInstallation`] rather than merged into it: a
+ * registry entry can exist with no matching draft folder yet (installed but
+ * never launched) and carries different fields (a version string, an
+ * installer-reported location that may or may not be the actual draft
+ * root) — conflating the two would mean either fabricating fields on one
+ * side or silently dropping information on the other.
+ */
+export type CapCutRegistryHint = { product: CapCutProduct; display_name: string; display_version: string | null; install_location: string | null }
 /**
  * Sorted, non-overlapping by construction: every producer in
  * `captions::generate`/`timeline::captions` builds `words` in time order
@@ -775,6 +835,34 @@ export type CutParams = { padding_before_us: number; padding_after_us: number;
  */
 merge_gap_us: number }
 export type CutReason = "silence" | "filler_word" | "ai_suggested"
+/**
+ * One confirmed CapCut/Jianying draft-root installation.
+ */
+export type DetectedCapCutInstallation = { product: CapCutProduct; 
+/**
+ * The user-profile home directory this installation was found under
+ * (e.g. `C:\Users\Alice`), as a display string — see `crate::commands`
+ * convention of exposing filesystem paths as `String`, not `PathBuf`,
+ * over the Tauri/specta boundary.
+ */
+user_profile: string; 
+/**
+ * The confirmed draft-root directory itself
+ * (`...\User Data\Projects\com.lveditor.draft`).
+ */
+draft_root: string; 
+/**
+ * Whether `root_meta_info.json` (a file) was found directly inside
+ * `draft_root`.
+ */
+has_root_meta_info: boolean; 
+/**
+ * Whether a `.recycle_bin` directory was found directly inside
+ * `draft_root`. Either this or `has_root_meta_info` is always `true`
+ * for a value that made it into a result `Vec` — that's the
+ * confirmation condition (see [`confirm_draft_root`]).
+ */
+has_recycle_bin: boolean }
 export type DetectedEncoder = { backend: EncoderBackend; label: string; h264_encoder: string; h265_encoder: string; 
 /**
  * `true` only if the encoder was both listed by `ffmpeg -encoders` AND
