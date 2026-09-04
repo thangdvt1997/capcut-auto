@@ -1,0 +1,39 @@
+# Feature Compatibility Matrix
+
+Master prompt §71: "The UI can use this to warn users before exporting." This is exactly what Phase 9's Export-to-CapCut UI's feature-compatibility-warning step reads from (conceptually — it currently checks a hardcoded list of the same gaps documented here; keeping this file in sync when a gap is closed is a real maintenance task, not automatic).
+
+Four output paths exist for a project, matching `docs/architecture.md`'s adapter list:
+
+- **Internal** — the app's own non-destructive timeline model (`ProjectV1`/`timeline::*`). Anything "yes" here just means the data model can represent the feature — it says nothing about whether it renders visually yet (see Phase 6/8's own "structural but inert" notes for `Effect`/karaoke).
+- **FFmpeg** — the local render engine (`render::plan`, Phase 6), producing a real MP4/WebM.
+- **CapCut** — the `CapCutAdapter` (Phase 9), producing a Jianying/CapCut draft folder.
+- **FCPXML** — the FCPXML 1.11 exporter (Phase 6), producing an `.fcpxml` file for Premiere/Resolve/Final Cut.
+
+`yes` = fully transfers. `partial` = transfers with a known, real limitation (documented in the note). `no` = does not transfer at all today (documented gap, not a bug — see each phase's own notes in `IMPLEMENTATION_PLAN.md` for why).
+
+| Feature | Internal | FFmpeg | CapCut | FCPXML | Notes |
+|---|---|---|---|---|---|
+| Cut / trim / split | yes | yes | yes | yes | Baked into clip `position_us`/`source_in_us`/`source_out_us` by export time; every path just reads the resulting clip list. |
+| Multi-track video compositing (z-order) | yes | yes | yes | yes | FFmpeg: chained `overlay` filters in `render_index` order (`render::plan`). CapCut: native multi-track drafts. FCPXML: primary storyline + signed lanes (`fcpxml::document`). |
+| Multi-track audio mixing | yes | yes | yes | yes | FFmpeg: `adelay`+`amix`, volume-compensated. FCPXML: negative-lane connected clips. |
+| `Overlay` track kind (e.g. picture-in-picture layer) | yes | yes | yes | yes | Treated as a visual layer identically to `Video`/`Image` in `render::graph`, `fcpxml::document`, and CapCut's own track model. |
+| Clip transform (scale/rotate/flip/opacity) | yes | yes | yes | no | FFmpeg: real `scale`/`hflip`/`vflip`/`rotate`/`colorchannelmixer` filters. CapCut: `ClipSettings` ported (Phase 9). FCPXML: not mapped — flagged as a documented gap in Phase 6's own notes (no per-clip transform filter/keyframe emitted into the FCPXML `asset-clip`). |
+| Clip speed change | yes | yes | yes | no | FFmpeg: `atempo`/`setpts` chain. CapCut: real `materials.speeds[]` entry per segment (Phase 9). FCPXML: not mapped — same documented Phase 6 gap as transform. |
+| Track lock/hide/mute/solo | yes | yes (hidden/muted excluded from the render) | n/a | n/a | A hidden video track or effectively-muted audio track is simply excluded when building the `RenderGraph`; CapCut/FCPXML drafts are edited further inside their own NLE, where lock/hide/mute/solo are that NLE's own concepts, not something to transfer. |
+| `SyncGroup` (linked/multi-cam tracks) | yes | yes (implicitly) | no | no | Sync only matters at *edit* time (propagating a cut across linked tracks, Phase 4/5) — by export time every track's clips already reflect the synced result, so FFmpeg rendering needs no special handling. Neither the CapCut adapter nor the FCPXML exporter has any concept of a synced group, so re-opening the exported file in CapCut/an NLE loses the *link* itself (the clips are still correctly positioned, just no longer grouped for future edits). |
+| Silence-removed / filler-word-removed regions | yes | yes | yes | yes | These are just clip splits/deletes by export time (Phase 5/7's `Cut` records are provenance/audit metadata, not a separate thing to export) — same as the Cut row above. |
+| Captions (text, timing) | yes | no | yes | partial | FFmpeg: no caption burn-in filter exists yet (Phase 6's own documented gap — `Caption` tracks are structurally recognized in `RenderGraph` but produce no visual output). CapCut: real `TextSegment` with real style mapping (Phase 9's `add_caption`). FCPXML: exported as `<title>` placeholder elements with the right timing, but **no style transfer** (Phase 6's own note). |
+| Caption styling (font/size/bold/italic/alignment/position/background/outline/shadow/opacity/safe-margins) | yes | no | yes | no | Same reasoning as the Captions row — CapCut is the only path with a real `CaptionStyle → TextStyle/TextBorder/TextBackground/TextShadow` mapping (Phase 9), informed by actually reading capcut-mate's own resolution logic. |
+| Active-word / karaoke highlighting | yes (preview only) | no | no | no | This is a live-preview rendering concept (`CaptionOverlay.svelte`, Phase 8) — none of the three export paths bake per-word highlight timing into their output; a CapCut/FCPXML/FFmpeg viewer sees the caption's plain text only. |
+| Effects / filters / transitions | partial (structural only) | no | partial (unresolved passthrough) | no | This app has no effect/filter/transition catalog or authoring UI yet (`Effect.kind`/`params` is opaque JSON with no defined shapes — a deliberate Phase 6/9 scope decision, see those phases' own notes). FFmpeg: `RenderGraph`'s `effect_nodes` are recognized but never emit a filter — a documented no-op. CapCut: `add_effect`/`add_sticker` pass `kind`/`params` or a bare `resource_id` through unresolved (no name→CapCut-resource-ID catalog exists to resolve against) — the resulting draft segment exists structurally but almost certainly won't render as anything meaningful inside CapCut until a real effect catalog exists upstream. FCPXML: excluded entirely (no meaningful FCPXML element to map an unresolved effect onto). |
+| Hardware-accelerated encoding (NVENC/QSV/AMF) | n/a | yes | n/a | n/a | An FFmpeg-render-only concept (`render::hwaccel`, real smoke-test detection, Phase 6) — CapCut and FCPXML consumers do their own encoding in their own app. |
+| Export presets (1080p/4K/TikTok/YouTube/etc.) | n/a | yes | n/a | n/a | `render::presets`, Phase 6 — an FFmpeg-render-only concept. |
+| Transcript (word-level timestamps) | yes | n/a | n/a | n/a | Source data for caption generation (Phase 7/8) — not itself an exportable visual/audio feature in any of the three output formats. |
+
+## Known asymmetry worth calling out explicitly
+
+**CapCut is currently the most complete non-FFmpeg export target** (captions with real styling, clip transform, clip speed) — a direct consequence of Phase 9 actually reading capcut-mate's own resolution logic before designing Phase 8's `CaptionStyle` schema, so the mapping didn't need retrofitting. **FCPXML is the least complete of the three non-Internal paths** for anything beyond basic cut/track structure — transform, speed, and caption styling are all real, documented gaps there (Phase 6 built the rational-timecode/lane-assignment core correctly but didn't extend it to per-clip style/speed mapping in that same pass). Closing the FCPXML gap is a well-scoped future task: the same `ClipSettings`→filter mapping `render::plan` already has, and the same `CaptionStyle` mapping `capcut::caption_style` already has, both need an FCPXML-flavored sibling (keyframed `adjust-transform`/`conform-rate` elements and a real `<text-style>` block, respectively) — nothing architecturally blocks it, it just hasn't been done yet.
+
+## Maintenance note
+
+This table was written by reading the actual `render::graph`/`render::plan`, `fcpxml::document`, and `capcut::{adapter,export,segment}` source as of Phase 9's completion (2026-09-05) — not assumed from the master prompt's own feature list. When a later phase closes one of the `no`/`partial` gaps above (e.g. FCPXML transform mapping, a real effect catalog), update this file in the same commit — a stale compatibility matrix actively misleads the export-warning UI it's meant to inform.
