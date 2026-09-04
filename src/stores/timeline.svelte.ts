@@ -12,7 +12,7 @@
 // horizontal scroll, and session-local markers.
 
 import { commands } from "../types/bindings";
-import type { AppErrorPayload, Clip, MediaItem, ProjectV1, Result, Track, TrackKind } from "../types/bindings";
+import type { AppErrorPayload, Clip, MediaItem, ProjectV1, Result, Track, TrackKind, TranscriptEntry } from "../types/bindings";
 import {
   clampZoom,
   clipContainsUs,
@@ -351,6 +351,42 @@ class TimelineStore {
     track.clip_ids.push(clip.id);
     if (!project.media.some((m) => m.id === media.id)) project.media.push(media);
 
+    await this.pushWholeProject(project);
+  }
+
+  // -------------------------------------------------------------------
+  // Transcript (Phase 7, master prompt §15/§16) — same "no dedicated backend
+  // primitive, so clone + `pushWholeProject`" bridge `addMediaAsClip` above
+  // already uses: there is no `update_transcript_entry`/`add_transcript_entries`
+  // command (`src-tauri/src/commands/transcription.rs` only exposes
+  // `transcribe_media`/`cancel_transcription`/`detect_filler_words` — the
+  // actual `ProjectV1::transcript` array is a plain data field the frontend
+  // owns entirely once populated). Both methods below are therefore, like
+  // `addMediaAsClip`, **not** undo-able timeline commands.
+  // -------------------------------------------------------------------
+
+  /** Merges a freshly-transcribed `Vec<TranscriptEntry>` (from the final
+   * `transcription:progress` event, `done: true`) into the project, replacing
+   * any previous entries for the same `mediaId` (a re-transcribe of a media
+   * item supersedes its old transcript rather than duplicating it). */
+  async replaceTranscriptForMedia(mediaId: string, entries: TranscriptEntry[]): Promise<void> {
+    if (!this.project) return;
+    const project: ProjectV1 = structuredClone(snap(this.project));
+    project.transcript = project.transcript.filter((e) => e.media_id !== mediaId).concat(entries);
+    await this.pushWholeProject(project);
+  }
+
+  /** "Transcript Text Edit" mode's own affordance (`TranscriptEditor.svelte`):
+   * corrects one entry's `text` in place. Deliberately does not touch
+   * `words`/`start_us`/`end_us` or any clip/track — per master prompt §15
+   * this mode is purely cosmetic/corrective and must never itself produce a
+   * timeline edit. */
+  async updateTranscriptEntryText(entryId: string, text: string): Promise<void> {
+    if (!this.project) return;
+    const project: ProjectV1 = structuredClone(snap(this.project));
+    const entry = project.transcript.find((e) => e.id === entryId);
+    if (!entry || entry.text === text) return;
+    entry.text = text;
     await this.pushWholeProject(project);
   }
 

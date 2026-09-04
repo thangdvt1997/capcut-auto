@@ -14,6 +14,7 @@
   import TimelinePanel from "./components/layout/TimelinePanel.svelte";
   import ResizableSplit from "./components/layout/ResizableSplit.svelte";
   import ExportDialog from "./components/render/ExportDialog.svelte";
+  import ModelManagerDialog from "./components/transcription/ModelManagerDialog.svelte";
 </script>
 
 <main class="shell">
@@ -68,6 +69,13 @@
        ExportDialog.svelte's doc comment) — both should drive one shared
        `renderStore`-backed dialog instance, not two independent copies. -->
   <ExportDialog />
+
+  <!-- Mounted once here for the same reason as ExportDialog: reachable from
+       multiple entry points (TopBar's "Models…" button today, plus
+       `openModelManager()` for the concurrently-built Transcript Editor's
+       own "no model installed" prompt — see ModelManagerDialog.svelte's
+       doc comment) that should all drive one shared dialog instance. -->
+  <ModelManagerDialog />
 </main>
 
 <style>

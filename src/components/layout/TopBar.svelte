@@ -16,6 +16,12 @@
       ProjectV1 schema round-trips over IPC;
     - the status chip, which calls `get_shell_info` and proves the
       specta -> TypeScript pipeline end-to-end.
+
+  Phase 7 pass: added a "Models…" button, this app's chosen entry point for
+  the Model Manager dialog (`ModelManagerDialog.svelte` / `stores/
+  modelManager.svelte.ts`) in the absence of a built master-prompt §46
+  Settings surface — see that component's doc comment for the full
+  placement rationale.
 -->
 <script lang="ts">
   import { commands } from "../../types/bindings";
@@ -23,6 +29,7 @@
   import { t, currentLocale, setLocale, type Locale } from "../../lib/i18n.svelte";
   import { timeline } from "../../stores/timeline.svelte";
   import { renderStore } from "../../stores/render.svelte";
+  import { modelManagerStore } from "../../stores/modelManager.svelte";
 
   let shellInfo: ShellInfo | null = $state(null);
   let shellInfoError: string | null = $state(null);
@@ -118,6 +125,18 @@
 
   <button class="btn btn-ghost" onclick={createProject} title={t("topBar.newProjectTooltip")}>
     {t("topBar.newProjectButton")}
+  </button>
+
+  <!-- Phase 7 Model Manager entry point (see ModelManagerDialog.svelte's doc
+       comment for the full placement rationale: no Settings surface exists
+       yet to host this as a section, so it's a standalone dialog reachable
+       from here). -->
+  <button
+    class="btn btn-ghost"
+    onclick={() => modelManagerStore.openDialog()}
+    title={t("topBar.modelManagerTooltip")}
+  >
+    {t("topBar.modelManagerButton")}
   </button>
 
   {#if lastProject}

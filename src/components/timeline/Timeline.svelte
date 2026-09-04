@@ -33,6 +33,8 @@
   import SyncGroupDialog from "./SyncGroupDialog.svelte";
   import SilenceDetector from "../silence/SilenceDetector.svelte";
   import { silenceDetector } from "../../stores/silenceDetector.svelte";
+  import FillerWordDetector from "../filler/FillerWordDetector.svelte";
+  import { fillerWordDetector } from "../../stores/fillerWordDetector.svelte";
   import { renderStore } from "../../stores/render.svelte";
   import { t } from "../../lib/i18n.svelte";
 
@@ -305,6 +307,9 @@
       <button class="btn btn-ghost" onclick={() => silenceDetector.openFor()} title={t("mediaLibrary.detectSilence")}>
         {t("timelinePanel.silenceDetectorButton")}
       </button>
+      <button class="btn btn-ghost" onclick={() => fillerWordDetector.openFor()} title={t("fillerWordDetector.title")}>
+        {t("timelinePanel.fillerWordDetectorButton")}
+      </button>
       <button
         class="btn btn-ghost"
         disabled={timeline.selectedClipIds.size < 2}
@@ -403,6 +408,7 @@
 
   <SyncGroupDialog bind:open={syncDialogOpen} />
   <SilenceDetector />
+  <FillerWordDetector />
 </div>
 
 <style>
