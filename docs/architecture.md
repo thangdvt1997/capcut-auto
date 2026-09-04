@@ -68,6 +68,19 @@ All three conversions are implemented once, centrally, in each adapter module �
 
 `specta`/`tauri-specta` generates `src/types/` TypeScript types directly from the Rust command signatures and `ProjectV1` struct. This replaces autocut's manual "keep `types.ts` in sync" convention (a maintenance risk flagged in audit §6 risk #10) — the IPC surface here is much larger (full timeline + AI + CapCut adapter + jobs) so hand-mirroring would drift quickly.
 
+## Internationalization (i18n)
+
+Master prompt §47: initial UI languages are English and Vietnamese, "do NOT hardcode every string directly in components," and the architecture must be "ready for more languages." Implemented as a small hand-rolled module rather than a third-party i18n library — the app's actual requirement (nested-key lookup, `{{param}}` interpolation, English fallback, a persisted locale) doesn't justify another dependency.
+
+- **Locale catalogs**: `src/locales/en.json` and `src/locales/vi.json`. Each is a plain JSON object namespaced by component/area (`common`, `topBar`, `leftPanel`, `rightPanel`, `timelinePanel`, `mediaLibrary`, `videoPlayer`, …), with string leaves nested under those namespace keys — e.g. `mediaLibrary.importFiles`. Adding a language is adding one more file plus one entry in `SUPPORTED_LOCALES`; no component code changes.
+- **`src/lib/i18n.svelte.ts`**: the runtime. A `Locale = "en" | "vi"` union, a Svelte 5 `$state`-backed `I18nStore` class (same house pattern as `stores/media.svelte.ts`), and three stable call sites every component uses instead of literal strings:
+  - `t(key: string, params?: Record<string, string | number>): string` — dot-path lookup into the active locale's catalog (`t("mediaLibrary.importButton")`), `{{name}}`-style interpolation, and a fallback to the English catalog (then the raw key itself) when a key is missing from the active locale — so a missing Vietnamese string degrades to English rather than blank text.
+  - `setLocale(locale: Locale): void` — switches the active locale and persists the choice.
+  - `currentLocale(): Locale` — reactive read of the active locale (e.g. to drive a switcher's selected value).
+- **Persistence**: currently `localStorage` under the key `aiVideoEditor.locale`, defaulting to `"en"` when nothing is stored (OS/browser locale detection was judged not worth the complexity yet). This lives behind an exported `LocalePersistence` interface (`load`/`save`) specifically so the eventual Settings phase (master prompt §46) can swap in a Rust-backed app setting without touching `t()`/`setLocale()` call sites anywhere in the app — components never talk to `localStorage` directly.
+- **Language switcher**: a small English/Tiếng Việt `<select>` in `TopBar.svelte`, calling `setLocale()` on change. Language autonyms in the switcher itself (`English` / `Tiếng Việt`) are intentionally not translated, matching standard i18n UI convention.
+- **Retrofit scope**: every hardcoded string in the Phase 2/3 components (`TopBar`, `LeftPanel`, `RightPanel`, `TimelinePanel`, `MediaLibrary`, `VideoPlayer` — button labels, tab names, the "X — Phase N" placeholder text, tooltips, status/error text, dropdown options) now routes through `t()`. Non-linguistic tokens (timeline track shorthand `V1`/`V2`/`A1`/`CC`, numeric aspect-ratio labels like `16:9`) are deliberately left as literals — they aren't language-dependent text.
+
 ## Related documents
 
 - `docs/architecture-audit.md` — Phase 0 findings this design is based on.

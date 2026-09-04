@@ -13,6 +13,9 @@
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { onMount } from "svelte";
   import { mediaLibrary } from "../../stores/media.svelte";
+  import { timeline } from "../../stores/timeline.svelte";
+  import { commands } from "../../types/bindings";
+  import { t } from "../../lib/i18n.svelte";
   import type { MediaKind, MediaLibraryEntry } from "../../types/bindings";
 
   const SUPPORTED_EXTENSIONS = [
@@ -77,26 +80,45 @@
     searchTimer = setTimeout(() => void mediaLibrary.refresh(), 200);
   }
 
+  /**
+   * Sends this library item to the Phase 4 timeline as a new clip.
+   * `MediaLibraryEntry` (the SQLite-index shape this panel works with)
+   * doesn't carry every field `ProjectV1::MediaItem` needs (fps/codec/
+   * bitrate/etc.), so this re-probes the file — reusing the exact same
+   * `probe_media_file` command `VideoPlayer.svelte` already calls — rather
+   * than fabricating those fields. See `timeline.addMediaAsClip`'s doc
+   * comment for why this goes through the frontend at all (there is no
+   * backend "insert clip" command yet).
+   */
+  async function addToTimeline(entry: MediaLibraryEntry) {
+    const result = await commands.probeMediaFile(entry.path);
+    if (result.status === "ok") {
+      await timeline.addMediaAsClip(result.data);
+    } else {
+      mediaLibrary.lastError = result.error.message;
+    }
+  }
+
   function proxyLabel(entry: MediaLibraryEntry): string | null {
     const progress = mediaLibrary.proxyProgress[entry.id];
     if (progress && !progress.done) {
       const pct = progress.fraction !== null ? `${Math.round(progress.fraction * 100)}%` : "…";
-      return `Proxy ${pct}`;
+      return t("mediaLibrary.proxyProgress", { percent: pct });
     }
-    if (progress?.error) return "Proxy failed";
-    if (entry.proxy_path) return "Proxy ready";
+    if (progress?.error) return t("mediaLibrary.proxyFailed");
+    if (entry.proxy_path) return t("mediaLibrary.proxyReady");
     return null;
   }
 </script>
 
 <div class="media-library" class:drag-active={dragActive}>
   <div class="ml-toolbar">
-    <button class="btn" onclick={pickFiles}>Import Files</button>
-    <button class="btn" onclick={pickFolder}>Import Folder</button>
-    <select class="ml-select" bind:value={mediaLibrary.proxyMode} title="Proxy media mode (master prompt §8)">
-      <option value="off">Proxy: Off</option>
-      <option value="auto">Proxy: Auto</option>
-      <option value="always">Proxy: Always</option>
+    <button class="btn" onclick={pickFiles}>{t("mediaLibrary.importFiles")}</button>
+    <button class="btn" onclick={pickFolder}>{t("mediaLibrary.importFolder")}</button>
+    <select class="ml-select" bind:value={mediaLibrary.proxyMode} title={t("mediaLibrary.proxyModeTooltip")}>
+      <option value="off">{t("mediaLibrary.proxyOff")}</option>
+      <option value="auto">{t("mediaLibrary.proxyAuto")}</option>
+      <option value="always">{t("mediaLibrary.proxyAlways")}</option>
     </select>
   </div>
 
@@ -104,7 +126,7 @@
     <input
       class="ml-search-input"
       type="text"
-      placeholder="Search filename or tag…"
+      placeholder={t("mediaLibrary.searchPlaceholder")}
       bind:value={mediaLibrary.searchQuery}
       oninput={onSearchInput}
     />
@@ -113,10 +135,10 @@
       bind:value={mediaLibrary.kindFilter}
       onchange={() => void mediaLibrary.refresh()}
     >
-      <option value={null}>All</option>
-      <option value="video">Video</option>
-      <option value="audio">Audio</option>
-      <option value="image">Image</option>
+      <option value={null}>{t("mediaLibrary.filterAll")}</option>
+      <option value="video">{t("mediaLibrary.filterVideo")}</option>
+      <option value="audio">{t("mediaLibrary.filterAudio")}</option>
+      <option value="image">{t("mediaLibrary.filterImage")}</option>
     </select>
   </div>
 
@@ -124,14 +146,14 @@
     <div class="ml-error">{mediaLibrary.lastError}</div>
   {/if}
   {#if mediaLibrary.importing}
-    <div class="ml-status muted-2">Importing…</div>
+    <div class="ml-status muted-2">{t("mediaLibrary.importing")}</div>
   {/if}
 
   <div class="ml-grid">
     {#if mediaLibrary.entries.length === 0 && !mediaLibrary.loading}
       <div class="ml-empty muted-2">
-        No media yet. Drag & drop files here, or use Import Files / Import Folder.
-        <br />Supported: MP4/MOV/MKV/AVI/WEBM/M4V, MP3/WAV/AAC/M4A/FLAC, PNG/JPG/JPEG/WEBP.
+        {t("mediaLibrary.emptyTitle")}
+        <br />{t("mediaLibrary.emptySupported")}
       </div>
     {/if}
     {#each mediaLibrary.entries as entry (entry.id)}
@@ -162,6 +184,24 @@
           {/if}
         </div>
         <span
+          class="ml-add-timeline"
+          role="button"
+          tabindex="0"
+          onclick={(e) => {
+            e.stopPropagation();
+            void addToTimeline(entry);
+          }}
+          onkeydown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.stopPropagation();
+              void addToTimeline(entry);
+            }
+          }}
+          title={t("mediaLibrary.addToTimeline")}
+        >
+          +
+        </span>
+        <span
           class="ml-remove"
           role="button"
           tabindex="0"
@@ -175,7 +215,7 @@
               void mediaLibrary.remove(entry.id);
             }
           }}
-          title="Remove from library"
+          title={t("mediaLibrary.removeFromLibrary")}
         >
           ×
         </span>
@@ -184,7 +224,7 @@
   </div>
 
   {#if dragActive}
-    <div class="ml-drop-overlay">Drop to import</div>
+    <div class="ml-drop-overlay">{t("mediaLibrary.dropToImport")}</div>
   {/if}
 </div>
 
@@ -320,6 +360,22 @@
     cursor: pointer;
   }
   .ml-remove:hover { background: var(--neg); }
+  .ml-add-timeline {
+    position: absolute;
+    top: 2px;
+    right: 22px;
+    width: 16px;
+    height: 16px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: hsl(0 0% 0% / 0.5);
+    color: hsl(0 0% 100%);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .ml-add-timeline:hover { background: var(--accent); }
   .ml-drop-overlay {
     position: absolute;
     inset: 0;

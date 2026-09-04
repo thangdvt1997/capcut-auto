@@ -7,3 +7,4 @@
 pub mod diagnostics;
 pub mod media;
 pub mod project;
+pub mod timeline;

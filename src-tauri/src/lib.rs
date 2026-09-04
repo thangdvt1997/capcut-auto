@@ -38,9 +38,29 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::media::import_media_folder,
         commands::media::generate_media_proxy,
         commands::media::compute_media_waveform,
+        commands::media::generate_thumbnail_strip,
         commands::media::search_media_library,
         commands::media::list_media_library,
         commands::media::remove_media_from_library,
+        commands::timeline::load_timeline_project,
+        commands::timeline::get_timeline_project,
+        commands::timeline::split_clip,
+        commands::timeline::trim_clip_start,
+        commands::timeline::trim_clip_end,
+        commands::timeline::move_clip,
+        commands::timeline::delete_clip,
+        commands::timeline::delete_clips,
+        commands::timeline::duplicate_clip,
+        commands::timeline::set_track_locked,
+        commands::timeline::set_track_hidden,
+        commands::timeline::set_track_muted,
+        commands::timeline::set_track_solo,
+        commands::timeline::effective_track_mute_state,
+        commands::timeline::undo_timeline,
+        commands::timeline::redo_timeline,
+        commands::timeline::copy_clips,
+        commands::timeline::paste_clips,
+        commands::timeline::snap_to_candidates,
     ])
 }
 
@@ -93,6 +113,11 @@ pub fn run() {
             // media library.
             commands::media::init_media_library(app.handle())
                 .expect("failed to initialize media library database");
+            // The live timeline session (current project + undo history +
+            // clipboard), managed the same way as `MediaLibrary` above.
+            // Starts empty; `commands::timeline::load_timeline_project`
+            // populates it once a project is opened/created.
+            tauri::Manager::manage(app, crate::timeline::session::TimelineState::default());
             Ok(())
         })
         .run(tauri::generate_context!())

@@ -578,6 +578,93 @@ pub async fn compute_media_waveform(
 }
 
 // ---------------------------------------------------------------------------
+// Thumbnail strip (timeline clip filmstrip)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct ThumbnailStripFrame {
+    pub timestamp_us: i64,
+    pub path: String,
+}
+
+/// Generates `count` evenly-spaced frame thumbnails across `[0, duration_us)`
+/// for the Phase 4 timeline's clip filmstrip display (master prompt §10
+/// "thumbnail strip"). Thin IPC wiring only, per this task's narrow-command
+/// exception: reuses the exact same `media::thumbnail::generate_video_thumbnail`
+/// single-frame extractor Phase 3 already implemented and tested for the
+/// media-library card thumbnail — this command just calls it `count` times
+/// at different timestamps. Results are cached under this media id's cache
+/// directory (`{media_cache}/{media_id}/strip/{index}.jpg`) so a repeat call
+/// for the same media/count (e.g. re-requesting the strip after a zoom
+/// change) skips regenerating frames that already exist on disk.
+#[tauri::command]
+#[specta::specta]
+pub async fn generate_thumbnail_strip(
+    app: AppHandle,
+    media_id: String,
+    source_path: String,
+    duration_us: i64,
+    count: u32,
+) -> Result<Vec<ThumbnailStripFrame>, AppErrorPayload> {
+    let count = i64::from(count.clamp(1, 64));
+    let source = PathBuf::from(&source_path);
+    if !source.exists() {
+        return Err(AppErrorPayload::from(&MediaError::PathNotFound {
+            path: source_path,
+        }));
+    }
+    let cache_dir = media_cache_dir(&app).map_err(|e| AppErrorPayload::from(&e))?;
+    let strip_dir = cache_dir.join(&media_id).join("strip");
+
+    let app_for_task = app.clone();
+    let source_path_for_task = source_path.clone();
+    let frames = tauri::async_runtime::spawn_blocking(
+        move || -> Result<Vec<ThumbnailStripFrame>, MediaError> {
+            let ffmpeg = resolve_ffmpeg(&app_for_task)?;
+            std::fs::create_dir_all(&strip_dir).map_err(|e| MediaError::ThumbnailFailed {
+                path: source_path_for_task.clone(),
+                details: format!("creating thumbnail strip dir {}: {e}", strip_dir.display()),
+            })?;
+
+            let span = duration_us.max(1);
+            let mut out = Vec::with_capacity(count as usize);
+            for i in 0..count {
+                // Evenly spaced sample points, offset half a slot in so the
+                // first/last frame isn't exactly the clip's first/last
+                // instant (same "don't sample frame zero" reasoning as
+                // `thumbnail::pick_thumbnail_timestamp_us`).
+                let timestamp_us = ((i * 2 + 1) * span) / (count * 2);
+                let out_path = strip_dir.join(format!("{i}.jpg"));
+                if !out_path.exists() {
+                    thumbnail::generate_video_thumbnail(&ffmpeg, &source, &out_path, timestamp_us)?;
+                }
+                out.push((timestamp_us, out_path));
+            }
+            Ok(out
+                .into_iter()
+                .map(|(timestamp_us, path)| ThumbnailStripFrame {
+                    timestamp_us,
+                    path: path.to_string_lossy().to_string(),
+                })
+                .collect())
+        },
+    )
+    .await
+    .map_err(|e| {
+        AppErrorPayload::from(&MediaError::ThumbnailFailed {
+            path: source_path.clone(),
+            details: format!("thumbnail strip task panicked: {e}"),
+        })
+    })?
+    .map_err(|e| AppErrorPayload::from(&e))?;
+
+    for frame in &frames {
+        allow_asset_path(&app, Path::new(&frame.path));
+    }
+    Ok(frames)
+}
+
+// ---------------------------------------------------------------------------
 // Library search / listing / removal
 // ---------------------------------------------------------------------------
 

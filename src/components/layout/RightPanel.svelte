@@ -3,15 +3,17 @@
   Properties. Placeholders in Phase 2, same pattern as LeftPanel.svelte.
 -->
 <script lang="ts">
+  import { t } from "../../lib/i18n.svelte";
+
   type TabId = "inspector" | "ai-edit" | "properties";
-  const tabs: { id: TabId; label: string; phase: string }[] = [
-    { id: "inspector", label: "Inspector", phase: "Inspector — Phase 4" },
-    { id: "ai-edit", label: "AI Edit", phase: "AI Edit Plan — Phase 10" },
-    { id: "properties", label: "Properties", phase: "Clip Properties — Phase 4" },
+  const tabs: { id: TabId; labelKey: string; phaseKey: string }[] = [
+    { id: "inspector", labelKey: "rightPanel.tabInspector", phaseKey: "rightPanel.phaseInspector" },
+    { id: "ai-edit", labelKey: "rightPanel.tabAiEdit", phaseKey: "rightPanel.phaseAiEdit" },
+    { id: "properties", labelKey: "rightPanel.tabProperties", phaseKey: "rightPanel.phaseProperties" },
   ];
 
   let active: TabId = $state("inspector");
-  let activeTab = $derived(tabs.find((t) => t.id === active)!);
+  let activeTab = $derived(tabs.find((tab) => tab.id === active)!);
 
   import PanelPlaceholder from "./PanelPlaceholder.svelte";
 </script>
@@ -24,12 +26,12 @@
         class:active={tab.id === active}
         onclick={() => (active = tab.id)}
       >
-        {tab.label}
+        {t(tab.labelKey)}
       </button>
     {/each}
   </div>
   <div class="panel-body">
-    <PanelPlaceholder title={activeTab.label} phase={activeTab.phase} />
+    <PanelPlaceholder title={t(activeTab.labelKey)} phase={t(activeTab.phaseKey)} />
   </div>
 </div>
 

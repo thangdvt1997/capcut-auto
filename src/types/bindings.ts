@@ -85,6 +85,26 @@ async computeMediaWaveform(path: string, bins: number) : Promise<Result<Waveform
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Generates `count` evenly-spaced frame thumbnails across `[0, duration_us)`
+ * for the Phase 4 timeline's clip filmstrip display (master prompt §10
+ * "thumbnail strip"). Thin IPC wiring only, per this task's narrow-command
+ * exception: reuses the exact same `media::thumbnail::generate_video_thumbnail`
+ * single-frame extractor Phase 3 already implemented and tested for the
+ * media-library card thumbnail — this command just calls it `count` times
+ * at different timestamps. Results are cached under this media id's cache
+ * directory (`{media_cache}/{media_id}/strip/{index}.jpg`) so a repeat call
+ * for the same media/count (e.g. re-requesting the strip after a zoom
+ * change) skips regenerating frames that already exist on disk.
+ */
+async generateThumbnailStrip(mediaId: string, sourcePath: string, durationUs: number, count: number) : Promise<Result<ThumbnailStripFrame[], AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("generate_thumbnail_strip", { mediaId, sourcePath, durationUs, count }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async searchMediaLibrary(query: string | null, kind: MediaKind | null, limit: number) : Promise<Result<MediaLibraryEntry[], AppErrorPayload>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("search_media_library", { query, kind, limit }) };
@@ -108,6 +128,176 @@ async removeMediaFromLibrary(id: string) : Promise<Result<null, AppErrorPayload>
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Loads `project` into the timeline session, replacing whatever was there
+ * (fresh undo history, empty clipboard). Called whenever the frontend
+ * opens or creates a project.
+ */
+async loadTimelineProject(project: ProjectV1) : Promise<void> {
+    await TAURI_INVOKE("load_timeline_project", { project });
+},
+/**
+ * Fetches the current in-session project (e.g. after a reload, or just to
+ * resync).
+ */
+async getTimelineProject() : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_timeline_project") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async splitClip(clipId: string, splitAtUs: number) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("split_clip", { clipId, splitAtUs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async trimClipStart(clipId: string, newStartUs: number) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("trim_clip_start", { clipId, newStartUs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async trimClipEnd(clipId: string, newEndUs: number) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("trim_clip_end", { clipId, newEndUs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async moveClip(clipId: string, targetTrackId: string, newPositionUs: number) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("move_clip", { clipId, targetTrackId, newPositionUs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteClip(clipId: string) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_clip", { clipId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Deletes every clip in `clip_ids` as one atomic undo step — the
+ * backend-side multi-select delete (master prompt §11's "composite/batch
+ * command" requirement) so the frontend never needs N separate undo
+ * entries for one multi-select action.
+ */
+async deleteClips(clipIds: string[]) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_clips", { clipIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async duplicateClip(clipId: string, newPositionUs: number, targetTrackId: string | null) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("duplicate_clip", { clipId, newPositionUs, targetTrackId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setTrackLocked(trackId: string, locked: boolean) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_track_locked", { trackId, locked }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setTrackHidden(trackId: string, hidden: boolean) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_track_hidden", { trackId, hidden }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setTrackMuted(trackId: string, muted: boolean) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_track_muted", { trackId, muted }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setTrackSolo(trackId: string, solo: boolean) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_track_solo", { trackId, solo }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Pure query, keyed by track id: whether solo state on any audio track
+ * currently makes this track's audio effectively muted (master prompt: "if
+ * any track has solo = true, all non-solo audio tracks are effectively
+ * muted"). For the render/preview layer to consult; not itself an undoable
+ * edit.
+ */
+async effectiveTrackMuteState() : Promise<Result<Partial<{ [key in string]: boolean }>, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("effective_track_mute_state") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async undoTimeline() : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("undo_timeline") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async redoTimeline() : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("redo_timeline") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async copyClips(clipIds: string[]) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("copy_clips", { clipIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pasteClips(targetTrackId: string | null, targetPositionUs: number) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("paste_clips", { targetTrackId, targetPositionUs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Given a target time and a set of candidate snap points (other clip
+ * edges, the playhead, markers — supplied by the frontend, which owns that
+ * UI-level knowledge), returns the nearest candidate within `threshold_us`,
+ * or `None`. Pure function, no session required.
+ */
+async snapToCandidates(targetUs: number, candidates: number[], thresholdUs: number) : Promise<number | null> {
+    return await TAURI_INVOKE("snap_to_candidates", { targetUs, candidates, thresholdUs });
 }
 }
 
@@ -279,6 +469,7 @@ clip_ids: string[];
  * Relative alignment, keyed by clip id.
  */
 offsets_us: Partial<{ [key in string]: number }> }
+export type ThumbnailStripFrame = { timestamp_us: number; path: string }
 export type Track = { id: string; kind: TrackKind; name: string; 
 /**
  * Stacking order; higher draws on top (pyJianYingDraft convention,

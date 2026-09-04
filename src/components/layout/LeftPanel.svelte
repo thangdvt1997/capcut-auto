@@ -4,16 +4,18 @@
   search, thumbnails); Transcript/Templates/AI remain placeholders.
 -->
 <script lang="ts">
+  import { t } from "../../lib/i18n.svelte";
+
   type TabId = "media" | "transcript" | "templates" | "ai";
-  const tabs: { id: TabId; label: string; phase: string }[] = [
-    { id: "media", label: "Media", phase: "Media Library — Phase 3" },
-    { id: "transcript", label: "Transcript", phase: "Transcript Editor — Phase 7" },
-    { id: "templates", label: "Templates", phase: "Templates — Phase 11" },
-    { id: "ai", label: "AI", phase: "AI Editor — Phase 10" },
+  const tabs: { id: TabId; labelKey: string; phaseKey: string }[] = [
+    { id: "media", labelKey: "leftPanel.tabMedia", phaseKey: "leftPanel.phaseMedia" },
+    { id: "transcript", labelKey: "leftPanel.tabTranscript", phaseKey: "leftPanel.phaseTranscript" },
+    { id: "templates", labelKey: "leftPanel.tabTemplates", phaseKey: "leftPanel.phaseTemplates" },
+    { id: "ai", labelKey: "leftPanel.tabAi", phaseKey: "leftPanel.phaseAi" },
   ];
 
   let active: TabId = $state("media");
-  let activeTab = $derived(tabs.find((t) => t.id === active)!);
+  let activeTab = $derived(tabs.find((tab) => tab.id === active)!);
 
   import PanelPlaceholder from "./PanelPlaceholder.svelte";
   import MediaLibrary from "../media/MediaLibrary.svelte";
@@ -27,7 +29,7 @@
         class:active={tab.id === active}
         onclick={() => (active = tab.id)}
       >
-        {tab.label}
+        {t(tab.labelKey)}
       </button>
     {/each}
   </div>
@@ -35,7 +37,7 @@
     {#if active === "media"}
       <MediaLibrary />
     {:else}
-      <PanelPlaceholder title={activeTab.label} phase={activeTab.phase} />
+      <PanelPlaceholder title={t(activeTab.labelKey)} phase={t(activeTab.phaseKey)} />
     {/if}
   </div>
 </div>
