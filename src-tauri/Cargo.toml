@@ -36,6 +36,11 @@ tauri-specta = { version = "2.0.0-rc.21", features = ["derive", "typescript"] }
 # libsqlite3, so Windows packaging (Phase 12) never needs to ship or detect
 # a separate SQLite DLL for the media library index (master prompt §35).
 rusqlite = { version = "0.31", features = ["bundled"] }
+# Silero-VAD-via-ONNX voice activity detector. Same crate/version autocut
+# depends on (`vendor/autocut/src-tauri/Cargo.toml`) — independently
+# licensed and reusable regardless of autocut's own code-license status
+# (docs/architecture-audit.md §3). Backs `vad::silero::SileroVadProvider`.
+voice_activity_detector = "0.2"
 
 [features]
 default = ["custom-protocol"]

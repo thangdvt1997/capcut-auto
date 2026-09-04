@@ -52,7 +52,9 @@ pub fn init_media_library(app: &AppHandle) -> Result<(), MediaError> {
     Ok(())
 }
 
-fn resolve_ffmpeg(app: &AppHandle) -> Result<PathBuf, MediaError> {
+/// `pub(crate)`, not private: `commands::vad` reuses this exact resolution
+/// logic to extract PCM for VAD scoring, rather than duplicating it.
+pub(crate) fn resolve_ffmpeg(app: &AppHandle) -> Result<PathBuf, MediaError> {
     let resource_dir = app.path().resource_dir().ok();
     binaries::ffmpeg_path(resource_dir.as_deref()).map_err(|e| MediaError::BinaryNotFound {
         tool: "ffmpeg".into(),

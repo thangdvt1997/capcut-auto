@@ -113,6 +113,20 @@ fn timeline_delta_to_source_delta(delta_us: i64, speed: f64) -> i64 {
     (delta_us as f64 * speed).round() as i64
 }
 
+/// The inverse of `timeline_delta_to_source_delta`: converts a *source*
+/// microsecond delta into the equivalent *timeline* microsecond delta for a
+/// clip playing at `speed`. `pub(crate)` (not `fn`-private) because
+/// `timeline::silence` needs it to translate a `Cut`'s source-media-relative
+/// interval into a timeline position before it can call `split_clip`/
+/// `trim_clip_start`/`trim_clip_end`, which all take timeline positions.
+pub(crate) fn source_delta_to_timeline_delta(delta_us: i64, speed: f64) -> i64 {
+    if speed > 0.0 {
+        (delta_us as f64 / speed).round() as i64
+    } else {
+        delta_us
+    }
+}
+
 fn find_overlap<'a>(
     project: &'a ProjectV1,
     track_id: &str,

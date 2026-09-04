@@ -14,6 +14,7 @@
   import { onMount } from "svelte";
   import { mediaLibrary } from "../../stores/media.svelte";
   import { timeline } from "../../stores/timeline.svelte";
+  import { silenceDetector } from "../../stores/silenceDetector.svelte";
   import { commands } from "../../types/bindings";
   import { t } from "../../lib/i18n.svelte";
   import type { MediaKind, MediaLibraryEntry } from "../../types/bindings";
@@ -97,6 +98,35 @@
     } else {
       mediaLibrary.lastError = result.error.message;
     }
+  }
+
+  /**
+   * Opens the Phase 5 Silence Detector preselected to this library entry
+   * (second entry point besides `Timeline.svelte`'s toolbar button — see
+   * `SilenceDetector.svelte`'s doc comment for the placement rationale).
+   * Reuses whatever clip on the timeline already references this file (by
+   * `source_path` — `probe_media_file` mints a fresh `MediaItem.id` on
+   * every call, so matching by id would create a duplicate clip each time
+   * this is pressed) or, if this media isn't on the timeline yet, adds it
+   * via the same `addToTimeline` bridge above before opening the panel.
+   */
+  async function detectSilence(entry: MediaLibraryEntry) {
+    const existingMedia = timeline.media.find((m) => m.source_path === entry.path);
+    if (existingMedia) {
+      const existingClip = timeline.clips.find((c) => c.media_id === existingMedia.id);
+      if (existingClip) {
+        silenceDetector.openFor({ trackId: existingClip.track_id, clipId: existingClip.id });
+        return;
+      }
+    }
+    const result = await commands.probeMediaFile(entry.path);
+    if (result.status !== "ok") {
+      mediaLibrary.lastError = result.error.message;
+      return;
+    }
+    await timeline.addMediaAsClip(result.data);
+    const newClip = timeline.clips.find((c) => c.media_id === result.data.id);
+    silenceDetector.openFor(newClip ? { trackId: newClip.track_id, clipId: newClip.id } : {});
   }
 
   function proxyLabel(entry: MediaLibraryEntry): string | null {
@@ -201,6 +231,26 @@
         >
           +
         </span>
+        {#if entry.kind !== "image"}
+          <span
+            class="ml-detect-silence"
+            role="button"
+            tabindex="0"
+            onclick={(e) => {
+              e.stopPropagation();
+              void detectSilence(entry);
+            }}
+            onkeydown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.stopPropagation();
+                void detectSilence(entry);
+              }
+            }}
+            title={t("mediaLibrary.detectSilence")}
+          >
+            〜
+          </span>
+        {/if}
         <span
           class="ml-remove"
           role="button"
@@ -376,6 +426,22 @@
     cursor: pointer;
   }
   .ml-add-timeline:hover { background: var(--accent); }
+  .ml-detect-silence {
+    position: absolute;
+    top: 2px;
+    right: 42px;
+    width: 16px;
+    height: 16px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: hsl(0 0% 0% / 0.5);
+    color: hsl(0 0% 100%);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .ml-detect-silence:hover { background: var(--warn); }
   .ml-drop-overlay {
     position: absolute;
     inset: 0;

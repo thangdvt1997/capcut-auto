@@ -15,11 +15,14 @@ use std::collections::HashMap;
 use tauri::State;
 
 use crate::error::AppErrorPayload;
-use crate::project::ProjectV1;
+use crate::project::{Cut, ProjectV1};
 use crate::timeline::clipboard;
+use crate::timeline::command::{BatchCommand, Command, SetCutsCommand};
 use crate::timeline::error::TimelineError;
 use crate::timeline::ops;
 use crate::timeline::session::{TimelineSession, TimelineState};
+use crate::timeline::silence;
+use crate::timeline::sync::{self, SyncAlignment};
 
 fn with_session<T>(
     state: &TimelineState,
@@ -303,6 +306,117 @@ pub fn paste_clips(
             target_track_id.as_deref(),
             target_position_us,
         )?;
+        session.apply(command)?;
+        Ok(session.project.clone())
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Silence removal — Apply Cuts (master prompt §12)
+// ---------------------------------------------------------------------------
+
+/// Combines the clip split/delete/trim edits `timeline::silence` derives
+/// from `cuts` with marking exactly those cuts `applied: true` in
+/// `ProjectV1::cuts`, as ONE outer `Batch` — so "Apply Cuts" is a single
+/// undo step covering both the timeline mutation and its provenance record.
+/// "Reset" is just `undo_timeline` (see `timeline::silence` module doc
+/// comment) — no separate reset command exists or is needed.
+fn with_applied_cuts_marked(session: &TimelineSession, edit: Command, cuts: &[Cut]) -> Command {
+    let mut new_cuts = session.project.cuts.clone();
+    for cut in cuts {
+        if let Some(existing) = new_cuts.iter_mut().find(|c| c.id == cut.id) {
+            existing.applied = true;
+        } else {
+            let mut applied = cut.clone();
+            applied.applied = true;
+            new_cuts.push(applied);
+        }
+    }
+    Command::Batch(BatchCommand {
+        commands: vec![
+            edit,
+            Command::SetCuts(SetCutsCommand {
+                old: session.project.cuts.clone(),
+                new: new_cuts,
+            }),
+        ],
+    })
+}
+
+/// Applies every `Remove` cut in `cuts` (whose `source_media_id` matches
+/// `clip_id`'s media) to `clip_id`: split/trim/delete on the real timeline,
+/// as one atomic undo step, marking the applied cuts in `ProjectV1::cuts`.
+#[tauri::command]
+#[specta::specta]
+pub fn apply_silence_cuts(
+    state: State<'_, TimelineState>,
+    clip_id: String,
+    cuts: Vec<Cut>,
+) -> Result<ProjectV1, AppErrorPayload> {
+    with_session(&state, |session| {
+        let edit = silence::apply_cuts_to_clip(&session.project, &clip_id, &cuts)?;
+        let batch = with_applied_cuts_marked(session, edit, &cuts);
+        session.apply(batch)?;
+        Ok(session.project.clone())
+    })
+}
+
+/// Same as `apply_silence_cuts`, but for every clip currently on `track_id`
+/// (master prompt §12's "analysis track selection" applied at Apply time).
+#[tauri::command]
+#[specta::specta]
+pub fn apply_silence_cuts_to_track(
+    state: State<'_, TimelineState>,
+    track_id: String,
+    cuts: Vec<Cut>,
+) -> Result<ProjectV1, AppErrorPayload> {
+    with_session(&state, |session| {
+        let edit = silence::apply_cuts_to_track(&session.project, &track_id, &cuts)?;
+        let batch = with_applied_cuts_marked(session, edit, &cuts);
+        session.apply(batch)?;
+        Ok(session.project.clone())
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Multi-track sync (master prompt §39/§40)
+// ---------------------------------------------------------------------------
+
+/// Creates a `SyncGroup` from `clip_ids` using caller-supplied offsets
+/// (microseconds, one per clip id) — the reliable, always-available
+/// alignment path (`timeline::sync` module doc comment).
+#[tauri::command]
+#[specta::specta]
+pub fn create_sync_group_manual(
+    state: State<'_, TimelineState>,
+    clip_ids: Vec<String>,
+    offsets_us: HashMap<String, i64>,
+) -> Result<ProjectV1, AppErrorPayload> {
+    with_session(&state, |session| {
+        let command = sync::create_sync_group(
+            &session.project,
+            &clip_ids,
+            SyncAlignment::Manual(offsets_us),
+        )?;
+        session.apply(command)?;
+        Ok(session.project.clone())
+    })
+}
+
+/// Creates a `SyncGroup` from `clip_ids` using each clip's underlying
+/// `MediaItem::created_at` (RFC3339 wall-clock timestamp) — best-effort,
+/// second-resolution, NOT frame-accurate (`timeline::sync` module doc
+/// comment). Fails with `TIMELINE_TIMECODE_UNAVAILABLE` if any involved clip
+/// lacks the data; manual offset entry remains the fallback.
+#[tauri::command]
+#[specta::specta]
+pub fn create_sync_group_by_timecode(
+    state: State<'_, TimelineState>,
+    clip_ids: Vec<String>,
+) -> Result<ProjectV1, AppErrorPayload> {
+    with_session(&state, |session| {
+        let command =
+            sync::create_sync_group(&session.project, &clip_ids, SyncAlignment::Timecode)?;
         session.apply(command)?;
         Ok(session.project.clone())
     })

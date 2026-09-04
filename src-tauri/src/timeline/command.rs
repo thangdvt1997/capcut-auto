@@ -23,7 +23,7 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use crate::project::{Clip, ProjectV1, SyncGroup, Track};
+use crate::project::{Clip, Cut, ProjectV1, SyncGroup, Track};
 
 use super::error::TimelineError;
 
@@ -69,6 +69,20 @@ pub struct SetSyncGroupCommand {
     pub new: Option<SyncGroup>,
 }
 
+/// Whole-list swap of `ProjectV1::cuts`, mirroring `SetTrack`'s
+/// whole-object-swap style rather than adding per-`Cut` Insert/Remove
+/// primitives — the cuts list is provenance/audit metadata (`project::types`
+/// module doc comment), not a set of independently-addressed timeline
+/// entities, so one before/after snapshot of the field is the simplest
+/// correct primitive. Used by `timeline::silence::apply_cuts_to_clip` to
+/// mark the applied cuts `applied: true` as part of the *same* atomic
+/// `Batch` as the clip split/delete edits it produces.
+#[derive(Debug, Clone)]
+pub struct SetCutsCommand {
+    pub old: Vec<Cut>,
+    pub new: Vec<Cut>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct BatchCommand {
     pub commands: Vec<Command>,
@@ -81,6 +95,7 @@ pub enum Command {
     SetClip(SetClipCommand),
     SetTrack(SetTrackCommand),
     SetSyncGroup(SetSyncGroupCommand),
+    SetCuts(SetCutsCommand),
     Batch(BatchCommand),
 }
 
@@ -166,6 +181,10 @@ impl Command {
                 }
                 Ok(())
             }
+            Command::SetCuts(c) => {
+                project.cuts = c.new.clone();
+                Ok(())
+            }
             Command::Batch(b) => b.apply(project),
         }
     }
@@ -190,6 +209,10 @@ impl Command {
             }),
             Command::SetSyncGroup(c) => Command::SetSyncGroup(SetSyncGroupCommand {
                 group_id: c.group_id.clone(),
+                old: c.new.clone(),
+                new: c.old.clone(),
+            }),
+            Command::SetCuts(c) => Command::SetCuts(SetCutsCommand {
                 old: c.new.clone(),
                 new: c.old.clone(),
             }),
@@ -428,6 +451,39 @@ mod tests {
         let err = batch.apply(&mut project).unwrap_err();
         assert!(matches!(err, TimelineError::ClipNotFound { .. }));
         assert_eq!(serde_json::to_value(&project).unwrap(), before);
+    }
+
+    #[test]
+    fn set_cuts_undo_redo_round_trips() {
+        use crate::project::{CutKind, CutReason};
+
+        let mut project = project_with_one_clip();
+        let before = serde_json::to_value(&project).unwrap();
+
+        let new_cuts = vec![Cut {
+            id: "cut1".into(),
+            kind: CutKind::Remove,
+            source_media_id: "m1".into(),
+            start_us: 0,
+            end_us: 1_000_000,
+            reason: CutReason::Silence,
+            applied: false,
+        }];
+        let cmd = Command::SetCuts(SetCutsCommand {
+            old: project.cuts.clone(),
+            new: new_cuts.clone(),
+        });
+
+        let mut history = History::new(MAX_HISTORY);
+        history.apply(&mut project, cmd).unwrap();
+        assert_eq!(project.cuts.len(), 1);
+        assert_eq!(project.cuts[0].id, "cut1");
+
+        history.undo(&mut project).unwrap();
+        assert_eq!(serde_json::to_value(&project).unwrap(), before);
+
+        history.redo(&mut project).unwrap();
+        assert_eq!(project.cuts, new_cuts);
     }
 
     #[test]

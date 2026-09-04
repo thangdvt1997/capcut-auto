@@ -30,7 +30,17 @@
   import ClipView from "./ClipView.svelte";
   import Ruler from "./Ruler.svelte";
   import Markers from "./Markers.svelte";
+  import SyncGroupDialog from "./SyncGroupDialog.svelte";
+  import SilenceDetector from "../silence/SilenceDetector.svelte";
+  import { silenceDetector } from "../../stores/silenceDetector.svelte";
   import { t } from "../../lib/i18n.svelte";
+
+  // Phase 5 (master prompt §12/§39): both new dialogs are toolbar-triggered
+  // from here, next to the rest of the multi-select actions, since that's
+  // where the user already has clips selected/visible. See
+  // `SilenceDetector.svelte`/`SyncGroupDialog.svelte`'s own doc comments for
+  // the full placement rationale.
+  let syncDialogOpen = $state(false);
 
   const HEADER_WIDTH_PX = 168;
   const RULER_HEIGHT_PX = 26;
@@ -290,6 +300,19 @@
       <button class="btn btn-ghost" onclick={() => void timeline.splitAtPlayhead()} title={t("timelinePanel.splitAtPlayhead")}>✂</button>
       <button class="btn btn-ghost" onclick={() => timeline.addMarker(timeline.playheadUs)} title={t("timelinePanel.addMarker")}>◆+</button>
     </span>
+    <span class="tl-toolbar-group">
+      <button class="btn btn-ghost" onclick={() => silenceDetector.openFor()} title={t("mediaLibrary.detectSilence")}>
+        {t("timelinePanel.silenceDetectorButton")}
+      </button>
+      <button
+        class="btn btn-ghost"
+        disabled={timeline.selectedClipIds.size < 2}
+        onclick={() => (syncDialogOpen = true)}
+        title={timeline.selectedClipIds.size < 2 ? t("timelinePanel.syncGroupNeedsTwo") : t("timelinePanel.syncGroupButton")}
+      >
+        {t("timelinePanel.syncGroupButton")}
+      </button>
+    </span>
     <span class="tl-toolbar-spacer"></span>
     <span class="tl-toolbar-group">
       <button class="btn btn-ghost" onclick={() => timeline.zoomOut()} title={t("timelinePanel.zoomOut")}>−</button>
@@ -366,6 +389,9 @@
       </div>
     </div>
   {/if}
+
+  <SyncGroupDialog bind:open={syncDialogOpen} />
+  <SilenceDetector />
 </div>
 
 <style>

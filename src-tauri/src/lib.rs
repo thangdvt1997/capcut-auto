@@ -61,6 +61,13 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::timeline::copy_clips,
         commands::timeline::paste_clips,
         commands::timeline::snap_to_candidates,
+        commands::timeline::apply_silence_cuts,
+        commands::timeline::apply_silence_cuts_to_track,
+        commands::timeline::create_sync_group_manual,
+        commands::timeline::create_sync_group_by_timecode,
+        commands::vad::score_media_silence,
+        commands::vad::segment_media_silence,
+        commands::vad::build_silence_cutlist,
     ])
 }
 
@@ -118,6 +125,11 @@ pub fn run() {
             // Starts empty; `commands::timeline::load_timeline_project`
             // populates it once a project is opened/created.
             tauri::Manager::manage(app, crate::timeline::session::TimelineState::default());
+            // VAD chunk-score cache (master prompt §13 / Phase 5), keyed by
+            // media id — see `crate::vad::cache` module doc comment for why
+            // the expensive scoring phase is cached here rather than
+            // recomputed on every parameter change.
+            tauri::Manager::manage(app, crate::vad::VadCache::default());
             Ok(())
         })
         .run(tauri::generate_context!())

@@ -51,6 +51,21 @@ pub enum TimelineError {
 
     #[error("clipboard is empty")]
     ClipboardEmpty,
+
+    #[error("clip {clip_id} has no media reference; silence cuts can't be applied to it")]
+    ClipHasNoMedia { clip_id: String },
+
+    #[error("media not found: {media_id}")]
+    MediaNotFound { media_id: String },
+
+    #[error("invalid sync group request: {details}")]
+    InvalidSyncGroup { details: String },
+
+    #[error("clip {clip_id} is already in sync group {group_id}")]
+    ClipAlreadyGrouped { clip_id: String, group_id: String },
+
+    #[error("timecode-based sync unavailable: {details}")]
+    TimecodeUnavailable { details: String },
 }
 
 impl From<&TimelineError> for AppErrorPayload {
@@ -133,6 +148,41 @@ impl From<&TimelineError> for AppErrorPayload {
                     .recoverable(true)
                     .with_suggestion("Copy one or more clips before pasting.")
             }
+            TimelineError::ClipHasNoMedia { clip_id } => {
+                AppErrorPayload::new("TIMELINE_CLIP_HAS_NO_MEDIA", message)
+                    .with_details(clip_id.clone())
+                    .recoverable(true)
+                    .with_suggestion(
+                        "Silence detection only applies to clips backed by imported media.",
+                    )
+            }
+            TimelineError::MediaNotFound { media_id } => {
+                AppErrorPayload::new("TIMELINE_MEDIA_NOT_FOUND", message)
+                    .with_details(media_id.clone())
+                    .recoverable(true)
+                    .with_suggestion("The media item may have been removed from the project.")
+            }
+            TimelineError::InvalidSyncGroup { details } => {
+                AppErrorPayload::new("TIMELINE_INVALID_SYNC_GROUP", message)
+                    .with_details(details.clone())
+                    .recoverable(true)
+                    .with_suggestion("Select at least two clips and provide an offset for each.")
+            }
+            TimelineError::ClipAlreadyGrouped { clip_id, group_id } => {
+                AppErrorPayload::new("TIMELINE_CLIP_ALREADY_GROUPED", message)
+                    .with_details(format!("clip={clip_id} group={group_id}"))
+                    .recoverable(true)
+                    .with_suggestion("Remove the clip from its current sync group first.")
+            }
+            TimelineError::TimecodeUnavailable { details } => {
+                AppErrorPayload::new("TIMELINE_TIMECODE_UNAVAILABLE", message)
+                    .with_details(details.clone())
+                    .recoverable(true)
+                    .with_suggestion(
+                        "Not every selected clip's media has an embedded creation timestamp; \
+                         enter offsets manually instead.",
+                    )
+            }
         }
     }
 }
@@ -197,6 +247,37 @@ mod tests {
             (TimelineError::NothingToRedo, "TIMELINE_NOTHING_TO_REDO"),
             (TimelineError::NoActiveProject, "TIMELINE_NO_ACTIVE_PROJECT"),
             (TimelineError::ClipboardEmpty, "TIMELINE_CLIPBOARD_EMPTY"),
+            (
+                TimelineError::ClipHasNoMedia {
+                    clip_id: "c1".into(),
+                },
+                "TIMELINE_CLIP_HAS_NO_MEDIA",
+            ),
+            (
+                TimelineError::MediaNotFound {
+                    media_id: "m1".into(),
+                },
+                "TIMELINE_MEDIA_NOT_FOUND",
+            ),
+            (
+                TimelineError::InvalidSyncGroup {
+                    details: "x".into(),
+                },
+                "TIMELINE_INVALID_SYNC_GROUP",
+            ),
+            (
+                TimelineError::ClipAlreadyGrouped {
+                    clip_id: "c1".into(),
+                    group_id: "g1".into(),
+                },
+                "TIMELINE_CLIP_ALREADY_GROUPED",
+            ),
+            (
+                TimelineError::TimecodeUnavailable {
+                    details: "x".into(),
+                },
+                "TIMELINE_TIMECODE_UNAVAILABLE",
+            ),
         ];
         for (err, code) in cases {
             let payload = AppErrorPayload::from(&err);

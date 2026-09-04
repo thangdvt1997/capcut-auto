@@ -298,6 +298,98 @@ async pasteClips(targetTrackId: string | null, targetPositionUs: number) : Promi
  */
 async snapToCandidates(targetUs: number, candidates: number[], thresholdUs: number) : Promise<number | null> {
     return await TAURI_INVOKE("snap_to_candidates", { targetUs, candidates, thresholdUs });
+},
+/**
+ * Applies every `Remove` cut in `cuts` (whose `source_media_id` matches
+ * `clip_id`'s media) to `clip_id`: split/trim/delete on the real timeline,
+ * as one atomic undo step, marking the applied cuts in `ProjectV1::cuts`.
+ */
+async applySilenceCuts(clipId: string, cuts: Cut[]) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("apply_silence_cuts", { clipId, cuts }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Same as `apply_silence_cuts`, but for every clip currently on `track_id`
+ * (master prompt §12's "analysis track selection" applied at Apply time).
+ */
+async applySilenceCutsToTrack(trackId: string, cuts: Cut[]) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("apply_silence_cuts_to_track", { trackId, cuts }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Creates a `SyncGroup` from `clip_ids` using caller-supplied offsets
+ * (microseconds, one per clip id) — the reliable, always-available
+ * alignment path (`timeline::sync` module doc comment).
+ */
+async createSyncGroupManual(clipIds: string[], offsetsUs: Partial<{ [key in string]: number }>) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_sync_group_manual", { clipIds, offsetsUs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Creates a `SyncGroup` from `clip_ids` using each clip's underlying
+ * `MediaItem::created_at` (RFC3339 wall-clock timestamp) — best-effort,
+ * second-resolution, NOT frame-accurate (`timeline::sync` module doc
+ * comment). Fails with `TIMELINE_TIMECODE_UNAVAILABLE` if any involved clip
+ * lacks the data; manual offset entry remains the fallback.
+ */
+async createSyncGroupByTimecode(clipIds: string[]) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_sync_group_by_timecode", { clipIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * **Analyze** (master prompt §12): extracts 16kHz mono PCM from
+ * `media_path` and scores it with `SileroVadProvider`, caching the result
+ * in `VadCache` under `media_id`. This is the expensive, model-dependent
+ * half of the two-phase design — call it once per media file; every
+ * subsequent parameter tweak should call `segment_media_silence` instead,
+ * not this command again.
+ */
+async scoreMediaSilence(mediaId: string, mediaPath: string) : Promise<Result<VadScoreSummary, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("score_media_silence", { mediaId, mediaPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * **Preview Cuts' VAD half**: re-segments the *already-cached* chunk scores
+ * for `media_id` under new `params` — cheap, pure post-processing, never
+ * touches the model. Errors with `VAD_NOT_SCORED` if `score_media_silence`
+ * hasn't been called for this `media_id` yet.
+ */
+async segmentMediaSilence(mediaId: string, params: VadParams) : Promise<Result<SpeechSegment[], AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("segment_media_silence", { mediaId, params }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * **Preview Cuts' cutlist half**: builds the proposed (`applied: false`)
+ * `Remove` cuts from `segments` per `cut_params` — pure, stateless, no
+ * caching needed (cheap enough to call on every padding/merge-gap slider
+ * change).
+ */
+async buildSilenceCutlist(sourceMediaId: string, mediaDurationUs: number, segments: SpeechSegment[], cutParams: CutParams) : Promise<Cut[]> {
+    return await TAURI_INVOKE("build_silence_cutlist", { sourceMediaId, mediaDurationUs, segments, cutParams });
 }
 }
 
@@ -361,6 +453,18 @@ transform_x: number; transform_y: number }
  */
 export type Cut = { id: string; kind: CutKind; source_media_id: string; start_us: number; end_us: number; reason: CutReason; applied: boolean }
 export type CutKind = "remove" | "keep"
+/**
+ * Everything master prompt §12 lists that isn't already a `VadParams`
+ * concern (threshold/min-silence/min-speech live in `super::provider`,
+ * applied *before* this stage ever sees the segments).
+ */
+export type CutParams = { padding_before_us: number; padding_after_us: number; 
+/**
+ * "Merge nearby speech": two kept (already-padded) regions closer than
+ * this are merged into one, purely for a cleaner preview — this never
+ * re-runs VAD segmentation.
+ */
+merge_gap_us: number }
 export type CutReason = "silence" | "filler_word" | "ai_suggested"
 export type Effect = { id: string; clip_id: string; kind: string; 
 /**
@@ -454,6 +558,19 @@ export type Rational = { num: number; den: number }
  */
 export type ShellInfo = { app_version: string; tauri_version: string; os: string; arch: string }
 /**
+ * A detected speech region, master prompt §13's `{start, end, confidence}`
+ * return shape.
+ * 
+ * `confidence` does not exist in autocut's own `SpeechSegment` (its version
+ * is `{start, end}` only in f64 seconds) — master prompt §13 explicitly
+ * asks for one, so this is a new derived value: the mean of the per-chunk
+ * probabilities that fell inside this segment after hysteresis grouping
+ * (computed in `segments_from_scores`). Mean rather than min was chosen so
+ * a single marginal chunk sitting right at the hysteresis release threshold
+ * doesn't tank an otherwise-confident segment's reported score.
+ */
+export type SpeechSegment = { start_us: number; end_us: number; confidence: number }
+/**
  * Generalizes autocut's fixed-camera-rig "shared cutlist + per-track
  * offset" concept (audit §4) into a first-class, optional relationship. A
  * clip's `Clip::group_id` points at a `SyncGroup`; the timeline engine
@@ -484,6 +601,19 @@ render_index: number; locked: boolean; hidden: boolean; muted: boolean; solo: bo
 clip_ids: string[] }
 export type TrackKind = "video" | "audio" | "caption" | "image" | "overlay" | "effect"
 export type TranscriptEntry = { id: string; media_id: string; text: string; start_us: number; end_us: number; confidence: number; is_filler: boolean }
+/**
+ * Segmentation parameters — everything `segments_from_scores` needs, and
+ * nothing `score_chunks` needs (see module doc comment). i64-microsecond
+ * counterpart of autocut's `VadParams` (which used `u32` milliseconds).
+ */
+export type VadParams = { threshold: number; min_silence_us: number; min_speech_us: number }
+/**
+ * Result of `score_media_silence` — deliberately does not carry the raw
+ * `Vec<f32>` scores back over IPC (potentially ~100k+ floats for a long
+ * file); they stay server-side in `VadCache`, keyed by `media_id`, and
+ * `segment_media_silence` reads them back by id.
+ */
+export type VadScoreSummary = { media_id: string; chunk_count: number; chunk_duration_us: number; sample_count: number }
 export type WaveformResult = { 
 /**
  * Peak `|sample|` per bin, normalized to `[0, 1]`.

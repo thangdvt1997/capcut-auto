@@ -287,7 +287,7 @@ pub enum CutReason {
 /// Edit-plan / silence-removal provenance — NOT a duplicate timeline.
 /// Records *why* clips were split/removed by an automated pass (VAD, AI
 /// EditPlan), for undo/audit/re-analysis (`docs/project-format.md`).
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct Cut {
     pub id: String,
     pub kind: CutKind,

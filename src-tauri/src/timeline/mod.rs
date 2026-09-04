@@ -20,3 +20,5 @@ pub mod command;
 pub mod error;
 pub mod ops;
 pub mod session;
+pub mod silence;
+pub mod sync;

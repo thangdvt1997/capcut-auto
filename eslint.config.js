@@ -9,7 +9,12 @@ import globals from "globals";
 
 export default tseslint.config(
   {
-    ignores: ["dist/**", "src-tauri/**", "node_modules/**", "src/types/bindings.ts"],
+    // `vendor/**`: the read-only, gitignored upstream clones (`docs/upstream.md`)
+    // used only for audit/porting reference (`autocut`/`capcut-mate`, each with
+    // its own lint setup and its own Node/Electron globals) — never part of
+    // this app's build, so linting it against this config's browser-only
+    // globals/rules is both wrong and not this repo's problem to fix.
+    ignores: ["dist/**", "src-tauri/**", "node_modules/**", "src/types/bindings.ts", "vendor/**"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

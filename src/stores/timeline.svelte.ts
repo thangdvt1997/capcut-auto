@@ -27,6 +27,21 @@ import {
 } from "../timeline/algebra";
 
 /**
+ * Plain-object copy of a Svelte 5 `$state` reactive value, safe to hand to
+ * a non-Svelte-aware API (`structuredClone`, `JSON.stringify`, an IPC call).
+ * Wrapped behind an opaque `T => T` generic rather than calling
+ * `$state.snapshot` directly at each use site: TS's `Snapshot<T>` mapped
+ * type recurses into every nested field, and on `ProjectV1` (whose
+ * `serde_json::Value` fields are themselves a recursive `JsonValue` type)
+ * that blows up with "Type instantiation is excessively deep and possibly
+ * infinite". A generic function body is checked against the abstract `T`
+ * without expanding it, so the recursion never happens here.
+ */
+function snap<T>(value: T): T {
+  return $state.snapshot(value) as T;
+}
+
+/**
  * Frontend-only, session-local timeline marker. `docs/project-format.md`'s
  * `ProjectV1` schema has no `markers` field — the Phase 4 backend agent's
  * pass worked from that schema and did not add one, and adding a new
@@ -204,6 +219,29 @@ class TimelineStore {
     }
   }
 
+  /**
+   * Public counterpart of `applyProjectResult` for mutations that originate
+   * outside this store — Phase 5's `stores/silenceDetector.svelte.ts`
+   * (`apply_silence_cuts`/`apply_silence_cuts_to_track`) and its sync-group
+   * creation calls (`create_sync_group_manual`/`create_sync_group_by_timecode`).
+   * Folds the resulting `ProjectV1` back into this store exactly like every
+   * in-house mutation (so the main timeline immediately reflects it), while
+   * still handing the caller its own success/error outcome to render in a
+   * feature-local error slot rather than only this store's `lastError`.
+   */
+  async applyExternalProjectResult(
+    promise: Promise<Result<ProjectV1, AppErrorPayload>>,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const project = await this.run(promise);
+    if (project) {
+      this.project = project;
+      this.pruneSelection();
+      void this.refreshEffectiveMute();
+      return { ok: true };
+    }
+    return { ok: false, error: this.lastError ?? "unknown error" };
+  }
+
   private pruneSelection(): void {
     const ids = new Set(this.clips.map((c) => c.id));
     let changed = false;
@@ -269,7 +307,16 @@ class TimelineStore {
   async addMediaAsClip(media: MediaItem, opts: { trackKind?: TrackKind } = {}): Promise<void> {
     if (!this.project) return;
     const kind: TrackKind = opts.trackKind ?? (media.kind === "audio" ? "audio" : "video");
-    const project = structuredClone(this.project);
+    // `this.project` and `media` are Svelte-5-reactive ($state) proxies —
+    // structuredClone() chokes on those directly ("could not be cloned"),
+    // so take a plain-object snapshot first (Svelte's own recommended
+    // pattern for handing reactive state to a non-Svelte-aware API).
+    // `snap()` (defined below) takes a plain-object copy through an opaque
+    // generic, sidestepping Svelte's recursive `Snapshot<T>` inference,
+    // which blows up ("Type instantiation is excessively deep") on
+    // `ProjectV1`'s nested-`JsonValue` fields.
+    const project: ProjectV1 = structuredClone(snap(this.project));
+    media = snap(media);
 
     let track = project.tracks.find((t) => t.kind === kind && !t.locked);
     if (!track) {
@@ -486,6 +533,30 @@ class TimelineStore {
    * `timeline::clipboard::paste_clips`'s doc comment. */
   async paste(): Promise<void> {
     await this.applyProjectResult(commands.pasteClips(null, this.playheadUs));
+  }
+
+  // -------------------------------------------------------------------
+  // Multi-track sync (master prompt §39/§40) — grouping UI lives in
+  // `components/timeline/SyncGroupDialog.svelte`; this store only wraps the
+  // two backend commands so that dialog (and any future caller) folds the
+  // result back into the shared project the same way every other mutation
+  // here does.
+  // -------------------------------------------------------------------
+
+  /** Best-effort alignment from each clip's embedded `MediaItem::created_at`
+   * timestamp. Fails (returned, not thrown) with `TIMELINE_TIMECODE_UNAVAILABLE`
+   * when any involved clip's media lacks one — the caller's fallback is
+   * `createSyncGroupManual`. */
+  async createSyncGroupByTimecode(clipIds: string[]): Promise<{ ok: true } | { ok: false; error: string }> {
+    return this.applyExternalProjectResult(commands.createSyncGroupByTimecode(clipIds));
+  }
+
+  /** Manual fallback: caller supplies one offset (microseconds) per clip id. */
+  async createSyncGroupManual(
+    clipIds: string[],
+    offsetsUs: Record<string, number>,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    return this.applyExternalProjectResult(commands.createSyncGroupManual(clipIds, offsetsUs));
   }
 
   // -------------------------------------------------------------------
