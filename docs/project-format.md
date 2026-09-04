@@ -77,8 +77,32 @@ The unified project file is the application's own format and the single source o
       "id": "uuid", "track_id": "uuid",
       "start_us": 0, "end_us": 2000000,
       "text": "string",
+      // Sorted, non-overlapping by construction (every producer in
+      // `captions::generate`/`timeline::captions` builds this in time
+      // order) — the frontend's active-word-at-time-T lookup (master
+      // prompt §27) can binary-search this by start_us/end_us in O(log n).
       "words": [ { "text": "string", "start_us": 0, "end_us": 300000, "confidence": 0.94 } ],
-      "style_id": "uuid | null"
+      "style_id": "uuid | null"           // references `caption_styles[].id` below
+    }
+  ],
+  "caption_styles": [
+    // Phase 8, master prompt §26. Additive field — empty for any project
+    // saved before it existed. Built-in templates (Minimal/TikTok/Podcast/
+    // News/Gaming/Karaoke, `captions::styles::all_caption_templates`) are a
+    // separate catalog, not auto-copied in here (same relationship
+    // `RenderPreset` has to a project's own `RenderSettings`).
+    {
+      "id": "uuid", "name": "string",
+      "font_family": "string", "font_size": 32.0,
+      "bold": false, "italic": false,
+      "alignment": "left | center | right",
+      "position": { "anchor": "top | center | bottom", "offset_x": 0.0, "offset_y": 0.0 }, // half-canvas-units, same convention as clip_settings.transform_x/y
+      "text_color": { "r": 1.0, "g": 1.0, "b": 1.0 },
+      "background": null,                 // or { "color": {...}, "opacity": 0.6 }
+      "outline": null,                     // or { "color": {...}, "width": 0.08 } — width is a font-size fraction
+      "shadow": null,                      // or { "color": {...}, "opacity": 0.9, "offset_x": 0.0, "offset_y": 0.02, "blur": 15.0 }
+      "opacity": 1.0,
+      "safe_margins": { "top": 0.05, "bottom": 0.05, "left": 0.05, "right": 0.05 } // fraction of canvas inset from each edge
     }
   ],
   "transcript": [

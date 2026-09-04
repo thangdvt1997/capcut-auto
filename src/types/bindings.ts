@@ -353,6 +353,92 @@ async createSyncGroupByTimecode(clipIds: string[]) : Promise<Result<ProjectV1, A
 }
 },
 /**
+ * The six built-in caption style templates (Minimal/TikTok/Podcast/News/
+ * Gaming/Karaoke, master prompt §26). Pure — no session required, same
+ * pattern as `commands::render::list_render_presets`.
+ */
+async listCaptionTemplates() : Promise<CaptionStyle[]> {
+    return await TAURI_INVOKE("list_caption_templates");
+},
+/**
+ * Replaces the project's own `caption_styles` catalog wholesale. Applied
+ * directly to the session (bypassing `Command`/`History`, the same way
+ * `load_timeline_project` replaces the whole session) rather than through a
+ * new `Command` primitive: `caption_styles` is a settings catalog (like
+ * `RenderSettings`), not an independently-addressed timeline entity the way
+ * `Caption`/`Clip` are — undoability for *caption* edits (the operations
+ * below, which set a caption's `style_id`) is what actually matters for
+ * timeline history; editing the style definitions themselves is a
+ * settings-form edit, not a timeline edit.
+ */
+async setCaptionStyles(styles: CaptionStyle[]) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_caption_styles", { styles }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Generates captions from the current session project's own
+ * `ProjectV1::transcript`, assigns them all to `track_id`, and inserts them
+ * as one atomic undo step (a `Batch` of `InsertCaption`).
+ */
+async generateCaptions(trackId: string, settings: CaptionGenerationSettings) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("generate_captions", { trackId, settings }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async splitCaption(captionId: string, splitPoint: CaptionSplitPoint) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("split_caption", { captionId, splitPoint }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mergeCaptions(captionIds: string[]) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("merge_captions", { captionIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Adjusts a caption's start/end boundary — the same command whether it
+ * came from a precise numeric edit or a drag gesture on either edge.
+ * `scale_words` decides whether per-word timing is proportionally rescaled
+ * to the new span (see `timeline::captions::retime_caption` doc comment).
+ */
+async retimeCaption(captionId: string, newStartUs: number, newEndUs: number, scaleWords: boolean) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("retime_caption", { captionId, newStartUs, newEndUs, scaleWords }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async findReplaceCaptions(find: string, replace: string, options: FindReplaceOptions) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("find_replace_captions", { find, replace, options }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bulkSetCaptionStyle(captionIds: string[], styleId: string | null) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("bulk_set_caption_style", { captionIds, styleId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * **Analyze** (master prompt §12): extracts 16kHz mono PCM from
  * `media_path` and scores it with `SileroVadProvider`, caching the result
  * in `VadCache` under `media_id`. This is the expensive, model-dependent
@@ -534,7 +620,106 @@ export type AudioCodec = "aac" | "opus" | "vorbis"
 export type AvailableModel = { entry: ModelCatalogEntry; installed: boolean; download_in_progress: boolean }
 export type CanvasRatioPreset = "16:9" | "9:16" | "1:1" | "4:5" | "custom"
 export type CanvasV1 = { width: number; height: number; fps: Rational; ratio_preset: CanvasRatioPreset }
+/**
+ * Sorted, non-overlapping by construction: every producer in
+ * `captions::generate`/`timeline::captions` builds `words` in time order
+ * (word-grouping walks the source transcript left-to-right; split/merge/
+ * retime only ever slice or concatenate existing time-ordered runs). The
+ * frontend's active-word-at-time-T lookup (master prompt §27) can therefore
+ * binary-search `words` by `start_us`/`end_us` in O(log n) per frame instead
+ * of a linear scan — this module doesn't implement that search itself (a
+ * frontend rendering concern), but the data shape guarantees it works.
+ */
 export type Caption = { id: string; track_id: string; start_us: number; end_us: number; text: string; words: Word[]; style_id: string | null }
+export type CaptionAlignment = "left" | "center" | "right"
+/**
+ * Vertical placement anchor. Combined with `offset_x`/`offset_y` (see
+ * `CaptionPosition`) rather than raw pixels so a caption's position stays
+ * correct across different canvas resolutions, same rationale as
+ * `ClipSettings::transform_x/y`.
+ */
+export type CaptionAnchor = "top" | "center" | "bottom"
+export type CaptionBackground = { color: Color; opacity: number }
+export type CaptionGenerationSettings = { 
+/**
+ * Maximum words on one caption's line. Values `< 1` are treated as `1`
+ * (a defensive floor, not an error — generation always produces
+ * *something* rather than failing on a degenerate settings value).
+ */
+max_words_per_line: number; 
+/**
+ * Maximum characters (Unicode scalar count, not bytes) on one caption's
+ * line, joined-with-single-spaces. Same `< 1` floor as above.
+ */
+max_chars_per_line: number; grouping: CaptionGroupingMode }
+/**
+ * Serde/specta-typed (not just an internal Rust enum) so it can cross the
+ * Tauri IPC boundary directly as a `commands::captions::generate_captions`
+ * parameter, the same way `render::presets::RenderSettings` is typed for
+ * `commands::render::start_render_job` despite not being part of
+ * `ProjectV1` either.
+ */
+export type CaptionGroupingMode = 
+/**
+ * One caption per transcript entry (further wrapped only if the entry
+ * itself exceeds the line limits).
+ */
+"sentence" | 
+/**
+ * A single continuous word stream across every entry, chunked strictly
+ * by the line limits, ignoring sentence boundaries.
+ */
+"word"
+export type CaptionOutline = { color: Color; 
+/**
+ * Stroke width as a fraction of font size — matches pyJianYingDraft's
+ * `TextBorder` convention (capcut-mate `add_captions.py` hardcodes
+ * `width: 0.08` for exactly this reason), so Phase 9's CapCut adapter
+ * needs no unit conversion.
+ */
+width: number }
+export type CaptionPosition = { anchor: CaptionAnchor; 
+/**
+ * Half-canvas-width/height units, the exact same convention as
+ * `ClipSettings::transform_x`/`transform_y` above — NOT pixels, and NOT
+ * a second unit system invented for captions.
+ */
+offset_x: number; offset_y: number }
+export type CaptionShadow = { color: Color; opacity: number; 
+/**
+ * Half-canvas-width/height units (same convention as `CaptionPosition`).
+ */
+offset_x: number; offset_y: number; 
+/**
+ * Blur/diffuse radius, same `0..=100` scale as pyJianYingDraft's
+ * `TextShadow.diffuse` (capcut-mate default `15.0`). Phase 9's adapter
+ * derives CapCut's `distance`/`angle` pair from `offset_x`/`offset_y`
+ * via `hypot`/`atan2` at that boundary — never stored redundantly here.
+ */
+blur: number }
+/**
+ * Where to split a caption: either an absolute timeline instant, or a
+ * direct index into its `words` (0 = before the first word). Splitting
+ * requires per-word timing (`Caption::words` non-empty) — without it there
+ * is no principled way to decide which characters of `text` belong to which
+ * half, so this is rejected rather than guessed at.
+ */
+export type CaptionSplitPoint = { time_us: number } | { word_index: number }
+/**
+ * Caption visual styling (master prompt §26's exact field list). Referenced
+ * by `Caption::style_id`; the catalog of built-in templates lives in
+ * `crate::captions::styles::all_caption_templates` (Minimal/TikTok/Podcast/
+ * News/Gaming/Karaoke), following the same "catalog function returning
+ * owned values" pattern as `render::presets::all_presets`.
+ */
+export type CaptionStyle = { id: string; name: string; font_family: string; font_size: number; bold: boolean; italic: boolean; alignment: CaptionAlignment; position: CaptionPosition; text_color: Color; 
+/**
+ * `None` = no background box behind the text (capcut-mate's own
+ * `TextStyle` has no native background-box field — Phase 9's adapter
+ * will need to synthesize one via an extra shape/rect segment when this
+ * is `Some`; documented here so that gap isn't rediscovered then).
+ */
+background: CaptionBackground | null; outline: CaptionOutline | null; shadow: CaptionShadow | null; opacity: number; safe_margins: SafeMargins }
 export type Clip = { id: string; track_id: string; 
 /**
  * `None` for e.g. a pure-effect or generated-caption clip.
@@ -560,6 +745,15 @@ export type ClipSettings = { opacity: number; flip_h: boolean; flip_v: boolean; 
  * rediscovered the hard way in the render/capcut adapters.
  */
 transform_x: number; transform_y: number }
+/**
+ * A color in linear `[0.0, 1.0]` per-channel form — matches capcut-mate's
+ * own `hex_to_rgb` convention (`vendor/capcut-mate/src/service/add_captions.py`)
+ * so Phase 9's CapCut adapter can hand these straight to `TextStyle`/
+ * `TextBorder`/`TextShadow` without a hex round-trip. Hex string
+ * conversion (for a color-picker UI) is a frontend/adapter-boundary
+ * concern, not this schema's.
+ */
+export type Color = { r: number; g: number; b: number }
 export type Container = "mp_4" | "web_m"
 /**
  * Edit-plan / silence-removal provenance — NOT a duplicate timeline.
@@ -619,6 +813,7 @@ use_defaults: boolean;
  * tokenized/case-insensitive rules as the defaults.
  */
 custom_dictionary: string[] }
+export type FindReplaceOptions = { case_sensitive: boolean; whole_word: boolean }
 export type HardwareEncoderReport = { encoders: DetectedEncoder[]; 
 /**
  * The master prompt's own display example: `"Encoder: NVIDIA NVENC"` or
@@ -715,7 +910,16 @@ export type ProjectV1 = {
  * Always `1` for this schema version. `ProjectV1::migrate_to_latest`
  * dispatches on this field.
  */
-version: number; project: ProjectMeta; canvas: CanvasV1; media: MediaItem[]; tracks: Track[]; clips: Clip[]; captions: Caption[]; transcript: TranscriptEntry[]; effects: Effect[]; animations: Animation[]; keyframes: Keyframe[]; cuts: Cut[]; ai: AiState; export: ExportState; sync_groups: SyncGroup[] }
+version: number; project: ProjectMeta; canvas: CanvasV1; media: MediaItem[]; tracks: Track[]; clips: Clip[]; captions: Caption[]; 
+/**
+ * Additive (Phase 8, master prompt §26) — the catalog of caption
+ * styles this project has, referenced by `Caption::style_id`. Empty for
+ * any project saved before this field existed; built-in templates
+ * (`crate::captions::styles::all_caption_templates`) are not
+ * auto-copied in here — same "catalog is separate from the user's own
+ * list" relationship `render::RenderPreset` has with `RenderSettings`.
+ */
+caption_styles: CaptionStyle[]; transcript: TranscriptEntry[]; effects: Effect[]; animations: Animation[]; keyframes: Keyframe[]; cuts: Cut[]; ai: AiState; export: ExportState; sync_groups: SyncGroup[] }
 export type ProxyMode = "off" | "auto" | "always"
 /**
  * A rational number, used for frame rates (`num/den`, e.g. 30000/1001 for
@@ -767,6 +971,13 @@ export type RenderSettingsInput = { preset_id: string | null; width: number | nu
  * actually working on this machine (`hwaccel::resolve_backend_for_render`).
  */
 hardware_encoder: EncoderBackend | null }
+/**
+ * Fractional (`0.0..=1.0`) inset from each canvas edge that caption
+ * placement should stay clear of (master prompt §26 "safe margins") —
+ * e.g. to avoid a platform's own UI chrome (TikTok's caption/like/share
+ * buttons) overlapping generated captions.
+ */
+export type SafeMargins = { top: number; bottom: number; left: number; right: number }
 /**
  * Static, build-time facts about this build. No telemetry, no network
  * calls, nothing environment-dependent beyond `std::env::consts`. Exists in

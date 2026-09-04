@@ -11,6 +11,7 @@
 pub mod ai;
 pub mod audio;
 pub mod capcut;
+pub mod captions;
 pub mod commands;
 pub mod db;
 pub mod error;
@@ -66,6 +67,14 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::timeline::apply_silence_cuts_to_track,
         commands::timeline::create_sync_group_manual,
         commands::timeline::create_sync_group_by_timecode,
+        commands::captions::list_caption_templates,
+        commands::captions::set_caption_styles,
+        commands::captions::generate_captions,
+        commands::captions::split_caption,
+        commands::captions::merge_captions,
+        commands::captions::retime_caption,
+        commands::captions::find_replace_captions,
+        commands::captions::bulk_set_caption_style,
         commands::vad::score_media_silence,
         commands::vad::segment_media_silence,
         commands::vad::build_silence_cutlist,

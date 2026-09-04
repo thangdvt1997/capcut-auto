@@ -4,6 +4,7 @@
 //! modules mirror the domain module they front: `commands::project` fronts
 //! `crate::project`, etc.
 
+pub mod captions;
 pub mod diagnostics;
 pub mod media;
 pub mod project;

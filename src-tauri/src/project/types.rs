@@ -192,7 +192,7 @@ pub struct Clip {
     pub clip_settings: ClipSettings,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct Word {
     pub text: String,
     pub start_us: i64,
@@ -200,6 +200,14 @@ pub struct Word {
     pub confidence: f32,
 }
 
+/// Sorted, non-overlapping by construction: every producer in
+/// `captions::generate`/`timeline::captions` builds `words` in time order
+/// (word-grouping walks the source transcript left-to-right; split/merge/
+/// retime only ever slice or concatenate existing time-ordered runs). The
+/// frontend's active-word-at-time-T lookup (master prompt §27) can therefore
+/// binary-search `words` by `start_us`/`end_us` in O(log n) per frame instead
+/// of a linear scan — this module doesn't implement that search itself (a
+/// frontend rendering concern), but the data shape guarantees it works.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct Caption {
     pub id: String,
@@ -209,6 +217,142 @@ pub struct Caption {
     pub text: String,
     pub words: Vec<Word>,
     pub style_id: Option<String>,
+}
+
+/// A color in linear `[0.0, 1.0]` per-channel form — matches capcut-mate's
+/// own `hex_to_rgb` convention (`vendor/capcut-mate/src/service/add_captions.py`)
+/// so Phase 9's CapCut adapter can hand these straight to `TextStyle`/
+/// `TextBorder`/`TextShadow` without a hex round-trip. Hex string
+/// conversion (for a color-picker UI) is a frontend/adapter-boundary
+/// concern, not this schema's.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Type)]
+pub struct Color {
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+}
+
+impl Color {
+    pub const WHITE: Color = Color {
+        r: 1.0,
+        g: 1.0,
+        b: 1.0,
+    };
+    pub const BLACK: Color = Color {
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+    };
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptionAlignment {
+    Left,
+    Center,
+    Right,
+}
+
+/// Vertical placement anchor. Combined with `offset_x`/`offset_y` (see
+/// `CaptionPosition`) rather than raw pixels so a caption's position stays
+/// correct across different canvas resolutions, same rationale as
+/// `ClipSettings::transform_x/y`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptionAnchor {
+    Top,
+    Center,
+    Bottom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Type)]
+pub struct CaptionPosition {
+    pub anchor: CaptionAnchor,
+    /// Half-canvas-width/height units, the exact same convention as
+    /// `ClipSettings::transform_x`/`transform_y` above — NOT pixels, and NOT
+    /// a second unit system invented for captions.
+    pub offset_x: f64,
+    pub offset_y: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Type)]
+pub struct CaptionBackground {
+    pub color: Color,
+    pub opacity: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Type)]
+pub struct CaptionOutline {
+    pub color: Color,
+    /// Stroke width as a fraction of font size — matches pyJianYingDraft's
+    /// `TextBorder` convention (capcut-mate `add_captions.py` hardcodes
+    /// `width: 0.08` for exactly this reason), so Phase 9's CapCut adapter
+    /// needs no unit conversion.
+    pub width: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Type)]
+pub struct CaptionShadow {
+    pub color: Color,
+    pub opacity: f64,
+    /// Half-canvas-width/height units (same convention as `CaptionPosition`).
+    pub offset_x: f64,
+    pub offset_y: f64,
+    /// Blur/diffuse radius, same `0..=100` scale as pyJianYingDraft's
+    /// `TextShadow.diffuse` (capcut-mate default `15.0`). Phase 9's adapter
+    /// derives CapCut's `distance`/`angle` pair from `offset_x`/`offset_y`
+    /// via `hypot`/`atan2` at that boundary — never stored redundantly here.
+    pub blur: f64,
+}
+
+/// Fractional (`0.0..=1.0`) inset from each canvas edge that caption
+/// placement should stay clear of (master prompt §26 "safe margins") —
+/// e.g. to avoid a platform's own UI chrome (TikTok's caption/like/share
+/// buttons) overlapping generated captions.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Type)]
+pub struct SafeMargins {
+    pub top: f64,
+    pub bottom: f64,
+    pub left: f64,
+    pub right: f64,
+}
+
+impl Default for SafeMargins {
+    fn default() -> Self {
+        Self {
+            top: 0.05,
+            bottom: 0.05,
+            left: 0.05,
+            right: 0.05,
+        }
+    }
+}
+
+/// Caption visual styling (master prompt §26's exact field list). Referenced
+/// by `Caption::style_id`; the catalog of built-in templates lives in
+/// `crate::captions::styles::all_caption_templates` (Minimal/TikTok/Podcast/
+/// News/Gaming/Karaoke), following the same "catalog function returning
+/// owned values" pattern as `render::presets::all_presets`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct CaptionStyle {
+    pub id: String,
+    pub name: String,
+    pub font_family: String,
+    pub font_size: f64,
+    pub bold: bool,
+    pub italic: bool,
+    pub alignment: CaptionAlignment,
+    pub position: CaptionPosition,
+    pub text_color: Color,
+    /// `None` = no background box behind the text (capcut-mate's own
+    /// `TextStyle` has no native background-box field — Phase 9's adapter
+    /// will need to synthesize one via an extra shape/rect segment when this
+    /// is `Some`; documented here so that gap isn't rediscovered then).
+    pub background: Option<CaptionBackground>,
+    pub outline: Option<CaptionOutline>,
+    pub shadow: Option<CaptionShadow>,
+    pub opacity: f64,
+    pub safe_margins: SafeMargins,
 }
 
 /// Sentence/segment-level transcript entry, extended (Phase 7, master
@@ -353,6 +497,13 @@ pub struct ProjectV1 {
     pub tracks: Vec<Track>,
     pub clips: Vec<Clip>,
     pub captions: Vec<Caption>,
+    /// Additive (Phase 8, master prompt §26) — the catalog of caption
+    /// styles this project has, referenced by `Caption::style_id`. Empty for
+    /// any project saved before this field existed; built-in templates
+    /// (`crate::captions::styles::all_caption_templates`) are not
+    /// auto-copied in here — same "catalog is separate from the user's own
+    /// list" relationship `render::RenderPreset` has with `RenderSettings`.
+    pub caption_styles: Vec<CaptionStyle>,
     pub transcript: Vec<TranscriptEntry>,
     pub effects: Vec<Effect>,
     pub animations: Vec<Animation>,
@@ -384,6 +535,7 @@ impl ProjectV1 {
             tracks: Vec::new(),
             clips: Vec::new(),
             captions: Vec::new(),
+            caption_styles: Vec::new(),
             transcript: Vec::new(),
             effects: Vec::new(),
             animations: Vec::new(),

@@ -23,7 +23,7 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use crate::project::{Clip, Cut, ProjectV1, SyncGroup, Track};
+use crate::project::{Caption, Clip, Cut, ProjectV1, SyncGroup, Track};
 
 use super::error::TimelineError;
 
@@ -83,6 +83,28 @@ pub struct SetCutsCommand {
     pub new: Vec<Cut>,
 }
 
+/// `Caption`'s equivalent of `InsertClipCommand`/`RemoveClipCommand`/
+/// `SetClipCommand` above — per-entity addressed (not a whole-list swap like
+/// `SetCutsCommand`), because individual captions are independently split/
+/// merged/retimed much like clips are individually split/trimmed
+/// (`timeline::captions` module doc comment).
+#[derive(Debug, Clone)]
+pub struct InsertCaptionCommand {
+    pub caption: Caption,
+}
+
+#[derive(Debug, Clone)]
+pub struct RemoveCaptionCommand {
+    /// Full pre-image, same reason as `RemoveClipCommand::clip`.
+    pub caption: Caption,
+}
+
+#[derive(Debug, Clone)]
+pub struct SetCaptionCommand {
+    pub old: Caption,
+    pub new: Caption,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct BatchCommand {
     pub commands: Vec<Command>,
@@ -96,7 +118,22 @@ pub enum Command {
     SetTrack(SetTrackCommand),
     SetSyncGroup(SetSyncGroupCommand),
     SetCuts(SetCutsCommand),
+    InsertCaption(InsertCaptionCommand),
+    RemoveCaption(RemoveCaptionCommand),
+    SetCaption(SetCaptionCommand),
     Batch(BatchCommand),
+}
+
+/// Keeps `ProjectV1::captions` in a deterministic `(track_id, start_us)`
+/// order after every insert/set — captions have no separate ordered-id list
+/// the way `Track::clip_ids` does for clips, so the flat `Vec` itself is
+/// sorted directly. Purely a determinism/readability convenience for
+/// consumers that iterate `project.captions` in display order; nothing in
+/// this module depends on the order for correctness.
+fn resort_captions(project: &mut ProjectV1) {
+    project
+        .captions
+        .sort_by(|a, b| (&a.track_id, a.start_us).cmp(&(&b.track_id, b.start_us)));
 }
 
 fn resort_track_clip_ids(project: &mut ProjectV1, track_id: &str) {
@@ -185,6 +222,30 @@ impl Command {
                 project.cuts = c.new.clone();
                 Ok(())
             }
+            Command::InsertCaption(c) => {
+                project.captions.push(c.caption.clone());
+                resort_captions(project);
+                Ok(())
+            }
+            Command::RemoveCaption(c) => {
+                let caption_id = &c.caption.id;
+                project
+                    .captions
+                    .retain(|existing| &existing.id != caption_id);
+                Ok(())
+            }
+            Command::SetCaption(c) => {
+                let idx = project
+                    .captions
+                    .iter()
+                    .position(|existing| existing.id == c.new.id)
+                    .ok_or_else(|| TimelineError::CaptionNotFound {
+                        caption_id: c.new.id.clone(),
+                    })?;
+                project.captions[idx] = c.new.clone();
+                resort_captions(project);
+                Ok(())
+            }
             Command::Batch(b) => b.apply(project),
         }
     }
@@ -213,6 +274,16 @@ impl Command {
                 new: c.old.clone(),
             }),
             Command::SetCuts(c) => Command::SetCuts(SetCutsCommand {
+                old: c.new.clone(),
+                new: c.old.clone(),
+            }),
+            Command::InsertCaption(c) => Command::RemoveCaption(RemoveCaptionCommand {
+                caption: c.caption.clone(),
+            }),
+            Command::RemoveCaption(c) => Command::InsertCaption(InsertCaptionCommand {
+                caption: c.caption.clone(),
+            }),
+            Command::SetCaption(c) => Command::SetCaption(SetCaptionCommand {
                 old: c.new.clone(),
                 new: c.old.clone(),
             }),
@@ -484,6 +555,97 @@ mod tests {
 
         history.redo(&mut project).unwrap();
         assert_eq!(project.cuts, new_cuts);
+    }
+
+    fn caption(id: &str, track_id: &str, start_us: i64, end_us: i64) -> Caption {
+        Caption {
+            id: id.into(),
+            track_id: track_id.into(),
+            start_us,
+            end_us,
+            text: "hello".into(),
+            words: Vec::new(),
+            style_id: None,
+        }
+    }
+
+    #[test]
+    fn insert_and_remove_caption_are_exact_inverses() {
+        let mut project = ProjectV1::new("caption test");
+        let before = serde_json::to_value(&project).unwrap();
+
+        let cmd = Command::InsertCaption(InsertCaptionCommand {
+            caption: caption("cap1", "t1", 0, 1_000_000),
+        });
+        let mut history = History::new(MAX_HISTORY);
+        history.apply(&mut project, cmd).unwrap();
+        assert_eq!(project.captions.len(), 1);
+
+        history.undo(&mut project).unwrap();
+        assert_eq!(serde_json::to_value(&project).unwrap(), before);
+    }
+
+    #[test]
+    fn set_caption_undo_redo_round_trips() {
+        let mut project = ProjectV1::new("caption set test");
+        Command::InsertCaption(InsertCaptionCommand {
+            caption: caption("cap1", "t1", 0, 1_000_000),
+        })
+        .apply(&mut project)
+        .unwrap();
+        let before = serde_json::to_value(&project).unwrap();
+
+        let old = project.captions[0].clone();
+        let mut new = old.clone();
+        new.text = "goodbye".into();
+        let cmd = Command::SetCaption(SetCaptionCommand { old, new });
+
+        let mut history = History::new(MAX_HISTORY);
+        history.apply(&mut project, cmd).unwrap();
+        assert_eq!(project.captions[0].text, "goodbye");
+
+        history.undo(&mut project).unwrap();
+        assert_eq!(serde_json::to_value(&project).unwrap(), before);
+
+        history.redo(&mut project).unwrap();
+        assert_eq!(project.captions[0].text, "goodbye");
+    }
+
+    #[test]
+    fn set_caption_on_missing_id_errors() {
+        let mut project = ProjectV1::new("caption missing test");
+        let cmd = Command::SetCaption(SetCaptionCommand {
+            old: caption("does-not-exist", "t1", 0, 1_000_000),
+            new: caption("does-not-exist", "t1", 0, 2_000_000),
+        });
+        assert!(matches!(
+            cmd.apply(&mut project).unwrap_err(),
+            TimelineError::CaptionNotFound { .. }
+        ));
+    }
+
+    #[test]
+    fn captions_stay_sorted_by_track_then_start_after_insert() {
+        let mut project = ProjectV1::new("caption sort test");
+        let batch = Command::Batch(BatchCommand {
+            commands: vec![
+                Command::InsertCaption(InsertCaptionCommand {
+                    caption: caption("late", "t1", 5_000_000, 6_000_000),
+                }),
+                Command::InsertCaption(InsertCaptionCommand {
+                    caption: caption("early", "t1", 0, 1_000_000),
+                }),
+            ],
+        });
+        batch.apply(&mut project).unwrap();
+        assert_eq!(
+            project
+                .captions
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["early", "late"]
+        );
     }
 
     #[test]

@@ -24,7 +24,7 @@ use crate::timeline::session::{TimelineSession, TimelineState};
 use crate::timeline::silence;
 use crate::timeline::sync::{self, SyncAlignment};
 
-fn with_session<T>(
+pub(crate) fn with_session<T>(
     state: &TimelineState,
     f: impl FnOnce(&mut TimelineSession) -> Result<T, TimelineError>,
 ) -> Result<T, AppErrorPayload> {

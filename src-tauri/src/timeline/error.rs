@@ -66,6 +66,21 @@ pub enum TimelineError {
 
     #[error("timecode-based sync unavailable: {details}")]
     TimecodeUnavailable { details: String },
+
+    #[error("caption not found: {caption_id}")]
+    CaptionNotFound { caption_id: String },
+
+    #[error("invalid caption split: {details}")]
+    InvalidCaptionSplit { details: String },
+
+    #[error("invalid caption merge: {details}")]
+    InvalidCaptionMerge { details: String },
+
+    #[error("invalid caption retime: {details}")]
+    InvalidCaptionRetime { details: String },
+
+    #[error("invalid find/replace request: {details}")]
+    InvalidFindReplace { details: String },
 }
 
 impl From<&TimelineError> for AppErrorPayload {
@@ -183,6 +198,40 @@ impl From<&TimelineError> for AppErrorPayload {
                          enter offsets manually instead.",
                     )
             }
+            TimelineError::CaptionNotFound { caption_id } => {
+                AppErrorPayload::new("TIMELINE_CAPTION_NOT_FOUND", message)
+                    .with_details(caption_id.clone())
+                    .recoverable(true)
+                    .with_suggestion(
+                        "The caption may have already been deleted; refresh the timeline.",
+                    )
+            }
+            TimelineError::InvalidCaptionSplit { details } => {
+                AppErrorPayload::new("TIMELINE_INVALID_CAPTION_SPLIT", message)
+                    .with_details(details.clone())
+                    .recoverable(true)
+                    .with_suggestion(
+                        "Choose a split point that leaves at least one word on each side.",
+                    )
+            }
+            TimelineError::InvalidCaptionMerge { details } => {
+                AppErrorPayload::new("TIMELINE_INVALID_CAPTION_MERGE", message)
+                    .with_details(details.clone())
+                    .recoverable(true)
+                    .with_suggestion("Select at least two captions on the same track to merge.")
+            }
+            TimelineError::InvalidCaptionRetime { details } => {
+                AppErrorPayload::new("TIMELINE_INVALID_CAPTION_RETIME", message)
+                    .with_details(details.clone())
+                    .recoverable(true)
+                    .with_suggestion("Choose an end time strictly after the start time.")
+            }
+            TimelineError::InvalidFindReplace { details } => {
+                AppErrorPayload::new("TIMELINE_INVALID_FIND_REPLACE", message)
+                    .with_details(details.clone())
+                    .recoverable(true)
+                    .with_suggestion("Provide a non-empty search string.")
+            }
         }
     }
 }
@@ -277,6 +326,36 @@ mod tests {
                     details: "x".into(),
                 },
                 "TIMELINE_TIMECODE_UNAVAILABLE",
+            ),
+            (
+                TimelineError::CaptionNotFound {
+                    caption_id: "cap1".into(),
+                },
+                "TIMELINE_CAPTION_NOT_FOUND",
+            ),
+            (
+                TimelineError::InvalidCaptionSplit {
+                    details: "x".into(),
+                },
+                "TIMELINE_INVALID_CAPTION_SPLIT",
+            ),
+            (
+                TimelineError::InvalidCaptionMerge {
+                    details: "x".into(),
+                },
+                "TIMELINE_INVALID_CAPTION_MERGE",
+            ),
+            (
+                TimelineError::InvalidCaptionRetime {
+                    details: "x".into(),
+                },
+                "TIMELINE_INVALID_CAPTION_RETIME",
+            ),
+            (
+                TimelineError::InvalidFindReplace {
+                    details: "x".into(),
+                },
+                "TIMELINE_INVALID_FIND_REPLACE",
             ),
         ];
         for (err, code) in cases {
