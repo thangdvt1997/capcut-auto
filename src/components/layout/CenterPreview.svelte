@@ -1,10 +1,12 @@
-<!-- Video Preview center panel (master-prompt §9). Placeholder in Phase 2. -->
+<!-- Video Preview center panel (master-prompt §9). Real in Phase 3: renders
+     `VideoPlayer`, an actual HTML5 <video>-backed preview against whatever
+     media is selected in the Media Library. -->
 <script lang="ts">
-  import PanelPlaceholder from "./PanelPlaceholder.svelte";
+  import VideoPlayer from "../preview/VideoPlayer.svelte";
 </script>
 
 <div class="preview">
-  <PanelPlaceholder title="Video Preview" phase="Preview / playback — Phase 3" />
+  <VideoPlayer />
 </div>
 
 <style>

@@ -32,6 +32,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 specta = { version = "2.0.0-rc.22", features = ["derive", "serde_json"] }
 specta-typescript = "0.0.9"
 tauri-specta = { version = "2.0.0-rc.21", features = ["derive", "typescript"] }
+# `bundled`: statically links SQLite instead of requiring a system
+# libsqlite3, so Windows packaging (Phase 12) never needs to ship or detect
+# a separate SQLite DLL for the media library index (master prompt §35).
+rusqlite = { version = "0.31", features = ["bundled"] }
 
 [features]
 default = ["custom-protocol"]

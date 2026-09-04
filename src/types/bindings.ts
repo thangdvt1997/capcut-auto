@@ -19,6 +19,95 @@ async getShellInfo() : Promise<ShellInfo> {
  */
 async newProject(name: string) : Promise<ProjectV1> {
     return await TAURI_INVOKE("new_project", { name });
+},
+async ffmpegDiagnostics() : Promise<Result<FfmpegDiagnostics, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ffmpeg_diagnostics") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async probeMediaFile(path: string) : Promise<Result<MediaItem, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("probe_media_file", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Import an explicit list of files (drag & drop, multi-select file picker).
+ * Never aborts on the first bad file — each path gets its own
+ * success/error result so a multi-file drop of 50 files with one corrupt
+ * clip still imports the other 49 (master prompt §7 "multi-file import").
+ */
+async importMediaPaths(paths: string[], proxyMode: ProxyMode) : Promise<Result<ImportResult[], AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("import_media_paths", { paths, proxyMode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Recursively import every supported file under `folder` (master prompt §7
+ * "folder import").
+ */
+async importMediaFolder(folder: string, proxyMode: ProxyMode) : Promise<Result<ImportResult[], AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("import_media_folder", { folder, proxyMode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * On-demand proxy (re)generation, e.g. a user flipping Proxy mode from Off
+ * to Always after already importing. Runs synchronously from the caller's
+ * point of view (returns the final path or error) while still emitting the
+ * same `media:proxy-progress` events a background import-triggered job
+ * would, so one UI progress bar handles both cases.
+ */
+async generateMediaProxy(mediaId: string, sourcePath: string, mode: ProxyMode) : Promise<Result<string | null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("generate_media_proxy", { mediaId, sourcePath, mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async computeMediaWaveform(path: string, bins: number) : Promise<Result<WaveformResult, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("compute_media_waveform", { path, bins }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async searchMediaLibrary(query: string | null, kind: MediaKind | null, limit: number) : Promise<Result<MediaLibraryEntry[], AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("search_media_library", { query, kind, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listMediaLibrary(limit: number) : Promise<Result<MediaLibraryEntry[], AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_media_library", { limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async removeMediaFromLibrary(id: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_media_from_library", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -46,6 +135,7 @@ provider_settings_ref: string | null;
 last_edit_plan: JsonValue | null; highlights: JsonValue[] }
 export type Animation = { id: string; clip_id: string; kind: AnimationKind; name: string; duration_us: number }
 export type AnimationKind = "in" | "out" | "loop" | "group"
+export type AppErrorPayload = { code: string; message: string; details: string | null; recoverable: boolean; suggested_action: string | null }
 export type CanvasRatioPreset = "16:9" | "9:16" | "1:1" | "4:5" | "custom"
 export type CanvasV1 = { width: number; height: number; fps: Rational; ratio_preset: CanvasRatioPreset }
 export type Caption = { id: string; track_id: string; start_us: number; end_us: number; text: string; words: Word[]; style_id: string | null }
@@ -90,6 +180,13 @@ export type Effect = { id: string; clip_id: string; kind: string;
  */
 params: JsonValue }
 export type ExportState = { last_render_preset: string | null; last_capcut_draft_path: string | null }
+export type FfmpegDiagnostics = { ffmpeg_path: string; ffprobe_path: string; ffmpeg_version: string; ffprobe_version: string; 
+/**
+ * Honest provenance note (master prompt §59/§78) — see
+ * `crate::ffmpeg::binaries` module doc comment for the full story.
+ */
+source_note: string }
+export type ImportResult = { source_path: string; media: MediaItem | null; error: AppErrorPayload | null }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type Keyframe = { id: string; clip_id: string; 
 /**
@@ -117,6 +214,15 @@ source_path: string; duration_us: number; width: number; height: number; fps: Ra
  */
 created_at: string | null; proxy_path: string | null; thumbnail_path: string | null }
 export type MediaKind = "video" | "audio" | "image"
+export type MediaLibraryEntry = { id: string; filename: string; path: string; kind: MediaKind; duration_us: number; width: number; height: number; tags: string[]; 
+/**
+ * RFC3339, from the source file's own metadata, if any.
+ */
+created_at: string | null; 
+/**
+ * RFC3339, when this row was added to the library.
+ */
+imported_at: string; thumbnail_path: string | null; proxy_path: string | null }
 export type ProjectMeta = { id: string; name: string; 
 /**
  * RFC3339 timestamp.
@@ -142,6 +248,7 @@ export type ProjectV1 = {
  * dispatches on this field.
  */
 version: number; project: ProjectMeta; canvas: CanvasV1; media: MediaItem[]; tracks: Track[]; clips: Clip[]; captions: Caption[]; transcript: TranscriptEntry[]; effects: Effect[]; animations: Animation[]; keyframes: Keyframe[]; cuts: Cut[]; ai: AiState; export: ExportState; sync_groups: SyncGroup[] }
+export type ProxyMode = "off" | "auto" | "always"
 /**
  * A rational number, used for frame rates (`num/den`, e.g. 30000/1001 for
  * 29.97 fps) to avoid the float-drift problems documented in autocut's
@@ -186,6 +293,16 @@ render_index: number; locked: boolean; hidden: boolean; muted: boolean; solo: bo
 clip_ids: string[] }
 export type TrackKind = "video" | "audio" | "caption" | "image" | "overlay" | "effect"
 export type TranscriptEntry = { id: string; media_id: string; text: string; start_us: number; end_us: number; confidence: number; is_filler: boolean }
+export type WaveformResult = { 
+/**
+ * Peak `|sample|` per bin, normalized to `[0, 1]`.
+ */
+peaks: number[]; 
+/**
+ * Microseconds spanned by one bin (`source_duration_us / peaks.len()`,
+ * rounded). `0` if `peaks` is empty.
+ */
+bin_duration_us: number }
 export type Word = { text: string; start_us: number; end_us: number; confidence: number }
 
 /** tauri-specta globals **/

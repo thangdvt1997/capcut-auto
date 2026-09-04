@@ -1,9 +1,15 @@
-//! Media probing (ffprobe wrapper -> `MediaInfo`), thumbnail generation,
-//! proxy media generation, media import (drag & drop, file picker).
+//! Media engine: ffprobe-backed metadata extraction (`probe`), format
+//! classification and folder scanning for import (`import`), thumbnail
+//! generation (`thumbnail`), proxy media generation (`proxy`), and this
+//! subsystem's error type (`error`).
+//!
 //! Reimplemented from `vendor/autocut/src-tauri/src/probe.rs`'s design
 //! (direct ffprobe JSON parsing, no `pymediainfo` dependency — see
 //! `docs/architecture-audit.md` §4), rewritten to the i64-microsecond
-//! timebase.
-//!
-//! Not implemented yet — this module is an intentionally empty, honest
-//! placeholder. Lands in Phase 3 (`IMPLEMENTATION_PLAN.md`).
+//! timebase (`docs/project-format.md`).
+
+pub mod error;
+pub mod import;
+pub mod probe;
+pub mod proxy;
+pub mod thumbnail;

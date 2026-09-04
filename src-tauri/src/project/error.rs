@@ -11,6 +11,8 @@ use serde::Serialize;
 use specta::Type;
 use thiserror::Error;
 
+pub use crate::error::AppErrorPayload;
+
 #[derive(Debug, Clone, Serialize, Type, Error)]
 #[serde(tag = "variant")]
 pub enum ProjectError {
@@ -32,19 +34,9 @@ pub enum ProjectError {
     RecoverySnapshotFound { snapshot_path: String },
 }
 
-/// The `{code, message, details, recoverable, suggested_action}` envelope
-/// every error subsystem sends to the frontend (master prompt §56). This is
-/// the reference implementation for `ProjectError`; other subsystems should
-/// follow the same shape when their own error enums land.
-#[derive(Debug, Clone, Serialize, Type)]
-pub struct AppErrorPayload {
-    pub code: String,
-    pub message: String,
-    pub details: Option<String>,
-    pub recoverable: bool,
-    pub suggested_action: Option<String>,
-}
-
+// `AppErrorPayload` itself now lives in `crate::error` (Phase 3, since
+// `MediaError`/`FfmpegError` need the same envelope) and is re-exported
+// above so this stays the reference `From` impl for it.
 impl From<&ProjectError> for AppErrorPayload {
     fn from(err: &ProjectError) -> Self {
         let message = err.to_string();

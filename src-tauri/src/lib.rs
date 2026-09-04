@@ -13,6 +13,7 @@ pub mod audio;
 pub mod capcut;
 pub mod commands;
 pub mod db;
+pub mod error;
 pub mod fcpxml;
 pub mod ffmpeg;
 pub mod jobs;
@@ -31,6 +32,15 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
     tauri_specta::Builder::<tauri::Wry>::new().commands(tauri_specta::collect_commands![
         commands::diagnostics::get_shell_info,
         commands::project::new_project,
+        commands::media::ffmpeg_diagnostics,
+        commands::media::probe_media_file,
+        commands::media::import_media_paths,
+        commands::media::import_media_folder,
+        commands::media::generate_media_proxy,
+        commands::media::compute_media_waveform,
+        commands::media::search_media_library,
+        commands::media::list_media_library,
+        commands::media::remove_media_from_library,
     ])
 }
 
@@ -75,6 +85,14 @@ pub fn run() {
         .invoke_handler(specta_builder.invoke_handler())
         .setup(move |app| {
             specta_builder.mount_events(app);
+            // Opens/creates the media library SQLite database (master
+            // prompt §35) as managed state, used by every
+            // `commands::media::*` command. A failure here is a real
+            // startup problem (unwritable app-data dir, corrupt db file)
+            // worth failing loudly on rather than limping along with no
+            // media library.
+            commands::media::init_media_library(app.handle())
+                .expect("failed to initialize media library database");
             Ok(())
         })
         .run(tauri::generate_context!())

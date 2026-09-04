@@ -5,4 +5,5 @@
 //! `crate::project`, etc.
 
 pub mod diagnostics;
+pub mod media;
 pub mod project;

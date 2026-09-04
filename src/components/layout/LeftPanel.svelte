@@ -1,7 +1,7 @@
 <!--
   Left panel stack from the master-prompt §48 layout: Media / Transcript /
-  Templates / AI. All four are placeholders in Phase 2 — the tab bar and
-  panel switching themselves are the real, working part.
+  Templates / AI. Media is real as of Phase 3 (Media Library: import,
+  search, thumbnails); Transcript/Templates/AI remain placeholders.
 -->
 <script lang="ts">
   type TabId = "media" | "transcript" | "templates" | "ai";
@@ -16,6 +16,7 @@
   let activeTab = $derived(tabs.find((t) => t.id === active)!);
 
   import PanelPlaceholder from "./PanelPlaceholder.svelte";
+  import MediaLibrary from "../media/MediaLibrary.svelte";
 </script>
 
 <div class="stack">
@@ -31,7 +32,11 @@
     {/each}
   </div>
   <div class="panel-body">
-    <PanelPlaceholder title={activeTab.label} phase={activeTab.phase} />
+    {#if active === "media"}
+      <MediaLibrary />
+    {:else}
+      <PanelPlaceholder title={activeTab.label} phase={activeTab.phase} />
+    {/if}
   </div>
 </div>
 

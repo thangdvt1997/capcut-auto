@@ -1,7 +1,9 @@
-//! FFmpeg command-builder abstraction: process argument arrays, never
-//! string concatenation (master prompt §66/§88). Also owns FFmpeg/FFprobe
-//! sidecar binary resolution once the binary-provenance/checksum decision
-//! from `docs/architecture-audit.md` §6 risk #7 is made.
-//!
-//! Not implemented yet — this module is an intentionally empty, honest
-//! placeholder. Lands in Phase 3 (`IMPLEMENTATION_PLAN.md`).
+//! FFmpeg/ffprobe integration: sidecar binary resolution (`binaries`) and the
+//! process-argument-array command builder (`command`) that every ffmpeg
+//! caller in this crate (media probe/thumbnail/proxy, audio PCM extraction,
+//! and — Phase 6 — rendering) goes through instead of ad hoc
+//! `Command::new(...).args(...)` calls with hand-built strings (master
+//! prompt §66/§88).
+
+pub mod binaries;
+pub mod command;
