@@ -1,0 +1,47 @@
+# Reference-only upstream clones (docs/upstream.md tracks provenance instead
+# of git history here; each has its own .git dir and must not become a
+# gitlink in this repo).
+/vendor/
+
+# Rust / Tauri
+target/
+**/target/
+Cargo.lock.bak
+src-tauri/gen/
+src-tauri/WixTools/
+
+# FFmpeg/FFprobe sidecars (sourced in Phase 3 — see docs/architecture-audit.md §6 risk #7)
+src-tauri/binaries/
+
+# Node
+node_modules/
+dist/
+.svelte-kit/
+build/
+
+# Vite
+.vite/
+
+# Generated Tauri <-> TypeScript bindings (regenerate with
+# `cargo run --bin export_bindings` inside src-tauri/; committed normally,
+# but a stale/partial regeneration shouldn't get force-added by accident)
+# NOTE: bindings.ts itself IS committed — do not ignore it.
+
+# Downloaded models (Model Manager-governed, master prompt §60)
+models/*
+!models/.gitkeep
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Claude Code workspace
+.claude/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
