@@ -390,6 +390,46 @@ async segmentMediaSilence(mediaId: string, params: VadParams) : Promise<Result<S
  */
 async buildSilenceCutlist(sourceMediaId: string, mediaDurationUs: number, segments: SpeechSegment[], cutParams: CutParams) : Promise<Cut[]> {
     return await TAURI_INVOKE("build_silence_cutlist", { sourceMediaId, mediaDurationUs, segments, cutParams });
+},
+async listRenderPresets() : Promise<RenderPreset[]> {
+    return await TAURI_INVOKE("list_render_presets");
+},
+async detectHardwareEncoders() : Promise<Result<HardwareEncoderReport, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("detect_hardware_encoders") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async startRenderJob(project: ProjectV1, settings: RenderSettingsInput, outputPath: string) : Promise<Result<string, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_render_job", { project, settings, outputPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cancelRenderJob(jobId: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_render_job", { jobId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: export `project` as a FCPXML 1.11 file at `output_path`.
+ * Specta-typed, following `commands/timeline.rs`/`commands/vad.rs`'s
+ * naming/error-envelope conventions.
+ */
+async exportFcpxml(project: ProjectV1, outputPath: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("export_fcpxml", { project, outputPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -418,6 +458,7 @@ last_edit_plan: JsonValue | null; highlights: JsonValue[] }
 export type Animation = { id: string; clip_id: string; kind: AnimationKind; name: string; duration_us: number }
 export type AnimationKind = "in" | "out" | "loop" | "group"
 export type AppErrorPayload = { code: string; message: string; details: string | null; recoverable: boolean; suggested_action: string | null }
+export type AudioCodec = "aac" | "opus" | "vorbis"
 export type CanvasRatioPreset = "16:9" | "9:16" | "1:1" | "4:5" | "custom"
 export type CanvasV1 = { width: number; height: number; fps: Rational; ratio_preset: CanvasRatioPreset }
 export type Caption = { id: string; track_id: string; start_us: number; end_us: number; text: string; words: Word[]; style_id: string | null }
@@ -446,6 +487,7 @@ export type ClipSettings = { opacity: number; flip_h: boolean; flip_v: boolean; 
  * rediscovered the hard way in the render/capcut adapters.
  */
 transform_x: number; transform_y: number }
+export type Container = "mp_4" | "web_m"
 /**
  * Edit-plan / silence-removal provenance — NOT a duplicate timeline.
  * Records *why* clips were split/removed by an automated pass (VAD, AI
@@ -466,6 +508,12 @@ export type CutParams = { padding_before_us: number; padding_after_us: number;
  */
 merge_gap_us: number }
 export type CutReason = "silence" | "filler_word" | "ai_suggested"
+export type DetectedEncoder = { backend: EncoderBackend; label: string; h264_encoder: string; h265_encoder: string; 
+/**
+ * `true` only if the encoder was both listed by `ffmpeg -encoders` AND
+ * passed a real smoke-test encode on this machine.
+ */
+working: boolean }
 export type Effect = { id: string; clip_id: string; kind: string; 
 /**
  * Freeform, effect-kind-specific parameters. Kept as opaque JSON here
@@ -473,6 +521,7 @@ export type Effect = { id: string; clip_id: string; kind: string;
  * (Phase 6+), so a closed Rust struct would just be guessing.
  */
 params: JsonValue }
+export type EncoderBackend = "software" | "nvenc" | "quick_sync" | "amf"
 export type ExportState = { last_render_preset: string | null; last_capcut_draft_path: string | null }
 export type FfmpegDiagnostics = { ffmpeg_path: string; ffprobe_path: string; ffmpeg_version: string; ffprobe_version: string; 
 /**
@@ -480,6 +529,14 @@ export type FfmpegDiagnostics = { ffmpeg_path: string; ffprobe_path: string; ffm
  * `crate::ffmpeg::binaries` module doc comment for the full story.
  */
 source_note: string }
+export type HardwareEncoderReport = { encoders: DetectedEncoder[]; 
+/**
+ * The master prompt's own display example: `"Encoder: NVIDIA NVENC"` or
+ * `"Encoder: CPU — libx264"`, for the H.264 codec (the common case);
+ * the frontend can recompute this per-codec via `encoders` directly if
+ * the user has chosen H.265/VP9.
+ */
+active_encoder_label: string }
 export type ImportResult = { source_path: string; media: MediaItem | null; error: AppErrorPayload | null }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type Keyframe = { id: string; clip_id: string; 
@@ -549,6 +606,50 @@ export type ProxyMode = "off" | "auto" | "always"
  * `timecode.rs` (audit §2/§5).
  */
 export type Rational = { num: number; den: number }
+export type RenderPreset = { id: string; name: string; description: string; settings: RenderSettings }
+/**
+ * Full, independently-overridable render configuration. A preset
+ * (`RenderPreset::settings`) is just one concrete value of this struct.
+ */
+export type RenderSettings = { width: number; height: number; fps: Rational; container: Container; video_codec: VideoCodec; 
+/**
+ * `libx264`/`libx265`'s `-preset` speed/efficiency knob (`ultrafast`..
+ * `veryslow`); ignored for `Vp9` and for hardware encoder backends
+ * (each of which has its own, differently-named speed knob — out of
+ * scope to expose individually here, see `plan::video_encoder_args`
+ * doc comment). Owned `String` (not `&'static str`) so a user override
+ * value (`commands::render::RenderSettingsInput::x264_preset`) doesn't
+ * need a `'static` lifetime hack to plug in here.
+ */
+x264_preset: string; 
+/**
+ * `None` means "use `video_bitrate_kbps` instead" (bitrate-controlled
+ * encode); hardware encoder backends always use bitrate mode (see
+ * `plan.rs`), since NVENC/QSV/AMF do not share libx264/265's CRF scale.
+ */
+crf: number | null; video_bitrate_kbps: number | null; audio_codec: AudioCodec; audio_bitrate_kbps: number; 
+/**
+ * `None` = auto-detect the best available hardware encoder at render
+ * time (falling back to software); `Some(Software)` forces libx264/265;
+ * `Some(other)` forces that specific hardware backend if a working
+ * encoder was actually detected for it (see `hwaccel::detect_encoders`),
+ * erroring rather than silently downgrading if it wasn't.
+ */
+hardware_encoder: EncoderBackend | null }
+/**
+ * What the frontend actually sends: an optional preset id to seed from,
+ * plus any fields the user overrode. `None` fields fall back to the
+ * preset's value (or, with no preset, to the 1080p preset's defaults —
+ * documented here rather than silently picking something arbitrary).
+ */
+export type RenderSettingsInput = { preset_id: string | null; width: number | null; height: number | null; fps: Rational | null; container: Container | null; video_codec: VideoCodec | null; x264_preset: string | null; crf: number | null; video_bitrate_kbps: number | null; audio_codec: AudioCodec | null; audio_bitrate_kbps: number | null; 
+/**
+ * `None` = auto-detect the best available hardware encoder, falling
+ * back to software (master prompt §33). `Some(_)` requests a specific
+ * backend, itself falling back to software if that hardware isn't
+ * actually working on this machine (`hwaccel::resolve_backend_for_render`).
+ */
+hardware_encoder: EncoderBackend | null }
 /**
  * Static, build-time facts about this build. No telemetry, no network
  * calls, nothing environment-dependent beyond `std::env::consts`. Exists in
@@ -614,6 +715,7 @@ export type VadParams = { threshold: number; min_silence_us: number; min_speech_
  * `segment_media_silence` reads them back by id.
  */
 export type VadScoreSummary = { media_id: string; chunk_count: number; chunk_duration_us: number; sample_count: number }
+export type VideoCodec = "h264" | "h265" | "vp_9"
 export type WaveformResult = { 
 /**
  * Peak `|sample|` per bin, normalized to `[0, 1]`.

@@ -68,6 +68,11 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::vad::score_media_silence,
         commands::vad::segment_media_silence,
         commands::vad::build_silence_cutlist,
+        commands::render::list_render_presets,
+        commands::render::detect_hardware_encoders,
+        commands::render::start_render_job,
+        commands::render::cancel_render_job,
+        fcpxml::export::export_fcpxml,
     ])
 }
 
@@ -130,6 +135,10 @@ pub fn run() {
             // the expensive scoring phase is cached here rather than
             // recomputed on every parameter change.
             tauri::Manager::manage(app, crate::vad::VadCache::default());
+            // Live render jobs (job_id -> cancellation flag), managed the
+            // same way as `MediaLibrary`/`VadCache` above — see
+            // `commands::render::RenderJobs` doc comment.
+            tauri::Manager::manage(app, crate::commands::render::RenderJobs::default());
             Ok(())
         })
         .run(tauri::generate_context!())
