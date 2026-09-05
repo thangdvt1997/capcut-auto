@@ -794,6 +794,119 @@ async detectHighlights(mediaPath: string, transcript: TranscriptEntry[], totalDu
 }
 },
 /**
+ * Runs auto-reframe end-to-end for one real media file (master prompt
+ * §23): motion-tracks the subject, smooths the track to prevent camera
+ * jumping, and computes both real `project::Keyframe` position entries and
+ * a real crop-window-over-time result for `target_width`x`target_height`
+ * (e.g. `9`x`16` to convert a landscape source to portrait).
+ * 
+ * `clip_id`/`clip_position_us` place the returned keyframes on a specific
+ * project clip (`smoothing::keyframes_from_smoothed`'s doc comment) — pass
+ * the clip this reframe is being computed for and its on-timeline start.
+ * `smoothing_tau_us`, if `None`, defaults to
+ * `reframe::DEFAULT_SMOOTHING_TAU_US`.
+ */
+async autoReframeMedia(mediaPath: string, clipId: string, clipPositionUs: number, targetWidth: number, targetHeight: number, smoothingTauUs: number | null) : Promise<Result<AutoReframeResult, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("auto_reframe_media", { mediaPath, clipId, clipPositionUs, targetWidth, targetHeight, smoothingTauUs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Real scene detection (master prompt §25's `Scene{start, end, thumbnail,
+ * score}`) against one media file, each scene's thumbnail written into
+ * `thumbnail_dir` (module doc comment / `media::scene::detect_scenes`).
+ */
+async detectMediaScenes(mediaPath: string, totalDurationUs: number, thumbnailDir: string, threshold: number | null) : Promise<Result<Scene[], AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("detect_media_scenes", { mediaPath, totalDurationUs, thumbnailDir, threshold }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * "Split at scenes" — splits `clip_id` at every given scene boundary that
+ * falls strictly inside it (`timeline::scenes::split_clip_at_scenes`).
+ */
+async splitClipAtScenes(clipId: string, sceneBoundariesUs: number[]) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("split_clip_at_scenes", { clipId, sceneBoundariesUs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * "Remove scenes" — cuts every given scene's span out of `clip_id`
+ * (`timeline::scenes::remove_scenes_from_clip`, structurally a silence/
+ * filler-word-style removal).
+ */
+async removeScenesFromClip(clipId: string, scenes: Scene[], mediaId: string) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_scenes_from_clip", { clipId, scenes, mediaId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Same as [`remove_scenes_from_clip`], applied to every clip on
+ * `track_id` (`timeline::scenes::remove_scenes_from_track`).
+ */
+async removeScenesFromTrack(trackId: string, scenes: Scene[], mediaId: string) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_scenes_from_track", { trackId, scenes, mediaId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * "Generate highlights from scenes" (master prompt §25's own checklist
+ * item) — pure, no session needed (`highlights::combine::highlights_from_scenes`).
+ */
+async generateHighlightsFromScenes(scenes: Scene[], maxHighlights: number | null) : Promise<Highlight[]> {
+    return await TAURI_INVOKE("generate_highlights_from_scenes", { scenes, maxHighlights });
+},
+/**
+ * Pure trigger detection (`crate::zoom`'s exact required
+ * `Vec<ZoomTrigger> + ZoomIntensity -> Vec<Keyframe>` pure-function
+ * signature lives in `generate_zoom_keyframes` below; this command runs the
+ * three real trigger detectors and merges their output) against real,
+ * caller-supplied data: a media file's own detected `Scene`s (long static
+ * scenes), manual marker timestamps, and real RMS-energy-scored candidate
+ * windows (emphasized speech).
+ */
+async generateZoomTriggers(scenes: Scene[], manualMarkerTimestampsUs: number[], emphasisWindows: EmphasisWindow[]) : Promise<ZoomTrigger[]> {
+    return await TAURI_INVOKE("generate_zoom_triggers", { scenes, manualMarkerTimestampsUs, emphasisWindows });
+},
+/**
+ * The pure function this phase's brief calls for, exposed directly as its
+ * own command (in addition to being used internally by
+ * [`apply_auto_zoom_to_clip`]) so a caller can preview generated keyframes
+ * before committing them to a clip.
+ */
+async generateZoomKeyframes(triggers: ZoomTrigger[], intensity: ZoomIntensity, clipId: string) : Promise<Keyframe[]> {
+    return await TAURI_INVOKE("generate_zoom_keyframes", { triggers, intensity, clipId });
+},
+/**
+ * Wires [`generate_zoom_keyframes`]'s pure output against a real clip's
+ * data: generates the keyframes, then applies them to `clip_id` in the
+ * live timeline session (`timeline::zoom::apply_zoom_keyframes_to_clip`),
+ * going through the standard `Command`/undo machinery.
+ */
+async applyAutoZoomToClip(clipId: string, triggers: ZoomTrigger[], intensity: ZoomIntensity) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("apply_auto_zoom_to_clip", { clipId, triggers, intensity }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Tauri command: export `project` as a FCPXML 1.11 file at `output_path`.
  * Specta-typed, following `commands/timeline.rs`/`commands/vad.rs`'s
  * naming/error-envelope conventions.
@@ -890,7 +1003,72 @@ highlights: Highlight[] }
 export type Animation = { id: string; clip_id: string; kind: AnimationKind; name: string; duration_us: number }
 export type AnimationKind = "in" | "out" | "loop" | "group"
 export type AppErrorPayload = { code: string; message: string; details: string | null; recoverable: boolean; suggested_action: string | null }
+/**
+ * Per-clip audio feature settings (master prompt §38: volume, mute, fade
+ * in/out, normalize, noise reduction), keyed by clip id in
+ * `ProjectV1::audio_clip_settings` rather than embedded directly in `Clip`/
+ * `ClipSettings` — `ClipSettings` mirrors CapCut's own *visual* `ClipSettings`
+ * field-for-field (`capcut::clip_settings` module doc comment: "a direct
+ * field-for-field mapping, not a unit conversion"), so audio-only fields
+ * belong in their own additive, optional overlay instead of breaking that
+ * 1:1 correspondence. Absence of a clip id in the map means "default": full
+ * volume, not muted, no fades, no normalization/noise-reduction.
+ */
+export type AudioClipSettings = { 
+/**
+ * Linear gain multiplier (ffmpeg `volume` filter convention): `1.0` =
+ * unity gain, `0.0` = silent, values above `1.0` boost. NOT decibels.
+ */
+volume: number; 
+/**
+ * Per-clip mute — independent of `volume` (unmuting restores whatever
+ * `volume` was set to, rather than needing to remember/re-enter a
+ * value), same "silent regardless of the underlying setting" semantics
+ * `Track::muted` already has.
+ */
+muted: boolean; 
+/**
+ * Fade-in duration from the clip's own on-timeline start, `0` = no
+ * fade-in.
+ */
+fade_in_us: number; 
+/**
+ * Fade-out duration ending at the clip's own on-timeline end, `0` = no
+ * fade-out.
+ */
+fade_out_us: number; 
+/**
+ * Loudness normalization (ffmpeg `loudnorm`, EBU R128) for this clip's
+ * audio.
+ */
+normalize: boolean; 
+/**
+ * Noise reduction (master prompt §38's "noise reduction architecture" —
+ * see `render::audio_filters::NoiseReductionProvider`) for this clip's
+ * audio.
+ */
+noise_reduction: boolean }
 export type AudioCodec = "aac" | "opus" | "vorbis"
+/**
+ * Distinguishes a "music" track from a "voice" track (master prompt §38:
+ * "music track" / "voice track"), keyed by track id in
+ * `ProjectV1::audio_track_roles` for the same additive-overlay reason
+ * `AudioClipSettings` is kept off `Track` directly. `Standard` (the default,
+ * for any track id absent from the map) means "no special role" — mixed
+ * normally, never a ducking trigger or ducking target. Only meaningful for
+ * `TrackKind::Audio` tracks; a non-audio track with a role entry is simply
+ * never consulted by the audio pipeline.
+ */
+export type AudioRole = "standard" | "music" | "voice"
+/**
+ * Full auto-reframe result for one media file: the raw tracked positions,
+ * the smoothed ones, the `project::Keyframe` entries derived from the
+ * smoothed track, and the crop-window-over-time result derived from the
+ * same smoothed track — every intermediate stage, not just the final
+ * output, so a caller (and this pass's tests) can verify each step
+ * independently.
+ */
+export type AutoReframeResult = { raw_positions: SubjectPosition[]; smoothed_positions: SubjectPosition[]; keyframes: Keyframe[]; crop_windows: CropWindow[]; source_width: number; source_height: number }
 /**
  * Catalog entry cross-referenced with what's actually on disk / actively
  * downloading (master prompt §60 "Available models").
@@ -1060,6 +1238,10 @@ transform_x: number; transform_y: number }
 export type Color = { r: number; g: number; b: number }
 export type Container = "mp_4" | "web_m"
 /**
+ * One crop rectangle at a point in time, in source-frame pixel units.
+ */
+export type CropWindow = { time_us: number; x: number; y: number; width: number; height: number }
+/**
  * Edit-plan / silence-removal provenance — NOT a duplicate timeline.
  * Records *why* clips were split/removed by an automated pass (VAD, AI
  * EditPlan), for undo/audit/re-analysis (`docs/project-format.md`).
@@ -1114,6 +1296,30 @@ export type DetectedEncoder = { backend: EncoderBackend; label: string; h264_enc
  */
 working: boolean }
 /**
+ * Auto-ducking parameters (master prompt §38's exact field list) for one
+ * `Music`-role track, keyed by track id in `ProjectV1::track_ducking`.
+ * Presence in the map (for a track whose `AudioRole` is `Music`) means
+ * "duck this track's volume while speech exists on any `Voice`-role track" —
+ * see `render::audio_filters::ducking_filter_chain` for the real ffmpeg
+ * filter chain this produces.
+ */
+export type DuckingSettings = { 
+/**
+ * Linear gain multiplier applied while ducked (e.g. `0.25` = -12dB) —
+ * same linear-gain convention as `AudioClipSettings::volume`, NOT
+ * decibels.
+ */
+duck_level: number; 
+/**
+ * How long the volume ramp takes when speech *starts* (ducking down).
+ */
+attack_us: number; 
+/**
+ * How long the volume ramp takes when speech *stops* (recovering back
+ * to unity gain).
+ */
+release_us: number }
+/**
  * A single edit action (master prompt §18's example: `{"type": "remove",
  * "start": 12.3, "end": 15.7, "reason": "long pause"}` /
  * `{"type": "zoom", "start": 32, "end": 36, "scale": 1.12}`). Time fields
@@ -1147,6 +1353,12 @@ export type Effect = { id: string; clip_id: string; kind: string;
  * (Phase 6+), so a closed Rust struct would just be guessing.
  */
 params: JsonValue }
+/**
+ * A candidate window plus its own already-computed real RMS energy
+ * (`highlights::signals::windowed_rms_energy`, `0.0..=1.0`) — the input
+ * [`emphasis_triggers`] scores against [`EMPHASIS_ENERGY_THRESHOLD`].
+ */
+export type EmphasisWindow = { start_us: number; end_us: number; energy: number }
 export type EncoderBackend = "software" | "nvenc" | "quick_sync" | "amf"
 export type ExportState = { last_render_preset: string | null; last_capcut_draft_path: string | null }
 export type FfmpegDiagnostics = { ffmpeg_path: string; ffprobe_path: string; ffmpeg_version: string; ffprobe_version: string; 
@@ -1303,7 +1515,26 @@ version: number; project: ProjectMeta; canvas: CanvasV1; media: MediaItem[]; tra
  * auto-copied in here — same "catalog is separate from the user's own
  * list" relationship `render::RenderPreset` has with `RenderSettings`.
  */
-caption_styles: CaptionStyle[]; transcript: TranscriptEntry[]; effects: Effect[]; animations: Animation[]; keyframes: Keyframe[]; cuts: Cut[]; ai: AiState; export: ExportState; sync_groups: SyncGroup[] }
+caption_styles: CaptionStyle[]; transcript: TranscriptEntry[]; effects: Effect[]; animations: Animation[]; keyframes: Keyframe[]; cuts: Cut[]; ai: AiState; export: ExportState; sync_groups: SyncGroup[]; 
+/**
+ * Additive (Phase 11, master prompt §38) — per-clip audio feature
+ * overlay, keyed by clip id. Absent clip ids use
+ * `AudioClipSettings::default()`. See that type's doc comment for why
+ * this lives in its own map rather than on `Clip`/`ClipSettings`
+ * directly.
+ */
+audio_clip_settings: Partial<{ [key in string]: AudioClipSettings }>; 
+/**
+ * Additive (Phase 11, master prompt §38) — music/voice track role
+ * overlay, keyed by track id. Absent track ids are `AudioRole::Standard`.
+ */
+audio_track_roles: Partial<{ [key in string]: AudioRole }>; 
+/**
+ * Additive (Phase 11, master prompt §38) — auto-ducking configuration
+ * for `Music`-role tracks, keyed by track id. Absent track ids have no
+ * ducking applied.
+ */
+track_ducking: Partial<{ [key in string]: DuckingSettings }> }
 export type ProxyMode = "off" | "auto" | "always"
 /**
  * A rational number, used for frame rates (`num/den`, e.g. 30000/1001 for
@@ -1362,6 +1593,24 @@ hardware_encoder: EncoderBackend | null }
  * buttons) overlapping generated captions.
  */
 export type SafeMargins = { top: number; bottom: number; left: number; right: number }
+/**
+ * One detected scene: `{id, start_us, end_us, thumbnail_path, score}`
+ * (master prompt §25's exact `Scene{start, end, thumbnail, score}` return
+ * shape, specta-typed so it's usable directly from a Tauri command).
+ * 
+ * ## `score` formula (documented per this phase's task brief)
+ * 
+ * `score` is the real ffmpeg-computed `scene` metric (`0.0..=1.0`,
+ * `lavfi.scene_score`, `parse_showinfo_scene_cuts` doc comment) of the cut
+ * that *opens* this scene — i.e. "how strong a visual break ffmpeg itself
+ * detected at this scene's start boundary", not a placeholder constant and
+ * not a duration/uniformity guess. The very first scene in a media file
+ * (starting at `0`) has no opening cut at all — it starts simply because
+ * the timeline begins there, not because ffmpeg detected a break — so it
+ * is scored `0.0` (honest: "not a detected boundary", not "detected but
+ * weak").
+ */
+export type Scene = { id: string; start_us: number; end_us: number; thumbnail_path: string | null; score: number }
 /**
  * Static, build-time facts about this build. No telemetry, no network
  * calls, nothing environment-dependent beyond `std::env::consts`. Exists in
@@ -1436,6 +1685,28 @@ transcript: string; category: SmartEditCategory; reason: string; confidence: num
  */
 export type SpeechSegment = { start_us: number; end_us: number; confidence: number }
 /**
+ * One normalized subject-position sample over time (master prompt §23:
+ * "Return normalized target coordinates over time").
+ * 
+ * `target_x`/`target_y` are fractions of the *source* frame, `0.0..=1.0`,
+ * origin top-left (`target_x=0.0` is the frame's left edge, `target_y=0.0`
+ * is its top edge) — plain image-space normalized coordinates, deliberately
+ * not yet converted to `project::ClipSettings`'s half-canvas/y-up
+ * convention (that conversion happens once, at the `smoothing` module
+ * boundary, when these positions become `project::Keyframe`s — see that
+ * module's doc comment for why).
+ */
+export type SubjectPosition = { 
+/**
+ * Microseconds from the start of the *source* media file (not an
+ * absolute project-timeline position — a tracker has no notion of
+ * "project" or "clip placement", only the raw file it was pointed at,
+ * the same "provider sees no project-level concepts" split
+ * `transcription::provider`'s own module doc comment establishes for
+ * `TranscriptSegment`).
+ */
+time_us: number; target_x: number; target_y: number }
+/**
  * Generalizes autocut's fixed-camera-rig "shared cutlist + per-track
  * offset" concept (audit §4) into a first-class, optional relationship. A
  * clip's `Clip::group_id` points at a `SyncGroup`; the timeline engine
@@ -1500,6 +1771,13 @@ peaks: number[];
  */
 bin_duration_us: number }
 export type Word = { text: string; start_us: number; end_us: number; confidence: number }
+export type ZoomIntensity = "off" | "low" | "medium" | "high"
+/**
+ * One detected/manual zoom trigger event: a time range worth punching in
+ * on, plus a human-readable reason (surfaced to the frontend so a user can
+ * see *why* a given zoom keyframe exists before deciding to keep it).
+ */
+export type ZoomTrigger = { start_us: number; end_us: number; reason: string }
 
 /** tauri-specta globals **/
 

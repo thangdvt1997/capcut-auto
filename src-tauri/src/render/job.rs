@@ -169,7 +169,7 @@ mod tests {
         settings.width = 320;
         settings.height = 240;
         settings.fps = Rational::new(10, 1);
-        let plan = build_ffmpeg_plan(&graph, &settings, &out).expect("plan builds");
+        let plan = build_ffmpeg_plan(&graph, &settings, &out, &[]).expect("plan builds");
 
         let mut saw_done = false;
         run_render_job(&ffmpeg, &plan, &out, None, |p| {
@@ -229,7 +229,7 @@ mod tests {
         settings.width = 320;
         settings.height = 240;
         settings.fps = Rational::new(10, 1);
-        let plan = build_ffmpeg_plan(&graph, &settings, &out).expect("plan builds");
+        let plan = build_ffmpeg_plan(&graph, &settings, &out, &[]).expect("plan builds");
 
         let cancel = AtomicBool::new(true); // already cancelled before the job starts
         let result = run_render_job(&ffmpeg, &plan, &out, Some(&cancel), |_| {});
@@ -238,6 +238,96 @@ mod tests {
         assert!(
             !out.exists(),
             "cancelled render must not leave a partial file behind"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Real end-to-end audio-feature render test (master prompt §38): a real
+    /// tiny clip whose audio track has volume reduction + fade-in/fade-out
+    /// configured, actually rendered via real ffmpeg — mirroring this
+    /// module's own real-render-test rigor (`renders_a_real_tiny_clip_and_
+    /// reports_completion`) rather than only asserting on generated
+    /// arguments (which `render::plan`'s own tests already cover).
+    #[test]
+    fn renders_a_real_clip_with_volume_and_fade_audio_features() {
+        use crate::render::graph::AudioClipNode;
+        use crate::render::plan::build_ffmpeg_plan as build_plan;
+
+        let ffmpeg =
+            crate::ffmpeg::binaries::ffmpeg_path(None).expect("ffmpeg resolvable in test env");
+        let dir = std::env::temp_dir().join(format!(
+            "ave-render-audio-features-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = synth_source(&ffmpeg, &dir);
+        let out = dir.join("out.mp4");
+
+        let graph = RenderGraph {
+            canvas: canvas(),
+            duration_us: 2_000_000,
+            video_layers: vec![VideoLayer {
+                track_id: "v1".into(),
+                render_index: 0,
+                clips: vec![VideoClipNode {
+                    clip_id: "c1".into(),
+                    source_path: source.to_string_lossy().to_string(),
+                    is_image: false,
+                    media_width: 320,
+                    media_height: 240,
+                    source_in_us: 0,
+                    source_out_us: 2_000_000,
+                    position_us: 0,
+                    speed: 1.0,
+                    settings: ClipSettings::default(),
+                }],
+            }],
+            audio_layers: vec![crate::render::graph::AudioLayer {
+                track_id: "a1".into(),
+                clips: vec![AudioClipNode {
+                    clip_id: "ac1".into(),
+                    source_path: source.to_string_lossy().to_string(),
+                    source_in_us: 0,
+                    source_out_us: 2_000_000,
+                    position_us: 0,
+                    speed: 1.0,
+                    volume: 0.5,
+                    muted: false,
+                    fade_in_us: 250_000,
+                    fade_out_us: 250_000,
+                    normalize: false,
+                    noise_reduction: false,
+                }],
+                ducking: None,
+            }],
+            caption_nodes: vec![],
+            effect_nodes: vec![],
+        };
+        let mut settings = find_preset("fast_preview").unwrap().settings;
+        settings.width = 320;
+        settings.height = 240;
+        settings.fps = Rational::new(10, 1);
+        let plan = build_plan(&graph, &settings, &out, &[]).expect("plan builds");
+
+        let mut saw_done = false;
+        run_render_job(&ffmpeg, &plan, &out, None, |p| {
+            if p.done {
+                saw_done = true;
+            }
+        })
+        .expect("render job with audio features succeeds against real ffmpeg");
+
+        assert!(saw_done);
+        assert!(out.exists());
+
+        let ffprobe =
+            crate::ffmpeg::binaries::ffprobe_path(None).expect("ffprobe resolvable in test env");
+        let probed = crate::media::probe::probe(&ffprobe, &out).expect("probing rendered output");
+        assert!(probed.has_video);
+        assert!(
+            probed.has_audio,
+            "the rendered output must still carry an audio stream after volume/fade filters"
         );
 
         std::fs::remove_dir_all(&dir).ok();

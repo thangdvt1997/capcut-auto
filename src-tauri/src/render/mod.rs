@@ -24,6 +24,7 @@
 //! exists yet) — this is documented in `graph`/`plan`'s doc comments, not
 //! silently dropped.
 
+pub mod audio_filters;
 pub mod error;
 pub mod graph;
 pub mod hwaccel;
@@ -31,6 +32,9 @@ pub mod job;
 pub mod plan;
 pub mod presets;
 
+pub use audio_filters::{
+    ducking_filter_chain, FfmpegNoiseReductionProvider, NoiseReductionProvider,
+};
 pub use error::RenderError;
 pub use graph::{build_render_graph, RenderGraph};
 pub use hwaccel::{detect_encoders, resolve_backend_for_render, DetectedEncoder, EncoderBackend};

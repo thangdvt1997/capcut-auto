@@ -21,6 +21,8 @@ pub mod clipboard;
 pub mod command;
 pub mod error;
 pub mod ops;
+pub mod scenes;
 pub mod session;
 pub mod silence;
 pub mod sync;
+pub mod zoom;

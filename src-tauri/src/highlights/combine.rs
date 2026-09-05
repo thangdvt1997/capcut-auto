@@ -32,6 +32,7 @@
 //! that the real, no-AI-needed signals stay independently testable/useful
 //! even with no provider configured at all.
 
+use crate::media::scene::Scene;
 use crate::vad::provider::SpeechSegment;
 
 use super::signals::{windowed_rms_energy, windowed_speech_density};
@@ -165,6 +166,39 @@ pub fn local_only_highlights(
     });
     scored.truncate(max_highlights);
     scored
+}
+
+/// "Generate highlights from scenes" (master prompt §25's own checklist
+/// item, this pass's brief): each `Scene` becomes one highlight candidate
+/// directly, using the scene's own `score` (already a real ffmpeg-derived
+/// scene-cut-strength value, `media::scene::Scene` doc comment) rescaled
+/// from its `0.0..=1.0` range to `Highlight::score`'s `0.0..=100.0`
+/// convention — reusing the real detection this phase already did rather
+/// than re-deriving importance a second time. Sorted by score descending and
+/// truncated to `max_highlights` (top-N by score, a reasonable documented
+/// approach since master prompt §25 doesn't specify a strict formula).
+pub fn highlights_from_scenes(scenes: &[Scene], max_highlights: usize) -> Vec<Highlight> {
+    let mut highlights: Vec<Highlight> = scenes
+        .iter()
+        .map(|s| Highlight {
+            id: uuid::Uuid::new_v4().to_string(),
+            start_us: s.start_us,
+            end_us: s.end_us,
+            score: (s.score * 100.0).clamp(0.0, 100.0),
+            title: format!("Scene at {:.1}s", s.start_us as f64 / 1_000_000.0),
+            reason: format!(
+                "Detected scene boundary (ffmpeg scene-change score {:.2}); no AI provider consulted.",
+                s.score
+            ),
+        })
+        .collect();
+    highlights.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    highlights.truncate(max_highlights);
+    highlights
 }
 
 /// Speech-density/energy thresholds only used to pick which honest,
@@ -311,5 +345,54 @@ mod tests {
         assert_eq!(highlights[0].start_us, 5_000_000);
         assert!(highlights[0].score > 50.0, "{}", highlights[0].score);
         assert!(highlights[0].reason.contains("no AI provider configured"));
+    }
+
+    fn scene(id: &str, start_us: i64, end_us: i64, score: f32) -> Scene {
+        Scene {
+            id: id.to_string(),
+            start_us,
+            end_us,
+            thumbnail_path: None,
+            score,
+        }
+    }
+
+    #[test]
+    fn highlights_from_scenes_rescales_score_and_sorts_descending() {
+        let scenes = vec![
+            scene("a", 0, 3_000_000, 0.2),
+            scene("b", 3_000_000, 6_000_000, 0.9),
+            scene("c", 6_000_000, 9_000_000, 0.5),
+        ];
+        let highlights = highlights_from_scenes(&scenes, 10);
+        assert_eq!(highlights.len(), 3);
+        // Sorted descending by score.
+        assert_eq!(highlights[0].start_us, 3_000_000);
+        assert!(
+            (highlights[0].score - 90.0).abs() < 1e-4,
+            "{}",
+            highlights[0].score
+        );
+        assert_eq!(highlights[1].start_us, 6_000_000);
+        assert!((highlights[1].score - 50.0).abs() < 1e-4);
+        assert_eq!(highlights[2].start_us, 0);
+        assert!((highlights[2].score - 20.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn highlights_from_scenes_truncates_to_max_highlights() {
+        let scenes = vec![
+            scene("a", 0, 1_000_000, 0.1),
+            scene("b", 1_000_000, 2_000_000, 0.2),
+            scene("c", 2_000_000, 3_000_000, 0.3),
+        ];
+        let highlights = highlights_from_scenes(&scenes, 1);
+        assert_eq!(highlights.len(), 1);
+        assert_eq!(highlights[0].start_us, 2_000_000);
+    }
+
+    #[test]
+    fn highlights_from_scenes_on_empty_input_is_empty() {
+        assert!(highlights_from_scenes(&[], 10).is_empty());
     }
 }

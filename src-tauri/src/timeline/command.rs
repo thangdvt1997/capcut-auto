@@ -23,7 +23,7 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use crate::project::{Caption, Clip, Cut, ProjectV1, SyncGroup, Track};
+use crate::project::{Caption, Clip, Cut, Keyframe, ProjectV1, SyncGroup, Track};
 
 use super::error::TimelineError;
 
@@ -83,6 +83,18 @@ pub struct SetCutsCommand {
     pub new: Vec<Cut>,
 }
 
+/// Whole-list swap of `ProjectV1::keyframes` (Phase 11's auto-zoom follow-up,
+/// master prompt §24), mirroring `SetCutsCommand`'s own "one before/after
+/// snapshot of the field" reasoning — like `cuts`, `keyframes` isn't a set of
+/// independently-addressed timeline entities the way clips/captions are, so
+/// a whole-list swap is the simplest correct primitive. Used by
+/// `timeline::zoom::apply_zoom_keyframes_to_clip`.
+#[derive(Debug, Clone)]
+pub struct SetKeyframesCommand {
+    pub old: Vec<Keyframe>,
+    pub new: Vec<Keyframe>,
+}
+
 /// `Caption`'s equivalent of `InsertClipCommand`/`RemoveClipCommand`/
 /// `SetClipCommand` above — per-entity addressed (not a whole-list swap like
 /// `SetCutsCommand`), because individual captions are independently split/
@@ -118,6 +130,7 @@ pub enum Command {
     SetTrack(SetTrackCommand),
     SetSyncGroup(SetSyncGroupCommand),
     SetCuts(SetCutsCommand),
+    SetKeyframes(SetKeyframesCommand),
     InsertCaption(InsertCaptionCommand),
     RemoveCaption(RemoveCaptionCommand),
     SetCaption(SetCaptionCommand),
@@ -222,6 +235,10 @@ impl Command {
                 project.cuts = c.new.clone();
                 Ok(())
             }
+            Command::SetKeyframes(c) => {
+                project.keyframes = c.new.clone();
+                Ok(())
+            }
             Command::InsertCaption(c) => {
                 project.captions.push(c.caption.clone());
                 resort_captions(project);
@@ -274,6 +291,10 @@ impl Command {
                 new: c.old.clone(),
             }),
             Command::SetCuts(c) => Command::SetCuts(SetCutsCommand {
+                old: c.new.clone(),
+                new: c.old.clone(),
+            }),
+            Command::SetKeyframes(c) => Command::SetKeyframes(SetKeyframesCommand {
                 old: c.new.clone(),
                 new: c.old.clone(),
             }),
@@ -555,6 +576,36 @@ mod tests {
 
         history.redo(&mut project).unwrap();
         assert_eq!(project.cuts, new_cuts);
+    }
+
+    #[test]
+    fn set_keyframes_undo_redo_round_trips() {
+        let mut project = project_with_one_clip();
+        let before = serde_json::to_value(&project).unwrap();
+
+        let new_keyframes = vec![Keyframe {
+            id: "kf1".into(),
+            clip_id: "c1".into(),
+            property: "scale".into(),
+            time_offset_us: 0,
+            value: 1.08,
+            curve: "linear".into(),
+        }];
+        let cmd = Command::SetKeyframes(SetKeyframesCommand {
+            old: project.keyframes.clone(),
+            new: new_keyframes.clone(),
+        });
+
+        let mut history = History::new(MAX_HISTORY);
+        history.apply(&mut project, cmd).unwrap();
+        assert_eq!(project.keyframes.len(), 1);
+        assert_eq!(project.keyframes[0].id, "kf1");
+
+        history.undo(&mut project).unwrap();
+        assert_eq!(serde_json::to_value(&project).unwrap(), before);
+
+        history.redo(&mut project).unwrap();
+        assert_eq!(project.keyframes, new_keyframes);
     }
 
     fn caption(id: &str, track_id: &str, start_us: i64, end_us: i64) -> Caption {

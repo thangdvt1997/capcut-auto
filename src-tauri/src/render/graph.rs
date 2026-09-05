@@ -23,7 +23,8 @@
 use std::collections::HashMap;
 
 use crate::project::{
-    CanvasV1, Clip, ClipSettings, MediaItem, MediaKind, ProjectV1, Track, TrackKind,
+    AudioRole, CanvasV1, Clip, ClipSettings, DuckingSettings, MediaItem, MediaKind, ProjectV1,
+    Track, TrackKind,
 };
 use crate::timeline::ops::effective_track_mute_state;
 
@@ -69,7 +70,12 @@ pub struct VideoLayer {
     pub clips: Vec<VideoClipNode>,
 }
 
-/// One audio-track clip, fully resolved.
+/// One audio-track clip, fully resolved — including its resolved audio
+/// feature settings (master prompt §38: volume/mute/fade/normalize/noise
+/// reduction), pulled from `ProjectV1::audio_clip_settings`'s per-clip
+/// overlay (`AudioClipSettings::default()` when the clip has no entry
+/// there) so `render::plan` never has to look back at `ProjectV1` itself,
+/// same reasoning as every other field this node already resolves.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AudioClipNode {
     pub clip_id: String,
@@ -78,6 +84,13 @@ pub struct AudioClipNode {
     pub source_out_us: i64,
     pub position_us: i64,
     pub speed: f64,
+    /// Linear gain multiplier (`AudioClipSettings::volume` convention).
+    pub volume: f64,
+    pub muted: bool,
+    pub fade_in_us: i64,
+    pub fade_out_us: i64,
+    pub normalize: bool,
+    pub noise_reduction: bool,
 }
 
 impl AudioClipNode {
@@ -94,6 +107,11 @@ impl AudioClipNode {
 pub struct AudioLayer {
     pub track_id: String,
     pub clips: Vec<AudioClipNode>,
+    /// `Some` only for a `Music`-role track (`ProjectV1::audio_track_roles`)
+    /// that also has an entry in `ProjectV1::track_ducking` — see
+    /// `render::plan`/`render::audio_filters::ducking_filter_chain` for the
+    /// real ffmpeg filter chain this produces.
+    pub ducking: Option<DuckingSettings>,
 }
 
 /// A `Caption` (`project.captions`) placed on a `Caption`-kind track.
@@ -223,6 +241,11 @@ pub fn build_render_graph(project: &ProjectV1) -> Result<RenderGraph, RenderErro
                         media_id: media_id.clone(),
                     }
                 })?;
+                let audio_settings = project
+                    .audio_clip_settings
+                    .get(&clip.id)
+                    .copied()
+                    .unwrap_or_default();
                 clips.push(AudioClipNode {
                     clip_id: clip.id.clone(),
                     source_path: media.source_path.clone(),
@@ -230,12 +253,24 @@ pub fn build_render_graph(project: &ProjectV1) -> Result<RenderGraph, RenderErro
                     source_out_us: clip.source_out_us,
                     position_us: clip.position_us,
                     speed: clip.speed,
+                    volume: audio_settings.volume,
+                    muted: audio_settings.muted,
+                    fade_in_us: audio_settings.fade_in_us,
+                    fade_out_us: audio_settings.fade_out_us,
+                    normalize: audio_settings.normalize,
+                    noise_reduction: audio_settings.noise_reduction,
                 });
             }
             clips.sort_by_key(|c| (c.position_us, c.clip_id.clone()));
+            let ducking = if project.audio_track_roles.get(&track.id) == Some(&AudioRole::Music) {
+                project.track_ducking.get(&track.id).copied()
+            } else {
+                None
+            };
             audio_layers.push(AudioLayer {
                 track_id: track.id.clone(),
                 clips,
+                ducking,
             });
         }
         // TrackKind::Caption / TrackKind::Effect tracks contribute no video

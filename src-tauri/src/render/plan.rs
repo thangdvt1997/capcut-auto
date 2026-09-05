@@ -48,8 +48,12 @@
 use std::path::Path;
 
 use crate::ffmpeg::command::FfmpegArgs;
-use crate::project::ClipSettings;
+use crate::project::{ClipSettings, DuckingSettings};
+use crate::vad::provider::SpeechSegment;
 
+use super::audio_filters::{
+    ducking_filter_chain, FfmpegNoiseReductionProvider, NoiseReductionProvider,
+};
 use super::error::RenderError;
 use super::graph::{AudioClipNode, RenderGraph, VideoClipNode};
 use super::hwaccel::{resolve_video_encoder, EncoderBackend};
@@ -219,7 +223,22 @@ struct AudioClipFilter {
     label: String,
 }
 
-fn build_audio_clip_filter(input_index: usize, clip: &AudioClipNode) -> AudioClipFilter {
+/// Builds one clip's real audio filter chain (master prompt §38: volume,
+/// mute, fade in/out, normalize, noise reduction, ducking), in application
+/// order: `[atempo?] -> [mute=volume=0 | noise-reduction? -> volume? ->
+/// normalize? -> fade-in? -> fade-out?] -> adelay -> [ducking?]`. Ducking
+/// runs last/after `adelay` because its `enable='between(t,...)'` windows
+/// are expressed in ABSOLUTE timeline seconds (`voice_speech_segments`'
+/// own timebase), which only lines up with this clip's samples once
+/// `adelay` has shifted them onto the shared output timeline
+/// (`render::audio_filters::ducking_filter_chain` doc comment).
+fn build_audio_clip_filter(
+    input_index: usize,
+    clip: &AudioClipNode,
+    ducking: Option<&DuckingSettings>,
+    voice_speech_segments: &[SpeechSegment],
+    noise_reduction: &dyn NoiseReductionProvider,
+) -> AudioClipFilter {
     let input_args = vec![
         "-ss".to_string(),
         fmt_secs(clip.source_in_us),
@@ -227,17 +246,62 @@ fn build_audio_clip_filter(input_index: usize, clip: &AudioClipNode) -> AudioCli
         fmt_secs(clip.source_out_us),
     ];
 
-    let mut parts = vec![format!("[{input_index}:a]")];
+    let mut stages: Vec<String> = Vec::new();
     if let Some(atempo) = atempo_chain(clip.speed) {
-        parts.push(atempo.join(","));
+        stages.push(atempo.join(","));
     }
+
+    if clip.muted {
+        // Mute short-circuits every other audio-processing setting below —
+        // a muted clip is silent regardless of volume/fade/normalize/noise-
+        // reduction, the same "silent, not merely quiet" semantics
+        // `Track::muted` already has.
+        stages.push("volume=0".to_string());
+    } else {
+        if clip.noise_reduction {
+            stages.extend(noise_reduction.filter_chain());
+        }
+        if (clip.volume - 1.0).abs() > f64::EPSILON {
+            stages.push(format!("volume={:.4}", clip.volume));
+        }
+        if clip.normalize {
+            // Single-pass `loudnorm` (EBU R128) rather than `dynaudnorm`:
+            // `loudnorm` targets an absolute, industry-standard loudness
+            // level (`I=-16` LUFS, a common streaming-platform target),
+            // matching "normalize" in the sense most editors mean it,
+            // whereas `dynaudnorm` is a real-time-oriented running gain
+            // normalizer better suited to live/streaming use cases this
+            // pipeline doesn't have (module doc comment).
+            stages.push("loudnorm=I=-16:TP=-1.5:LRA=11".to_string());
+        }
+        let on_duration_us = clip.on_timeline_duration_us();
+        if clip.fade_in_us > 0 {
+            stages.push(format!(
+                "afade=t=in:st=0:d={:.3}",
+                clip.fade_in_us as f64 / 1_000_000.0
+            ));
+        }
+        if clip.fade_out_us > 0 {
+            let fade_out_s = clip.fade_out_us as f64 / 1_000_000.0;
+            let start_s = ((on_duration_us as f64 / 1_000_000.0) - fade_out_s).max(0.0);
+            stages.push(format!("afade=t=out:st={start_s:.3}:d={fade_out_s:.3}"));
+        }
+    }
+
     let position_ms = clip.position_us / 1_000;
-    parts.push(format!("adelay=delays={position_ms}:all=1"));
+    stages.push(format!("adelay=delays={position_ms}:all=1"));
+
+    if let Some(duck) = ducking {
+        stages.extend(ducking_filter_chain(
+            clip.position_us,
+            clip.on_timeline_duration_us(),
+            voice_speech_segments,
+            duck,
+        ));
+    }
+
     let label = format!("a{input_index}");
-    let filter_chain = format!("{}{}[{label}]", parts[0], {
-        let rest = &parts[1..];
-        format!(",{}", rest.join(","))
-    });
+    let filter_chain = format!("[{input_index}:a]{}[{label}]", stages.join(","));
 
     AudioClipFilter {
         input_args,
@@ -299,10 +363,20 @@ fn hardware_video_args(
 
 /// Build the full FFmpeg render plan. Pure (no filesystem/process access) —
 /// safe to unit-test directly against synthetic `RenderGraph`s.
+///
+/// `voice_speech_segments` (master prompt §38's auto-duck) are the real,
+/// already-computed VAD `SpeechSegment`s driving ducking for any
+/// `Music`-role audio layer that has `AudioLayer::ducking` set — computing
+/// them requires real audio decode + VAD scoring (I/O), which is
+/// deliberately the caller's job (e.g. `commands::render::start_render_job`),
+/// keeping this function itself pure. Pass `&[]` when no track has ducking
+/// configured (a no-op: `ducking_filter_chain` only ever runs for a layer
+/// whose `AudioLayer::ducking` is `Some`).
 pub fn build_ffmpeg_plan(
     graph: &RenderGraph,
     settings: &RenderSettings,
     output_path: &Path,
+    voice_speech_segments: &[SpeechSegment],
 ) -> Result<RenderPlan, RenderError> {
     settings.validate()?;
     if graph.duration_us <= 0 {
@@ -352,11 +426,19 @@ pub fn build_ffmpeg_plan(
     }
     let final_video_label = current_base;
 
-    // --- Audio: per-clip delay, then amix (volume-compensated) ---
+    // --- Audio: per-clip volume/mute/fade/normalize/noise-reduction/ducking,
+    // delay, then amix (volume-compensated) ---
+    let noise_reduction_provider = FfmpegNoiseReductionProvider;
     let mut audio_labels: Vec<String> = Vec::new();
     for layer in &graph.audio_layers {
         for clip in &layer.clips {
-            let af = build_audio_clip_filter(input_index, clip);
+            let af = build_audio_clip_filter(
+                input_index,
+                clip,
+                layer.ducking.as_ref(),
+                voice_speech_segments,
+                &noise_reduction_provider,
+            );
             input_args.push((af.input_args, af.source_path));
             filter_parts.push(af.filter_chain);
             audio_labels.push(af.label);
@@ -482,7 +564,8 @@ mod tests {
             caption_nodes: vec![],
             effect_nodes: vec![],
         };
-        let plan = build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4")).unwrap();
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
         let s = args_string(&plan);
         assert!(s.contains("-ss 1.000000"), "{s}");
         assert!(s.contains("-to 6.000000"), "{s}");
@@ -509,7 +592,8 @@ mod tests {
             caption_nodes: vec![],
             effect_nodes: vec![],
         };
-        let plan = build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4")).unwrap();
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
         let s = args_string(&plan);
         assert!(
             s.contains("setpts=(PTS-STARTPTS)/1.000000+5.000000/TB"),
@@ -539,7 +623,8 @@ mod tests {
             caption_nodes: vec![],
             effect_nodes: vec![],
         };
-        let plan = build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4")).unwrap();
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
         let s = args_string(&plan);
         // bottom.mp4 must be input 0 (processed first, drawn first / lowest
         // z-order); top.mp4 must be input 1, overlaid on top of it.
@@ -576,7 +661,8 @@ mod tests {
             caption_nodes: vec![],
             effect_nodes: vec![],
         };
-        let plan = build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4")).unwrap();
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
         let s = args_string(&plan);
         assert!(s.contains("scale=960:540"), "{s}"); // 1920*0.5, 1080*0.5
         assert!(s.contains("hflip"), "{s}");
@@ -607,7 +693,8 @@ mod tests {
             caption_nodes: vec![],
             effect_nodes: vec![],
         };
-        let plan = build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4")).unwrap();
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
         let s = args_string(&plan);
         assert!(s.contains("-loop 1"), "{s}");
         assert!(s.contains("-t 3.000000"), "{s}");
@@ -630,7 +717,8 @@ mod tests {
             caption_nodes: vec![],
             effect_nodes: vec![],
         };
-        let plan = build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4")).unwrap();
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
         let s = args_string(&plan);
         assert!(
             s.contains("setpts=(PTS-STARTPTS)/2.000000+0.000000/TB"),
@@ -652,7 +740,8 @@ mod tests {
             caption_nodes: vec![],
             effect_nodes: vec![],
         };
-        let plan = build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4")).unwrap();
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
         let s = args_string(&plan);
         assert!(!s.contains("-c:a"), "{s}");
         assert_eq!(s.matches("-map").count(), 1);
@@ -673,12 +762,20 @@ mod tests {
                     source_out_us: 3_000_000,
                     position_us: 0,
                     speed: 1.0,
+                    volume: 1.0,
+                    muted: false,
+                    fade_in_us: 0,
+                    fade_out_us: 0,
+                    normalize: false,
+                    noise_reduction: false,
                 }],
+                ducking: None,
             }],
             caption_nodes: vec![],
             effect_nodes: vec![],
         };
-        let plan = build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4")).unwrap();
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
         let s = args_string(&plan);
         assert!(!s.contains("amix"), "{s}");
         assert!(s.contains("-map [a0]"), "{s}");
@@ -694,6 +791,12 @@ mod tests {
             source_out_us: 3_000_000,
             position_us: 0,
             speed: 1.0,
+            volume: 1.0,
+            muted: false,
+            fade_in_us: 0,
+            fade_out_us: 0,
+            normalize: false,
+            noise_reduction: false,
         };
         let graph = RenderGraph {
             canvas: canvas(),
@@ -703,16 +806,19 @@ mod tests {
                 AudioLayer {
                     track_id: "a1".into(),
                     clips: vec![mk("ac1", "D:/a.mp3")],
+                    ducking: None,
                 },
                 AudioLayer {
                     track_id: "a2".into(),
                     clips: vec![mk("ac2", "D:/b.mp3")],
+                    ducking: None,
                 },
             ],
             caption_nodes: vec![],
             effect_nodes: vec![],
         };
-        let plan = build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4")).unwrap();
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
         let s = args_string(&plan);
         assert!(
             s.contains(
@@ -738,12 +844,20 @@ mod tests {
                     source_out_us: 2_000_000,
                     position_us: 1_500_000,
                     speed: 1.0,
+                    volume: 1.0,
+                    muted: false,
+                    fade_in_us: 0,
+                    fade_out_us: 0,
+                    normalize: false,
+                    noise_reduction: false,
                 }],
+                ducking: None,
             }],
             caption_nodes: vec![],
             effect_nodes: vec![],
         };
-        let plan = build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4")).unwrap();
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
         let s = args_string(&plan);
         assert!(s.contains("adelay=delays=1500:all=1"), "{s}");
     }
@@ -759,7 +873,7 @@ mod tests {
             effect_nodes: vec![],
         };
         let err =
-            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4")).unwrap_err();
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap_err();
         assert!(matches!(err, RenderError::EmptyTimeline));
     }
 
@@ -787,6 +901,7 @@ mod tests {
             &graph,
             &settings_1080p(),
             Path::new(r"D:\My Videos\out.mp4"),
+            &[],
         )
         .unwrap();
         let raw: Vec<String> = plan
@@ -818,7 +933,7 @@ mod tests {
         let mut settings = settings_1080p();
         settings.hardware_encoder = Some(EncoderBackend::Nvenc);
         // p1080 preset uses crf, not bitrate.
-        let err = build_ffmpeg_plan(&graph, &settings, Path::new("D:/out.mp4")).unwrap_err();
+        let err = build_ffmpeg_plan(&graph, &settings, Path::new("D:/out.mp4"), &[]).unwrap_err();
         assert!(matches!(err, RenderError::InvalidSettings { .. }));
     }
 
@@ -838,7 +953,7 @@ mod tests {
         };
         let mut settings = find_preset("youtube_1080p").unwrap().settings; // bitrate-based
         settings.hardware_encoder = Some(EncoderBackend::Nvenc);
-        let plan = build_ffmpeg_plan(&graph, &settings, Path::new("D:/out.mp4")).unwrap();
+        let plan = build_ffmpeg_plan(&graph, &settings, Path::new("D:/out.mp4"), &[]).unwrap();
         let s = args_string(&plan);
         assert!(s.contains("-c:v h264_nvenc"), "{s}");
         assert!(s.contains("-b:v 8000k"), "{s}");
@@ -863,7 +978,14 @@ mod tests {
                     source_out_us: 2_000_000,
                     position_us: 0,
                     speed: 1.0,
+                    volume: 1.0,
+                    muted: false,
+                    fade_in_us: 0,
+                    fade_out_us: 0,
+                    normalize: false,
+                    noise_reduction: false,
                 }],
+                ducking: None,
             }],
             caption_nodes: vec![],
             effect_nodes: vec![],
@@ -873,12 +995,184 @@ mod tests {
         settings.video_codec = VideoCodec::Vp9;
         settings.audio_codec = AudioCodec::Opus;
         settings.crf = Some(30);
-        let plan = build_ffmpeg_plan(&graph, &settings, Path::new("D:/out.webm")).unwrap();
+        let plan = build_ffmpeg_plan(&graph, &settings, Path::new("D:/out.webm"), &[]).unwrap();
         let s = args_string(&plan);
         assert!(s.contains("-c:v libvpx-vp9"), "{s}");
         assert!(s.contains("-b:v 0"), "{s}");
         assert!(s.contains("-crf 30"), "{s}");
         assert!(s.contains("-c:a libopus"), "{s}");
         assert!(!s.contains("-movflags"), "{s}");
+    }
+
+    // -- audio features (master prompt §38) ----------------------------------
+
+    fn base_audio_clip(id: &str, path: &str, source_out_us: i64) -> AudioClipNode {
+        AudioClipNode {
+            clip_id: id.into(),
+            source_path: path.into(),
+            source_in_us: 0,
+            source_out_us,
+            position_us: 0,
+            speed: 1.0,
+            volume: 1.0,
+            muted: false,
+            fade_in_us: 0,
+            fade_out_us: 0,
+            normalize: false,
+            noise_reduction: false,
+        }
+    }
+
+    fn audio_only_graph(clip: AudioClipNode, ducking: Option<DuckingSettings>) -> RenderGraph {
+        RenderGraph {
+            canvas: canvas(),
+            duration_us: 3_000_000,
+            video_layers: vec![],
+            audio_layers: vec![AudioLayer {
+                track_id: "a1".into(),
+                clips: vec![clip],
+                ducking,
+            }],
+            caption_nodes: vec![],
+            effect_nodes: vec![],
+        }
+    }
+
+    #[test]
+    fn nonunity_volume_produces_a_real_volume_filter() {
+        let mut clip = base_audio_clip("ac1", "D:/a.mp3", 3_000_000);
+        clip.volume = 0.5;
+        let graph = audio_only_graph(clip, None);
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
+        let s = args_string(&plan);
+        assert!(s.contains("volume=0.5000"), "{s}");
+    }
+
+    #[test]
+    fn unity_volume_emits_no_volume_filter() {
+        let clip = base_audio_clip("ac1", "D:/a.mp3", 3_000_000);
+        let graph = audio_only_graph(clip, None);
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
+        let s = args_string(&plan);
+        assert!(!s.contains("volume="), "{s}");
+    }
+
+    #[test]
+    fn muted_clip_produces_volume_zero_and_suppresses_other_audio_filters() {
+        let mut clip = base_audio_clip("ac1", "D:/a.mp3", 3_000_000);
+        clip.muted = true;
+        clip.volume = 2.0; // must be ignored while muted
+        clip.normalize = true; // must be ignored while muted
+        clip.noise_reduction = true; // must be ignored while muted
+        let graph = audio_only_graph(clip, None);
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
+        let s = args_string(&plan);
+        assert!(s.contains("volume=0"), "{s}");
+        assert!(!s.contains("volume=2"), "{s}");
+        assert!(!s.contains("loudnorm"), "{s}");
+        assert!(!s.contains("afftdn"), "{s}");
+    }
+
+    #[test]
+    fn fade_in_and_fade_out_produce_real_afade_filters() {
+        let mut clip = base_audio_clip("ac1", "D:/a.mp3", 3_000_000);
+        clip.fade_in_us = 500_000;
+        clip.fade_out_us = 1_000_000;
+        let graph = audio_only_graph(clip, None);
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
+        let s = args_string(&plan);
+        assert!(s.contains("afade=t=in:st=0:d=0.500"), "{s}");
+        // 3s clip, 1s fade-out -> starts at t=2.000 (local/clip-relative time).
+        assert!(s.contains("afade=t=out:st=2.000:d=1.000"), "{s}");
+    }
+
+    #[test]
+    fn normalize_produces_a_real_loudnorm_filter() {
+        let mut clip = base_audio_clip("ac1", "D:/a.mp3", 3_000_000);
+        clip.normalize = true;
+        let graph = audio_only_graph(clip, None);
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
+        let s = args_string(&plan);
+        assert!(s.contains("loudnorm=I=-16:TP=-1.5:LRA=11"), "{s}");
+    }
+
+    #[test]
+    fn noise_reduction_produces_the_real_highpass_and_afftdn_filters() {
+        let mut clip = base_audio_clip("ac1", "D:/a.mp3", 3_000_000);
+        clip.noise_reduction = true;
+        let graph = audio_only_graph(clip, None);
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
+        let s = args_string(&plan);
+        assert!(s.contains("highpass=f=80"), "{s}");
+        assert!(s.contains("afftdn=nf=-25"), "{s}");
+    }
+
+    #[test]
+    fn ducking_with_no_voice_segments_produces_no_ducking_filters() {
+        let clip = base_audio_clip("ac1", "D:/music.mp3", 3_000_000);
+        let duck = DuckingSettings {
+            duck_level: 0.25,
+            attack_us: 100_000,
+            release_us: 200_000,
+        };
+        let graph = audio_only_graph(clip, Some(duck));
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
+        let s = args_string(&plan);
+        assert!(!s.contains("between(t,"), "{s}");
+    }
+
+    #[test]
+    fn ducking_with_overlapping_voice_segments_produces_real_volume_envelope_filters() {
+        let clip = base_audio_clip("ac1", "D:/music.mp3", 3_000_000);
+        let duck = DuckingSettings {
+            duck_level: 0.25,
+            attack_us: 100_000,
+            release_us: 200_000,
+        };
+        let graph = audio_only_graph(clip, Some(duck));
+        let segments = vec![SpeechSegment {
+            start_us: 1_000_000,
+            end_us: 2_000_000,
+            confidence: 0.9,
+        }];
+        let plan = build_ffmpeg_plan(
+            &graph,
+            &settings_1080p(),
+            Path::new("D:/out.mp4"),
+            &segments,
+        )
+        .unwrap();
+        let s = args_string(&plan);
+        assert!(s.contains("eval=frame"), "{s}");
+        assert!(s.contains("volume=0.25"), "{s}");
+        assert!(s.contains("between(t,1.000000,1.100000)"), "{s}"); // attack window
+        assert!(s.contains("between(t,2.000000,2.200000)"), "{s}"); // release window
+    }
+
+    #[test]
+    fn ducking_is_only_applied_to_a_layer_that_actually_has_ducking_configured() {
+        let clip = base_audio_clip("ac1", "D:/music.mp3", 3_000_000);
+        let graph = audio_only_graph(clip, None); // no ducking on this layer
+        let segments = vec![SpeechSegment {
+            start_us: 1_000_000,
+            end_us: 2_000_000,
+            confidence: 0.9,
+        }];
+        let plan = build_ffmpeg_plan(
+            &graph,
+            &settings_1080p(),
+            Path::new("D:/out.mp4"),
+            &segments,
+        )
+        .unwrap();
+        let s = args_string(&plan);
+        assert!(!s.contains("between(t,"), "{s}");
     }
 }

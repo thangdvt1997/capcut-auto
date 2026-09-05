@@ -30,10 +30,12 @@ pub mod highlights;
 pub mod jobs;
 pub mod media;
 pub mod project;
+pub mod reframe;
 pub mod render;
 pub mod timeline;
 pub mod transcription;
 pub mod vad;
+pub mod zoom;
 
 /// Builds the shared `tauri-specta` command/type registry. Used both by the
 /// real running app (`run`, below) and by the standalone bindings exporter
@@ -116,6 +118,15 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::ai::apply_smart_edit_recommendations_to_track,
         commands::highlights::detect_media_scene_changes,
         commands::highlights::detect_highlights,
+        commands::reframe::auto_reframe_media,
+        commands::scenes::detect_media_scenes,
+        commands::scenes::split_clip_at_scenes,
+        commands::scenes::remove_scenes_from_clip,
+        commands::scenes::remove_scenes_from_track,
+        commands::scenes::generate_highlights_from_scenes,
+        commands::zoom::generate_zoom_triggers,
+        commands::zoom::generate_zoom_keyframes,
+        commands::zoom::apply_auto_zoom_to_clip,
         fcpxml::export::export_fcpxml,
         capcut::export::export_project_to_capcut_draft,
     ])

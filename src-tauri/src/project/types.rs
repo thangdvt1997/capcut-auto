@@ -403,7 +403,7 @@ pub struct Animation {
     pub duration_us: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct Keyframe {
     pub id: String,
     pub clip_id: String,
@@ -419,6 +419,89 @@ pub struct Keyframe {
     /// §1); `curve` is a `String` (not a unit enum) so bezier/ease support
     /// can be added later without another schema version bump.
     pub curve: String,
+}
+
+/// Per-clip audio feature settings (master prompt §38: volume, mute, fade
+/// in/out, normalize, noise reduction), keyed by clip id in
+/// `ProjectV1::audio_clip_settings` rather than embedded directly in `Clip`/
+/// `ClipSettings` — `ClipSettings` mirrors CapCut's own *visual* `ClipSettings`
+/// field-for-field (`capcut::clip_settings` module doc comment: "a direct
+/// field-for-field mapping, not a unit conversion"), so audio-only fields
+/// belong in their own additive, optional overlay instead of breaking that
+/// 1:1 correspondence. Absence of a clip id in the map means "default": full
+/// volume, not muted, no fades, no normalization/noise-reduction.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Type)]
+pub struct AudioClipSettings {
+    /// Linear gain multiplier (ffmpeg `volume` filter convention): `1.0` =
+    /// unity gain, `0.0` = silent, values above `1.0` boost. NOT decibels.
+    pub volume: f64,
+    /// Per-clip mute — independent of `volume` (unmuting restores whatever
+    /// `volume` was set to, rather than needing to remember/re-enter a
+    /// value), same "silent regardless of the underlying setting" semantics
+    /// `Track::muted` already has.
+    pub muted: bool,
+    /// Fade-in duration from the clip's own on-timeline start, `0` = no
+    /// fade-in.
+    pub fade_in_us: i64,
+    /// Fade-out duration ending at the clip's own on-timeline end, `0` = no
+    /// fade-out.
+    pub fade_out_us: i64,
+    /// Loudness normalization (ffmpeg `loudnorm`, EBU R128) for this clip's
+    /// audio.
+    pub normalize: bool,
+    /// Noise reduction (master prompt §38's "noise reduction architecture" —
+    /// see `render::audio_filters::NoiseReductionProvider`) for this clip's
+    /// audio.
+    pub noise_reduction: bool,
+}
+
+impl Default for AudioClipSettings {
+    fn default() -> Self {
+        Self {
+            volume: 1.0,
+            muted: false,
+            fade_in_us: 0,
+            fade_out_us: 0,
+            normalize: false,
+            noise_reduction: false,
+        }
+    }
+}
+
+/// Distinguishes a "music" track from a "voice" track (master prompt §38:
+/// "music track" / "voice track"), keyed by track id in
+/// `ProjectV1::audio_track_roles` for the same additive-overlay reason
+/// `AudioClipSettings` is kept off `Track` directly. `Standard` (the default,
+/// for any track id absent from the map) means "no special role" — mixed
+/// normally, never a ducking trigger or ducking target. Only meaningful for
+/// `TrackKind::Audio` tracks; a non-audio track with a role entry is simply
+/// never consulted by the audio pipeline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AudioRole {
+    #[default]
+    Standard,
+    Music,
+    Voice,
+}
+
+/// Auto-ducking parameters (master prompt §38's exact field list) for one
+/// `Music`-role track, keyed by track id in `ProjectV1::track_ducking`.
+/// Presence in the map (for a track whose `AudioRole` is `Music`) means
+/// "duck this track's volume while speech exists on any `Voice`-role track" —
+/// see `render::audio_filters::ducking_filter_chain` for the real ffmpeg
+/// filter chain this produces.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Type)]
+pub struct DuckingSettings {
+    /// Linear gain multiplier applied while ducked (e.g. `0.25` = -12dB) —
+    /// same linear-gain convention as `AudioClipSettings::volume`, NOT
+    /// decibels.
+    pub duck_level: f64,
+    /// How long the volume ramp takes when speech *starts* (ducking down).
+    pub attack_us: i64,
+    /// How long the volume ramp takes when speech *stops* (recovering back
+    /// to unity gain).
+    pub release_us: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -525,6 +608,19 @@ pub struct ProjectV1 {
     pub ai: AiState,
     pub export: ExportState,
     pub sync_groups: Vec<SyncGroup>,
+    /// Additive (Phase 11, master prompt §38) — per-clip audio feature
+    /// overlay, keyed by clip id. Absent clip ids use
+    /// `AudioClipSettings::default()`. See that type's doc comment for why
+    /// this lives in its own map rather than on `Clip`/`ClipSettings`
+    /// directly.
+    pub audio_clip_settings: HashMap<String, AudioClipSettings>,
+    /// Additive (Phase 11, master prompt §38) — music/voice track role
+    /// overlay, keyed by track id. Absent track ids are `AudioRole::Standard`.
+    pub audio_track_roles: HashMap<String, AudioRole>,
+    /// Additive (Phase 11, master prompt §38) — auto-ducking configuration
+    /// for `Music`-role tracks, keyed by track id. Absent track ids have no
+    /// ducking applied.
+    pub track_ducking: HashMap<String, DuckingSettings>,
 }
 
 impl ProjectV1 {
@@ -557,6 +653,9 @@ impl ProjectV1 {
             ai: AiState::default(),
             export: ExportState::default(),
             sync_groups: Vec::new(),
+            audio_clip_settings: HashMap::new(),
+            audio_track_roles: HashMap::new(),
+            track_ducking: HashMap::new(),
         }
     }
 }
