@@ -79,8 +79,12 @@ pub struct HighlightDetectionResult {
 /// The real pipeline, parameterized over an already-resolved `ffmpeg` path
 /// rather than an `AppHandle` (module doc comment) — the only thing
 /// [`detect_highlights`] itself adds is resolving that path and unwrapping
-/// `max_highlights`' default.
-fn run_detection(
+/// `max_highlights`' default. `pub(crate)` (widened from private) so
+/// `commands::shorts`'s own pipeline can reuse this exact real detection
+/// logic directly rather than re-deriving it — the same "widen a private
+/// helper to `pub(crate)` for one more real caller" precedent
+/// `commands::ai::resolve_api_key`/`build_provider` already established.
+pub(crate) fn run_detection(
     ffmpeg: &Path,
     media_path: &Path,
     transcript: &[TranscriptEntry],

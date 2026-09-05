@@ -33,6 +33,7 @@ pub mod media;
 pub mod project;
 pub mod reframe;
 pub mod render;
+pub mod shorts;
 pub mod templates;
 pub mod timeline;
 pub mod transcription;
@@ -139,6 +140,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::templates::import_template,
         commands::templates::export_template,
         commands::templates::delete_custom_template,
+        commands::shorts::generate_shorts,
         fcpxml::export::export_fcpxml,
         capcut::export::export_project_to_capcut_draft,
     ])

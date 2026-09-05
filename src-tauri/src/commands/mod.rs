@@ -15,6 +15,7 @@ pub mod project;
 pub mod reframe;
 pub mod render;
 pub mod scenes;
+pub mod shorts;
 pub mod templates;
 pub mod timeline;
 pub mod transcription;

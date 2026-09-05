@@ -1051,6 +1051,22 @@ async deleteCustomTemplate(templateId: string) : Promise<Result<null, AppErrorPa
 }
 },
 /**
+ * Runs the Long-Video-to-Shorts pipeline end to end for one real media file
+ * (master prompt §22): highlight detection, non-overlapping candidate
+ * ranking, and per-candidate clip extraction/reframe/captions/optional-zoom
+ * composition into a real, editable `ProjectV1` each — see this module's
+ * doc comment for the transcription-dependency and export-timing design
+ * decisions.
+ */
+async generateShorts(mediaPath: string, transcript: TranscriptEntry[], settings: ShortsSettings, applyZoom: boolean, aiSettings: AiProviderSettings | null) : Promise<Result<ShortCandidate[], AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("generate_shorts", { mediaPath, transcript, settings, applyZoom, aiSettings }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Tauri command: export `project` as a FCPXML 1.11 file at `output_path`.
  * Specta-typed, following `commands/timeline.rs`/`commands/vad.rs`'s
  * naming/error-envelope conventions.
@@ -1495,6 +1511,16 @@ attack_us: number;
  */
 release_us: number }
 /**
+ * Target duration for a generated short (master prompt §22: "15s / 30s /
+ * 60s / 90s / custom"). A closed enum for the four fixed presets plus one
+ * explicit `Custom` variant — never a bare `u32` seconds field, so a caller
+ * can't accidentally pass an unintended value where one of the four named
+ * presets was meant (the same "closed, not stringly/numerically typed"
+ * discipline `ai::edit_plan::EditOperation`/`highlights` use throughout this
+ * codebase).
+ */
+export type DurationSetting = { kind: "fixed_15" } | { kind: "fixed_30" } | { kind: "fixed_60" } | { kind: "fixed_90" } | { kind: "custom"; seconds: number }
+/**
  * A single edit action (master prompt §18's example: `{"type": "remove",
  * "start": 12.3, "end": 15.7, "reason": "long pause"}` /
  * `{"type": "zoom", "start": 32, "end": 36, "scale": 1.12}`). Time fields
@@ -1817,6 +1843,35 @@ export type Scene = { id: string; start_us: number; end_us: number; thumbnail_pa
  * System Information" panel (master prompt §78) is Phase 12 scope.
  */
 export type ShellInfo = { app_version: string; tauri_version: string; os: string; arch: string }
+/**
+ * A generated short paired with the highlight metadata that produced it
+ * (master prompt §21's own "Highlight #1, Score 92" UI mockup — a future
+ * frontend can show that alongside this candidate's generated project).
+ */
+export type ShortCandidate = { highlight: Highlight; project: ProjectV1 }
+/**
+ * Target aspect ratio for a generated short (master prompt §22: "9:16 / 1:1
+ * / 4:5" — TikTok/Shorts/Reels are generic labels over these three ratios,
+ * per this pass's own task brief; no platform-specific export exists beyond
+ * this).
+ */
+export type ShortsAspect = "vertical_9x_16" | "square_1x_1" | "portrait_4x_5"
+/**
+ * Settings surface for `commands::shorts::generate_shorts` (master prompt
+ * §22's exact three settings groups).
+ */
+export type ShortsSettings = { duration: DurationSetting; aspect: ShortsAspect; 
+/**
+ * Master prompt §22 lists four specific choices (1/3/5/10) as the UI's
+ * own preset buttons, but nothing about the pipeline itself requires
+ * exactly those four values — `select_top_non_overlapping`
+ * (`shorts::ranking`) works correctly for any positive count. This
+ * field therefore accepts **any** positive `u32` (validated by the
+ * pipeline as ">= 1", not "one of exactly these four"), so a future
+ * custom-count UI control needs no backend change; the frontend is free
+ * to only ever expose the four named buttons.
+ */
+clip_count: number }
 /**
  * Master prompt §19's exact action list. Closed enum, `#[serde(tag =
  * "type")]` — same "no free-form string ever gets pattern-matched or
