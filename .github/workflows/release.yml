@@ -1,0 +1,113 @@
+name: Release
+
+# Master prompt §65: "On version tag: Windows build, installer, checksums,
+# release artifacts." Triggered by pushing a tag matching v*.*.* (e.g. v0.1.0).
+#
+# "Do not automatically publish unsigned binaries without making that
+# behavior explicit" (§65's own closing line): this workflow has no code-
+# signing certificate configured (see IMPLEMENTATION_PLAN.md / HANDOFF.md
+# Phase 12 — that's a real, documented placeholder, not an oversight), so
+# every artifact it produces is genuinely unsigned. Rather than silently
+# publish that fact only in fine print, this workflow (1) creates the
+# GitHub Release as a DRAFT — nothing goes live/public until a human
+# reviews and explicitly publishes it — and (2) states "UNSIGNED BUILD" up
+# front in the release body and in a companion .txt file alongside the
+# installer, so anyone downloading a draft can't miss it.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Fetch pinned FFmpeg/FFprobe sidecars
+        # scripts/fetch-ffmpeg.ps1 — downloads and SHA256-verifies the one
+        # specific, pinned BtbN/FFmpeg-Builds release this project ships
+        # (see that script's own header and THIRD_PARTY_NOTICES.md's
+        # "FFmpeg / FFprobe" section). Never committed to git; fetched
+        # fresh for every release build.
+        shell: pwsh
+        run: ./scripts/fetch-ffmpeg.ps1
+
+      - name: Build frontend
+        run: pnpm run build
+
+      - name: Tauri build (full, bundled installer)
+        # No TAURI_SIGNING_PRIVATE_KEY/_PASSWORD is set — this produces a
+        # real but UNSIGNED NSIS installer. Once a real code-signing
+        # certificate exists, set those as repo/environment secrets and
+        # `tauri build` picks them up automatically with no workflow
+        # change needed here.
+        run: pnpm exec tauri build
+
+      - name: Compute checksums
+        shell: pwsh
+        run: |
+          $bundleDir = "src-tauri/target/release/bundle"
+          $artifacts = Get-ChildItem -Path $bundleDir -Recurse -Include *.exe,*.msi -File
+          if ($artifacts.Count -eq 0) {
+            throw "No installer artifacts found under $bundleDir — tauri build did not produce the expected output."
+          }
+          New-Item -ItemType Directory -Force -Path "release-artifacts" | Out-Null
+          $checksumLines = @()
+          foreach ($file in $artifacts) {
+            Copy-Item $file.FullName "release-artifacts/"
+            $hash = (Get-FileHash -Algorithm SHA256 $file.FullName).Hash.ToLower()
+            $checksumLines += "$hash  $($file.Name)"
+            Write-Host "SHA256 $($file.Name): $hash"
+          }
+          $checksumLines | Set-Content "release-artifacts/checksums.sha256"
+          @"
+          THIS BUILD IS UNSIGNED.
+
+          No code-signing certificate is configured for this project yet
+          (see HANDOFF.md / IMPLEMENTATION_PLAN.md, Phase 12). Windows
+          SmartScreen will very likely warn on first run. Verify the
+          SHA256 checksum in checksums.sha256 against what you downloaded
+          before running it, and only run it if you trust this source.
+          "@ | Set-Content "release-artifacts/UNSIGNED-BUILD-README.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: release-artifacts/
+
+      - name: Create draft GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          name: "${{ github.ref_name }} (UNSIGNED — review before publishing)"
+          body: |
+            **⚠ UNSIGNED BUILD.** No code-signing certificate is configured yet — see `HANDOFF.md`'s Phase 12 notes. Windows SmartScreen will very likely warn on first run.
+
+            This release was created as a **draft** and will not be visible publicly until a maintainer reviews it and clicks "Publish release."
+
+            Verify `checksums.sha256` against the installer you download before running it.
+          files: release-artifacts/*
+          fail_on_unmatched_files: true
