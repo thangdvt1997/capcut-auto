@@ -19,6 +19,7 @@
 
 pub mod ai;
 pub mod audio;
+pub mod broll;
 pub mod capcut;
 pub mod captions;
 pub mod commands;
@@ -32,6 +33,7 @@ pub mod media;
 pub mod project;
 pub mod reframe;
 pub mod render;
+pub mod templates;
 pub mod timeline;
 pub mod transcription;
 pub mod vad;
@@ -58,6 +60,8 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::media::search_media_library,
         commands::media::list_media_library,
         commands::media::remove_media_from_library,
+        commands::media::suggest_media_tags,
+        commands::media::merge_media_tags,
         commands::timeline::load_timeline_project,
         commands::timeline::get_timeline_project,
         commands::timeline::split_clip,
@@ -127,6 +131,14 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::zoom::generate_zoom_triggers,
         commands::zoom::generate_zoom_keyframes,
         commands::zoom::apply_auto_zoom_to_clip,
+        commands::broll::search_local_broll,
+        commands::broll::suggest_broll_from_transcript,
+        commands::broll::suggest_and_search_broll,
+        commands::templates::list_templates,
+        commands::templates::save_as_template,
+        commands::templates::import_template,
+        commands::templates::export_template,
+        commands::templates::delete_custom_template,
         fcpxml::export::export_fcpxml,
         capcut::export::export_project_to_capcut_draft,
     ])

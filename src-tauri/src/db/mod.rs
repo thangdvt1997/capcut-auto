@@ -214,6 +214,53 @@ pub fn get_media_by_path(
     .map_err(|e| to_db_error("get_media_by_path", e))
 }
 
+/// Same as [`get_media_by_path`] but by `id` — the lookup
+/// `ai::media_tags`/`commands::media::suggest_media_tags` needs (a caller
+/// hands in a media library id, not a path).
+pub fn get_media_by_id(
+    conn: &Connection,
+    id: &str,
+) -> Result<Option<MediaLibraryEntry>, MediaError> {
+    conn.query_row(
+        "SELECT * FROM media_library WHERE id = ?1",
+        params![id],
+        row_to_entry,
+    )
+    .optional()
+    .map_err(|e| to_db_error("get_media_by_id", e))
+}
+
+/// Merges `new_tags` into an existing row's `tags` — the *only* actual write
+/// path for AI-suggested tags (master prompt §35's "Optional AI-generated
+/// tags" enhancement, `commands::media::merge_media_tags`), called only on a
+/// caller's explicit acceptance, never automatically by the suggestion step
+/// itself (`ai::media_tags`/`commands::media::suggest_media_tags`'s own
+/// "AI proposes, user approves" discipline). Existing tags are kept in their
+/// original order; any of `new_tags` not already present (case-insensitive
+/// comparison) are appended in the order given — an already-present tag
+/// (any casing) is left untouched rather than duplicated. Never silently
+/// overwrites/discards a user's existing tags.
+pub fn merge_media_tags(
+    conn: &Connection,
+    id: &str,
+    new_tags: &[String],
+) -> Result<MediaLibraryEntry, MediaError> {
+    let mut entry = get_media_by_id(conn, id)?.ok_or_else(|| MediaError::DatabaseError {
+        details: format!("no media_library row with id {id}"),
+    })?;
+
+    let mut seen: std::collections::HashSet<String> =
+        entry.tags.iter().map(|t| t.to_lowercase()).collect();
+    for tag in new_tags {
+        if seen.insert(tag.to_lowercase()) {
+            entry.tags.push(tag.clone());
+        }
+    }
+
+    upsert_media(conn, &entry)?;
+    Ok(entry)
+}
+
 /// Update just the proxy path for an existing row, called once background
 /// proxy generation (`commands::media::generate_media_proxy`) finishes —
 /// separate from `upsert_media` because proxy generation happens after the
@@ -375,5 +422,72 @@ mod tests {
         upsert_media(&conn, &sample("m1", "a.mp4", MediaKind::Video, vec![])).unwrap();
         remove_media(&conn, "m1").unwrap();
         assert!(search_media(&conn, None, None, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn get_media_by_id_finds_an_existing_row() {
+        let conn = open_in_memory().unwrap();
+        upsert_media(
+            &conn,
+            &sample("m1", "football_match.mp4", MediaKind::Video, vec!["sports"]),
+        )
+        .unwrap();
+        let found = get_media_by_id(&conn, "m1").unwrap().unwrap();
+        assert_eq!(found.filename, "football_match.mp4");
+    }
+
+    #[test]
+    fn get_media_by_id_returns_none_for_an_unknown_id() {
+        let conn = open_in_memory().unwrap();
+        assert!(get_media_by_id(&conn, "nonexistent").unwrap().is_none());
+    }
+
+    #[test]
+    fn merge_media_tags_appends_genuinely_new_tags() {
+        let conn = open_in_memory().unwrap();
+        upsert_media(
+            &conn,
+            &sample("m1", "clip.mp4", MediaKind::Video, vec!["existing"]),
+        )
+        .unwrap();
+        let merged =
+            merge_media_tags(&conn, "m1", &["new_tag".to_string(), "another".to_string()]).unwrap();
+        assert_eq!(merged.tags, vec!["existing", "new_tag", "another"]);
+
+        // Persisted, not just returned.
+        let reloaded = get_media_by_id(&conn, "m1").unwrap().unwrap();
+        assert_eq!(reloaded.tags, vec!["existing", "new_tag", "another"]);
+    }
+
+    #[test]
+    fn merge_media_tags_does_not_duplicate_an_already_present_tag_case_insensitively() {
+        let conn = open_in_memory().unwrap();
+        upsert_media(
+            &conn,
+            &sample("m1", "clip.mp4", MediaKind::Video, vec!["Bitcoin"]),
+        )
+        .unwrap();
+        let merged =
+            merge_media_tags(&conn, "m1", &["bitcoin".to_string(), "finance".to_string()]).unwrap();
+        // "bitcoin" (different casing) is not duplicated; "finance" is genuinely new.
+        assert_eq!(merged.tags, vec!["Bitcoin", "finance"]);
+    }
+
+    #[test]
+    fn merge_media_tags_never_removes_an_existing_tag() {
+        let conn = open_in_memory().unwrap();
+        upsert_media(
+            &conn,
+            &sample("m1", "clip.mp4", MediaKind::Video, vec!["a", "b", "c"]),
+        )
+        .unwrap();
+        let merged = merge_media_tags(&conn, "m1", &[]).unwrap();
+        assert_eq!(merged.tags, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn merge_media_tags_on_an_unknown_id_is_a_clear_error() {
+        let conn = open_in_memory().unwrap();
+        assert!(merge_media_tags(&conn, "nonexistent", &["x".to_string()]).is_err());
     }
 }

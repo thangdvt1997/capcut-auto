@@ -721,3 +721,72 @@ pub fn remove_media_from_library(
     let conn = library.0.lock().expect("media library mutex poisoned");
     db::remove_media(&conn, &id).map_err(|e| AppErrorPayload::from(&e))
 }
+
+// ---------------------------------------------------------------------------
+// AI-generated media tags (master prompt §35's "Optional AI-generated tags"
+// enhancement, Part B of this pass) — thin wiring over `crate::ai::media_tags`
+// (prompt/validation) and `crate::db` (the actual read/write). Two commands,
+// mirroring every other AI-derived feature's "AI proposes, user approves"
+// split (`ai::edit_plan`/`ai::smart_edit`/`crate::highlights`/`crate::broll`):
+// `suggest_media_tags` only ever reads the library and calls the configured
+// `AIProvider` — it never writes; `merge_media_tags` is the separate,
+// explicit write step, only ever called on a caller's explicit acceptance.
+// ---------------------------------------------------------------------------
+
+/// **Suggest** (never writes): looks up `entry_id` in the local library,
+/// builds a tag-suggestion prompt from its filename/metadata
+/// (`ai::media_tags::build_media_tag_request`), calls the configured
+/// provider, and validates the response into a strict `Vec<String>` — or a
+/// clear error, never a partially populated result. Returned tags are a
+/// *proposal* for a caller (frontend, later pass) to review; nothing here
+/// mutates `entry_id`'s stored tags — see [`merge_media_tags`] for the
+/// separate write step.
+#[tauri::command]
+#[specta::specta]
+pub fn suggest_media_tags(
+    library: State<'_, MediaLibrary>,
+    settings: crate::commands::ai::AiProviderSettings,
+    entry_id: String,
+) -> Result<Vec<String>, AppErrorPayload> {
+    let entry = {
+        let conn = library.0.lock().expect("media library mutex poisoned");
+        db::get_media_by_id(&conn, &entry_id).map_err(|e| AppErrorPayload::from(&e))?
+    }
+    .ok_or_else(|| {
+        AppErrorPayload::from(&MediaError::PathNotFound {
+            path: format!("media library id {entry_id}"),
+        })
+    })?;
+
+    let api_key =
+        crate::commands::ai::resolve_api_key(&settings).map_err(|e| AppErrorPayload::from(&e))?;
+    let provider = crate::commands::ai::build_provider(&settings, api_key)
+        .map_err(|e| AppErrorPayload::from(&e))?;
+
+    let request = crate::ai::media_tags::build_media_tag_request(
+        &entry,
+        settings.temperature,
+        settings.timeout_ms,
+    );
+    let response = provider
+        .complete(&request)
+        .map_err(|e| AppErrorPayload::from(&e))?;
+    crate::ai::media_tags::parse_and_validate(&response.text).map_err(|e| AppErrorPayload::from(&e))
+}
+
+/// **Merge** (the only actual write path): merges `tags` into `entry_id`'s
+/// stored tags (`db::merge_media_tags` — existing tags are kept, an
+/// already-present tag, any casing, is not duplicated) and returns the
+/// updated entry. Only ever called on a caller's explicit acceptance of a
+/// [`suggest_media_tags`] proposal (or any other caller-supplied tag list) —
+/// never invoked automatically by suggestion itself.
+#[tauri::command]
+#[specta::specta]
+pub fn merge_media_tags(
+    library: State<'_, MediaLibrary>,
+    entry_id: String,
+    tags: Vec<String>,
+) -> Result<MediaLibraryEntry, AppErrorPayload> {
+    let conn = library.0.lock().expect("media library mutex poisoned");
+    db::merge_media_tags(&conn, &entry_id, &tags).map_err(|e| AppErrorPayload::from(&e))
+}

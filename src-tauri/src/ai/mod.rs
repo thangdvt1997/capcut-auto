@@ -5,15 +5,18 @@
 //! `provider`/`openai_compat`/`anthropic`/`gemini`/`credentials`/`edit_plan`
 //! are this subsystem's **foundation**: "how do we talk to *some* LLM
 //! provider" and "how do we turn whatever text an LLM hands back into
-//! something safe to feed the timeline engine". `smart_edit` and
-//! `nl_command` are features built on top of that foundation: `smart_edit`
-//! is Smart Edit / AI semantic editing (master prompt §19); `nl_command` is
-//! the natural-language AI command box's prompt-construction layer (master
-//! prompt §20, `commands::ai::generate_edit_plan_from_nl_command`). Real
-//! highlight detection (master prompt §21) lives in the separate
-//! `crate::highlights` module, since it needs its own non-AI signal
-//! machinery (`vad`/`audio`/`media::scene`) alongside an optional AI call,
-//! not just a prompt in front of `edit_plan`.
+//! something safe to feed the timeline engine". `smart_edit`, `nl_command`,
+//! and `media_tags` are features built on top of that foundation:
+//! `smart_edit` is Smart Edit / AI semantic editing (master prompt §19);
+//! `nl_command` is the natural-language AI command box's prompt-construction
+//! layer (master prompt §20, `commands::ai::generate_edit_plan_from_nl_command`);
+//! `media_tags` is master prompt §35's "Optional AI-generated tags"
+//! enhancement on top of Phase 3's already-built media library. Real
+//! highlight detection (master prompt §21) and B-roll (master prompt §34)
+//! live in the separate `crate::highlights`/`crate::broll` modules, since
+//! each needs its own non-AI signal/source machinery of its own
+//! (`vad`/`audio`/`media::scene` for highlights; `crate::db` for B-roll)
+//! alongside an optional AI call, not just a prompt in front of `edit_plan`.
 //!
 //! **Security note (master prompt §53):** the AI layer never mutates the
 //! timeline directly and never executes anything an LLM returns as code —
@@ -32,6 +35,7 @@ pub mod credentials;
 pub mod edit_plan;
 pub mod error;
 pub mod gemini;
+pub mod media_tags;
 pub mod nl_command;
 pub mod openai_compat;
 pub mod provider;

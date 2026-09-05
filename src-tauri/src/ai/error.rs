@@ -187,6 +187,54 @@ impl From<&SmartEditError> for AppErrorPayload {
     }
 }
 
+/// `ai::media_tags`'s validation-stage error (master prompt §35's "Optional
+/// AI-generated tags" enhancement) — same two-stage split as
+/// `EditPlanError`/`SmartEditError` above: a provider call can succeed and
+/// still return text that fails `MediaTagError` validation.
+#[derive(Debug, Clone, Serialize, Type, Error)]
+#[serde(tag = "variant")]
+pub enum MediaTagError {
+    #[error("could not parse AI output as a JSON string array: {details}")]
+    MalformedJson { details: String },
+
+    #[error("AI suggested {count} tags, which exceeds the maximum of {max}")]
+    TooManyTags { count: usize, max: usize },
+
+    #[error("tag {index} is invalid: {details}")]
+    InvalidTag { index: usize, details: String },
+}
+
+impl From<&MediaTagError> for AppErrorPayload {
+    fn from(err: &MediaTagError) -> Self {
+        let message = err.to_string();
+        match err {
+            MediaTagError::MalformedJson { details } => AppErrorPayload::new(
+                "MEDIA_TAG_MALFORMED_JSON",
+                message,
+            )
+            .with_details(details.clone())
+            .recoverable(true)
+            .with_suggestion(
+                "The AI response was not a valid JSON array of tag strings; ask it to try again.",
+            ),
+            MediaTagError::TooManyTags { count, max } => {
+                AppErrorPayload::new("MEDIA_TAG_TOO_MANY_TAGS", message)
+                    .with_details(format!("count={count}, max={max}"))
+                    .recoverable(true)
+                    .with_suggestion("Ask the AI to suggest fewer, more focused tags.")
+            }
+            MediaTagError::InvalidTag { index, details } => {
+                AppErrorPayload::new("MEDIA_TAG_INVALID_TAG", message)
+                    .with_details(format!("tags[{index}]: {details}"))
+                    .recoverable(true)
+                    .with_suggestion(
+                        "Reject these suggested tags and ask the AI to produce corrected ones.",
+                    )
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,6 +337,34 @@ mod tests {
                     details: "d".into(),
                 },
                 "SMART_EDIT_INVALID_RECOMMENDATION",
+            ),
+        ];
+        for (err, code) in cases {
+            let payload = AppErrorPayload::from(&err);
+            assert_eq!(payload.code, code);
+            assert!(!payload.message.is_empty());
+        }
+    }
+
+    #[test]
+    fn every_media_tag_error_variant_maps_to_a_stable_code() {
+        let cases: Vec<(MediaTagError, &str)> = vec![
+            (
+                MediaTagError::MalformedJson {
+                    details: "d".into(),
+                },
+                "MEDIA_TAG_MALFORMED_JSON",
+            ),
+            (
+                MediaTagError::TooManyTags { count: 20, max: 12 },
+                "MEDIA_TAG_TOO_MANY_TAGS",
+            ),
+            (
+                MediaTagError::InvalidTag {
+                    index: 0,
+                    details: "d".into(),
+                },
+                "MEDIA_TAG_INVALID_TAG",
             ),
         ];
         for (err, code) in cases {

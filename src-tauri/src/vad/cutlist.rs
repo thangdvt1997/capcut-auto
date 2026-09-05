@@ -37,7 +37,7 @@ use super::provider::SpeechSegment;
 /// Everything master prompt §12 lists that isn't already a `VadParams`
 /// concern (threshold/min-silence/min-speech live in `super::provider`,
 /// applied *before* this stage ever sees the segments).
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Type)]
 pub struct CutParams {
     pub padding_before_us: i64,
     pub padding_after_us: i64,

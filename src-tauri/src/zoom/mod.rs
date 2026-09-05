@@ -40,7 +40,7 @@ use specta::Type;
 use crate::media::scene::Scene;
 use crate::project::Keyframe;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ZoomIntensity {
     #[default]

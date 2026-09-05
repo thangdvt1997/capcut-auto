@@ -5,6 +5,7 @@
 //! `crate::project`, etc.
 
 pub mod ai;
+pub mod broll;
 pub mod capcut;
 pub mod captions;
 pub mod diagnostics;
@@ -14,6 +15,7 @@ pub mod project;
 pub mod reframe;
 pub mod render;
 pub mod scenes;
+pub mod templates;
 pub mod timeline;
 pub mod transcription;
 pub mod vad;

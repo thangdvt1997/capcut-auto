@@ -53,7 +53,7 @@ pub enum CanvasRatioPreset {
     Custom,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct CanvasV1 {
     pub width: u32,
     pub height: u32,

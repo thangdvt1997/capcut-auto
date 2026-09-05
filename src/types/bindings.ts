@@ -151,6 +151,40 @@ async removeMediaFromLibrary(id: string) : Promise<Result<null, AppErrorPayload>
 }
 },
 /**
+ * **Suggest** (never writes): looks up `entry_id` in the local library,
+ * builds a tag-suggestion prompt from its filename/metadata
+ * (`ai::media_tags::build_media_tag_request`), calls the configured
+ * provider, and validates the response into a strict `Vec<String>` — or a
+ * clear error, never a partially populated result. Returned tags are a
+ * *proposal* for a caller (frontend, later pass) to review; nothing here
+ * mutates `entry_id`'s stored tags — see [`merge_media_tags`] for the
+ * separate write step.
+ */
+async suggestMediaTags(settings: AiProviderSettings, entryId: string) : Promise<Result<string[], AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("suggest_media_tags", { settings, entryId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * **Merge** (the only actual write path): merges `tags` into `entry_id`'s
+ * stored tags (`db::merge_media_tags` — existing tags are kept, an
+ * already-present tag, any casing, is not duplicated) and returns the
+ * updated entry. Only ever called on a caller's explicit acceptance of a
+ * [`suggest_media_tags`] proposal (or any other caller-supplied tag list) —
+ * never invoked automatically by suggestion itself.
+ */
+async mergeMediaTags(entryId: string, tags: string[]) : Promise<Result<MediaLibraryEntry, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("merge_media_tags", { entryId, tags }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Loads `project` into the timeline session, replacing whatever was there
  * (fresh undo history, empty clipboard). Called whenever the frontend
  * opens or creates a project.
@@ -907,6 +941,116 @@ async applyAutoZoomToClip(clipId: string, triggers: ZoomTrigger[], intensity: Zo
 }
 },
 /**
+ * Direct keyword search against the existing local media library
+ * (`broll::provider::LocalLibraryBRollProvider`) — no AI provider involved
+ * at all. Useful on its own (a user typing a keyword directly into a B-roll
+ * panel) and as the second half of [`suggest_and_search_broll`] below.
+ */
+async searchLocalBroll(keyword: string, kind: MediaKind | null, limit: number | null) : Promise<Result<BRollCandidate[], AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("search_local_broll", { keyword, kind, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * **Suggest**: builds a B-roll prompt from `entries` (the caller-supplied
+ * transcript, same "caller passes the transcript in directly" convention
+ * `commands::ai::analyze_smart_edit` already uses) and `total_duration_us`,
+ * calls the configured provider, and validates the response into a strict
+ * `Vec<BRollSuggestion>` — or a clear error, never a partially populated
+ * result (`broll::suggest` module doc comment). This is a *proposal*; it
+ * does not search the local library itself — see
+ * [`suggest_and_search_broll`] for the combined flow.
+ */
+async suggestBrollFromTranscript(settings: AiProviderSettings, entries: TranscriptEntry[], totalDurationUs: number) : Promise<Result<BRollSuggestion[], AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("suggest_broll_from_transcript", { settings, entries, totalDurationUs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * **Suggest, then search**: the full master prompt §34 pipeline end to end
+ * — [`suggest_broll_from_transcript`]'s AI call/validation, then, for every
+ * validated suggestion, a real local-library search
+ * (`broll::combine::suggest_and_search`) for its `keyword`. Each result
+ * pairs a suggestion with whatever real local candidates were found for
+ * it — possibly none; an honest empty list is expected and is not an error
+ * (`broll::combine` module doc comment).
+ */
+async suggestAndSearchBroll(settings: AiProviderSettings, entries: TranscriptEntry[], totalDurationUs: number, candidatesPerSuggestion: number | null) : Promise<Result<BRollSuggestionWithCandidatesPayload[], AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("suggest_and_search_broll", { settings, entries, totalDurationUs, candidatesPerSuggestion }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listTemplates() : Promise<Result<TemplateCatalog, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_templates") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Save as Template (master prompt §36): snapshots `project`'s canvas plus
+ * the caller's current settings bundle (`input`) into a new custom
+ * `Template`, persisted under `templates_dir`.
+ */
+async saveAsTemplate(project: ProjectV1, input: SaveAsTemplateInput) : Promise<Result<Template, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_as_template", { project, input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Import Template (master prompt §36): reads a `Template` from
+ * `file_path` and copies it into this machine's `templates_dir` as a new
+ * custom template (never as a built-in, even if it was originally exported
+ * from one of the 8 built-ins — an imported copy is always independently
+ * editable/deletable, rather than colliding with or being confused for the
+ * read-only built-in of the same original id).
+ */
+async importTemplate(filePath: string) : Promise<Result<Template, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("import_template", { filePath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Export Template (master prompt §36): writes the built-in or custom
+ * template identified by `template_id` to `file_path`.
+ */
+async exportTemplate(templateId: string, filePath: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("export_template", { templateId, filePath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Deletes a custom template. Refuses to delete any of the 8 built-in ids
+ * (`TemplateError::CannotDeleteBuiltIn`) before ever touching disk.
+ */
+async deleteCustomTemplate(templateId: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_custom_template", { templateId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Tauri command: export `project` as a FCPXML 1.11 file at `output_path`.
  * Specta-typed, following `commands/timeline.rs`/`commands/vad.rs`'s
  * naming/error-envelope conventions.
@@ -951,6 +1095,17 @@ export type AiConnectionTestResult = { success: boolean;
  * either path.
  */
 message: string }
+/**
+ * Small, honest AI-prompt-seeding defaults (module doc comment) — NOT a new
+ * AI capability. `emphasized_categories` seeds which
+ * `ai::smart_edit::SmartEditCategory`s a caller should pre-select/prioritize
+ * in the Smart Edit UI for this genre of content; `system_prompt_prefix`
+ * (optional) is meant to be prepended ahead of
+ * `ai::nl_command::build_edit_plan_prompt`'s own generated system prompt by
+ * the caller, unchanged — this module never constructs an `AiRequest` or
+ * calls an `AIProvider` itself.
+ */
+export type AiPromptConfig = { emphasized_categories: SmartEditCategory[]; system_prompt_prefix: string | null }
 /**
  * Which wire protocol a configured provider profile speaks. `OpenAi`,
  * `Ollama`, and `CustomOpenAiCompatible` all construct the same
@@ -1074,6 +1229,26 @@ export type AutoReframeResult = { raw_positions: SubjectPosition[]; smoothed_pos
  * downloading (master prompt §60 "Available models").
  */
 export type AvailableModel = { entry: ModelCatalogEntry; installed: boolean; download_in_progress: boolean }
+/**
+ * One candidate piece of local B-roll media a `BRollProvider` found for a
+ * query — a reviewable, real result (never a fabricated match): every field
+ * here traces back to a real `MediaLibraryEntry` row.
+ */
+export type BRollCandidate = { media_id: string; filename: string; path: string; kind: MediaKind; duration_us: number; width: number; height: number; tags: string[]; thumbnail_path: string | null }
+/**
+ * One AI-suggested B-roll insertion point. Closed, strictly typed, specta-
+ * typed for eventual frontend consumption — this is a *proposal* a caller
+ * reviews (and, per [`super::combine::suggest_and_search`], pairs with real
+ * local search results), never something that inserts a clip on its own.
+ */
+export type BRollSuggestion = { id: string; insertion_time_us: number; duration_us: number; 
+/**
+ * The search term to look for local B-roll with (master prompt §34's
+ * worked example: `"bitcoin price chart"`) — fed directly into
+ * `BRollQuery::keyword` by the combined suggest-then-search flow.
+ */
+keyword: string; reason: string }
+export type BRollSuggestionWithCandidatesPayload = { suggestion: BRollSuggestion; candidates: BRollCandidate[] }
 export type CanvasRatioPreset = "16:9" | "9:16" | "1:1" | "4:5" | "custom"
 export type CanvasV1 = { width: number; height: number; fps: Rational; ratio_preset: CanvasRatioPreset }
 /**
@@ -1594,6 +1769,29 @@ hardware_encoder: EncoderBackend | null }
  */
 export type SafeMargins = { top: number; bottom: number; left: number; right: number }
 /**
+ * Input to [`save_as_template_from_project`]: the caller supplies whatever
+ * real settings values are "current" for their editing session. Most of
+ * these fields (`zoom_intensity`, `silence_settings`, `transition_settings`,
+ * `export_preset_id`, `ai_prompt_config`) are one-shot command parameters
+ * elsewhere in this codebase, not fields persisted on `ProjectV1` itself
+ * (auto-zoom/cutlist/render presets are all re-supplied per invocation, per
+ * `zoom`/`vad::cutlist`/`render::presets`'s own doc comments — there is no
+ * project-wide "current setting" to read them off of). `canvas` and
+ * `caption_style_id` ARE real persisted `ProjectV1` state
+ * (`ProjectV1::canvas`, `ProjectV1::caption_styles`) and are the two
+ * settings [`save_as_template_from_project`] reads directly from the given
+ * project rather than asking the caller to repeat them.
+ */
+export type SaveAsTemplateInput = { name: string; description: string; 
+/**
+ * Looked up first in `project.caption_styles`, falling back to the
+ * built-in catalog (`captions::styles::all_caption_templates`) if not
+ * found there — so "Save as Template" works whether the project's
+ * current caption style is one of its own custom styles or a built-in
+ * one it never copied into `caption_styles`.
+ */
+caption_style_id: string; zoom_intensity: ZoomIntensity; silence_settings: CutParams; transition_settings: TransitionSettings; export_preset_id: string; ai_prompt_config: AiPromptConfig; sports_overlay: SportsOverlaySettings | null }
+/**
  * One detected scene: `{id, start_us, end_us, thumbnail_path, score}`
  * (master prompt §25's exact `Scene{start, end, thumbnail, score}` return
  * shape, specta-typed so it's usable directly from a Tauri command).
@@ -1685,6 +1883,32 @@ transcript: string; category: SmartEditCategory; reason: string; confidence: num
  */
 export type SpeechSegment = { start_us: number; end_us: number; confidence: number }
 /**
+ * Football/Sports-template-only optional settings (master prompt §37),
+ * `None` on every non-sports `Template`. See the module doc comment for
+ * which of these are real vs. structural. §37 bullets *not* represented as
+ * a field here, because they already map onto existing, unmodified
+ * mechanisms with no new field needed:
+ * - **Slow-motion sections**: `project::Clip::speed < 1.0` (real, Phase 9,
+ * already consumed by `render::plan`'s speed filters) — a per-clip
+ * property set on the timeline after a project is built from this
+ * template, not a template-level setting.
+ * - **Highlight markers / replay markers**: Phase 10's real
+ * `highlights::types::Highlight` (persisted at `ProjectV1::ai::highlights`) —
+ * running highlight detection (`commands::highlights::detect_highlights`)
+ * against a football-highlight project produces these directly; nothing
+ * sport-specific to add to `Template` for it.
+ */
+export type SportsOverlaySettings = { 
+/**
+ * UI-seed only (module doc comment) — no overlay renderer exists yet.
+ */
+score_overlay_suggested: boolean; 
+/**
+ * Real, Phase 11 §38 types: default role/ducking to seed onto a
+ * `Music`-role track ("duck music under commentary").
+ */
+music_role: AudioRole; music_ducking: DuckingSettings }
+/**
  * One normalized subject-position sample over time (master prompt §23:
  * "Return normalized target coordinates over time").
  * 
@@ -1722,6 +1946,55 @@ clip_ids: string[];
  * Relative alignment, keyed by clip id.
  */
 offsets_us: Partial<{ [key in string]: number }> }
+/**
+ * One reusable project/edit template (master prompt §36). Every field is a
+ * reference to (or the exact type of) an existing, real settings type
+ * elsewhere in this codebase — see the module doc comment for the mapping
+ * and for the two fields that are honestly structural-only.
+ */
+export type Template = { id: string; name: string; description: string; 
+/**
+ * `true` for one of the 8 [`all_templates`] built-ins (stable literal
+ * id, never user-deletable — `commands::templates::delete_custom_template`
+ * refuses); `false` for a user-saved/imported custom template.
+ */
+is_built_in: boolean; canvas: CanvasV1; caption_style: CaptionStyle; 
+/**
+ * Zoom "settings" (master prompt §36): `zoom::ZoomIntensity` is the one
+ * thing Phase 11's auto-zoom module exposes as a persisted, user-facing
+ * knob — trigger detection itself (scene/marker/emphasis) runs against
+ * a project's actual media/transcript at generation time, not against
+ * template-stored data, so there is nothing else "zoom setting"-shaped
+ * to store here.
+ */
+zoom_intensity: ZoomIntensity; 
+/**
+ * Silence-removal padding/merge (master prompt §36 "silence settings"),
+ * the exact `vad::cutlist::CutParams` Phase 5 already uses.
+ */
+silence_settings: CutParams; transition_settings: TransitionSettings; 
+/**
+ * References one of `render::presets::all_presets()`'s stable ids —
+ * never a duplicated copy of `RenderSettings` (module doc comment).
+ */
+export_preset_id: string; ai_prompt_config: AiPromptConfig; 
+/**
+ * `Some` only for the Football Highlight built-in (or a custom template
+ * saved from one) — master prompt §37's sport-specific extras. `None`
+ * for every other template. Logo overlay (§37's "optional... generic"
+ * slot) is deliberately NOT a field here: it is never a bundled asset
+ * (§37 "do NOT depend on proprietary assets"), so there is nothing
+ * this catalog itself should store — a caller who wants a logo
+ * attaches an existing `MediaItem::id` from their own project's media
+ * library at build/apply time, by convention, not through this schema.
+ */
+sports_overlay: SportsOverlaySettings | null }
+/**
+ * The combined template catalog a "browse templates" UI needs: the 8
+ * built-ins (`templates::all_templates`, always present, never edited on
+ * disk) plus every custom template saved under `templates_dir`.
+ */
+export type TemplateCatalog = { built_in: Template[]; custom: Template[] }
 export type ThumbnailStripFrame = { timestamp_us: number; path: string }
 export type Track = { id: string; kind: TrackKind; name: string; 
 /**
@@ -1746,6 +2019,19 @@ export type TrackKind = "video" | "audio" | "caption" | "image" | "overlay" | "e
  * segment-level timing.
  */
 export type TranscriptEntry = { id: string; media_id: string; text: string; start_us: number; end_us: number; confidence: number; words: Word[]; is_filler: boolean }
+export type TransitionSettings = { transition_type: TransitionType; 
+/**
+ * Only meaningful once `transition_type` is not `Cut` — how long the
+ * (not-yet-implemented, see module doc comment) blend would take.
+ */
+duration_us: number }
+/**
+ * Structural-only placeholder for a render-time cross-clip transition (see
+ * module doc comment) — `Cut` is the only one every render actually
+ * performs today (an implicit hard cut between adjacent clips); `CrossFade`
+ * records *intent* for a future `render::graph` blending pass.
+ */
+export type TransitionType = "cut" | "cross_fade"
 /**
  * Segmentation parameters — everything `segments_from_scores` needs, and
  * nothing `score_chunks` needs (see module doc comment). i64-microsecond
