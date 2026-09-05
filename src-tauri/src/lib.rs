@@ -28,6 +28,7 @@ pub mod db;
 pub mod error;
 pub mod fcpxml;
 pub mod ffmpeg;
+pub mod fs_safety;
 pub mod highlights;
 pub mod jobs;
 pub mod logging;
@@ -310,6 +311,16 @@ pub fn run() {
         // module doc comment) only ever fire on a real clean exit.
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
+                // Last-resort orphan-process sweep (master prompt §45): force
+                // -kill any ffmpeg/ffprobe child still tracked at this point.
+                // Cooperative `AtomicBool` cancellation (every render/proxy/
+                // batch job already threads one through) only works if its
+                // worker thread gets scheduled again before the process
+                // actually exits, which is not guaranteed here — see
+                // `ffmpeg::command`'s registry module doc comment for the
+                // full reasoning. This call is synchronous and runs before
+                // the process actually terminates, unlike a flag flip.
+                crate::ffmpeg::command::kill_all_tracked_children();
                 if let Ok(dir) = tauri::Manager::path(app_handle).app_local_data_dir() {
                     crate::logging::mark_clean_exit(&dir);
                 }

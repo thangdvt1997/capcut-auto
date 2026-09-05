@@ -403,6 +403,27 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// §88 Windows path edge case: a draft output directory containing
+    /// spaces and real Vietnamese/other Unicode — a real Windows user could
+    /// easily have a CapCut drafts folder under a path shaped exactly like
+    /// this (their own name, or a project name containing non-ASCII text).
+    #[test]
+    fn export_project_to_capcut_draft_at_writes_real_files_under_a_unicode_and_space_path() {
+        let project = sample_project();
+        let dir = std::env::temp_dir()
+            .join(format!(
+                "capcut_export_unicode_test_{}",
+                uuid::Uuid::new_v4()
+            ))
+            .join("Nguyễn Văn A's Drafts 🎬")
+            .join("Dự án Video Cuối Cùng");
+        export_project_to_capcut_draft_at(&project, &dir)
+            .expect("export should succeed under a Unicode/space-containing path");
+        assert!(dir.join("draft_content.json").exists());
+        assert!(dir.join("draft_info.json").exists());
+        let _ = std::fs::remove_dir_all(dir.parent().unwrap().parent().unwrap());
+    }
+
     #[test]
     fn missing_media_reference_surfaces_as_a_dangling_reference_error() {
         let mut project = sample_project();

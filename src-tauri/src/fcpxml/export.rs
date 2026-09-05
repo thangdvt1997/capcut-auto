@@ -103,6 +103,26 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// §88 Windows path edge case: an output path containing spaces and
+    /// real Vietnamese/other Unicode text.
+    #[test]
+    fn export_fcpxml_to_file_writes_a_real_file_under_a_unicode_and_space_path() {
+        let project = sample_project();
+        let dir = std::env::temp_dir().join(format!(
+            "fcpxml_export_unicode_test_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let out = dir.join("Việt Nam - Xin chào 🎬.fcpxml");
+
+        export_fcpxml_to_file(&project, &out)
+            .expect("export should succeed under a Unicode/space-containing path");
+        let contents = std::fs::read_to_string(&out).expect("file should exist and be readable");
+        assert!(contents.starts_with("<?xml"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Manual verification helper, not part of the normal suite
     /// (`#[ignore]`): regenerates `src/types/bindings.ts` the same way
     /// `cargo run --bin export_bindings` would, but in-process rather than

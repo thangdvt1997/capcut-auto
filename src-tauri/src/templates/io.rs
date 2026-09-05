@@ -18,9 +18,17 @@ use super::error::TemplateError;
 use super::Template;
 
 /// One custom template's on-disk filename inside the `templates/` directory:
-/// `<id>.json`.
-fn template_file_path(dir: &Path, template_id: &str) -> PathBuf {
-    dir.join(format!("{template_id}.json"))
+/// `<id>.json`. Rejects a `template_id` that isn't a safe single path
+/// component (master prompt §53 path traversal prevention —
+/// `TemplateError::UnsafeTemplateId` doc comment) before ever joining it
+/// onto `dir`.
+fn template_file_path(dir: &Path, template_id: &str) -> Result<PathBuf, TemplateError> {
+    if !crate::fs_safety::is_safe_path_component(template_id) {
+        return Err(TemplateError::UnsafeTemplateId {
+            template_id: template_id.to_string(),
+        });
+    }
+    Ok(dir.join(format!("{template_id}.json")))
 }
 
 /// Serialize -> write to `<path>.tmp` -> fsync -> rename over `path`. Same
@@ -70,7 +78,7 @@ pub fn save_custom_template(dir: &Path, template: &Template) -> Result<PathBuf, 
     fs::create_dir_all(dir).map_err(|e| TemplateError::IoFailed {
         details: format!("could not create {}: {e}", dir.display()),
     })?;
-    let path = template_file_path(dir, &template.id);
+    let path = template_file_path(dir, &template.id)?;
     write_atomic(&path, template)?;
     Ok(path)
 }
@@ -107,7 +115,7 @@ pub fn list_custom_templates(dir: &Path) -> Result<Vec<Template>, TemplateError>
 /// separately rejecting an attempt to delete a *built-in* template's id
 /// before ever reaching here.
 pub fn delete_custom_template(dir: &Path, template_id: &str) -> Result<(), TemplateError> {
-    let path = template_file_path(dir, template_id);
+    let path = template_file_path(dir, template_id)?;
     if !path.exists() {
         return Err(TemplateError::UnknownTemplate {
             template_id: template_id.to_string(),
@@ -206,6 +214,27 @@ mod tests {
         assert_eq!(imported, template);
     }
 
+    /// §88 Windows path edge case: an export/import path containing spaces
+    /// and real Vietnamese/other Unicode.
+    #[test]
+    fn export_then_import_round_trips_under_a_unicode_and_space_path() {
+        let dir = temp_dir("export-import-unicode");
+        let unicode_dir = dir.join("Nguyễn Văn A's Templates 🎬");
+        fs::create_dir_all(&unicode_dir).unwrap();
+        let template = all_templates()
+            .into_iter()
+            .find(|t| t.id == "tmpl_football_highlight")
+            .unwrap();
+        let export_path = unicode_dir.join("Mẫu Bóng Đá Xuất Sắc.json");
+
+        export_template_to_path(&template, &export_path)
+            .expect("export succeeds under a Unicode/space-containing path");
+        assert!(export_path.exists());
+
+        let imported = import_template_from_path(&export_path).expect("import");
+        assert_eq!(imported, template);
+    }
+
     #[test]
     fn importing_corrupt_json_errors() {
         let dir = temp_dir("corrupt");
@@ -213,5 +242,47 @@ mod tests {
         fs::write(&path, b"not json").unwrap();
         let err = import_template_from_path(&path).unwrap_err();
         assert!(matches!(err, TemplateError::CorruptJson { .. }));
+    }
+
+    // -- §53 path traversal prevention: a crafted/corrupted imported
+    //    template's `id` must never escape the `templates/` directory ------
+
+    #[test]
+    fn saving_a_template_with_a_path_traversal_id_is_rejected_not_written_outside_dir() {
+        // Simulates `commands::templates::import_template`'s real risk: an
+        // imported template's `id` comes straight from whatever JSON file
+        // the user chose to import, not from this backend's own
+        // `custom_<uuid>` generator.
+        let dir = temp_dir("traversal-save");
+        let marker_name = format!("ave-templates-io-escaped-{}", uuid::Uuid::new_v4());
+        // The exact path a naive (unvalidated) `dir.join(format!("{id}.json"))`
+        // would have resolved to — a uniquely-named sibling of `dir`, so
+        // checking it specifically is safe under parallel test execution
+        // (unaffected by any other test's own temp directories).
+        let would_be_outside_path = dir.parent().unwrap().join(format!("{marker_name}.json"));
+
+        let mut template = all_templates().remove(2);
+        template.id = format!("../{marker_name}");
+
+        let err = save_custom_template(&dir, &template).unwrap_err();
+        assert!(matches!(err, TemplateError::UnsafeTemplateId { .. }));
+        assert!(
+            !would_be_outside_path.exists(),
+            "a traversal id must never write outside the templates directory"
+        );
+    }
+
+    #[test]
+    fn deleting_a_path_traversal_id_is_rejected_without_touching_the_filesystem() {
+        let dir = temp_dir("traversal-delete");
+        let err = delete_custom_template(&dir, "../../../etc/passwd").unwrap_err();
+        assert!(matches!(err, TemplateError::UnsafeTemplateId { .. }));
+    }
+
+    #[test]
+    fn deleting_a_windows_style_traversal_id_is_rejected() {
+        let dir = temp_dir("traversal-delete-backslash");
+        let err = delete_custom_template(&dir, "..\\..\\Users\\victim\\secret").unwrap_err();
+        assert!(matches!(err, TemplateError::UnsafeTemplateId { .. }));
     }
 }

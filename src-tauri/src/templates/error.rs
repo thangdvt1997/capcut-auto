@@ -32,6 +32,19 @@ pub enum TemplateError {
 
     #[error("template {template_id} is a built-in template and cannot be deleted")]
     CannotDeleteBuiltIn { template_id: String },
+
+    /// Path traversal prevention (master prompt §53): a custom template's
+    /// `id` is joined directly onto this app's own `templates/` directory
+    /// (`io::template_file_path`) to build its on-disk filename. Every
+    /// legitimately-*created* template gets a fresh `custom_<uuid>` id
+    /// (`templates::save_as_template_from_project`), but an *imported*
+    /// template's `id` comes straight from whatever JSON file the user
+    /// chose to import (`commands::templates::import_template`) — a
+    /// crafted/corrupted file could carry `"id": "../../../../whatever"`,
+    /// so this is rejected before it ever reaches a filesystem write/delete.
+    /// See `crate::fs_safety::is_safe_path_component`.
+    #[error("template id {template_id} is not a safe path component")]
+    UnsafeTemplateId { template_id: String },
 }
 
 impl From<&TemplateError> for AppErrorPayload {
@@ -83,6 +96,14 @@ impl From<&TemplateError> for AppErrorPayload {
                     .recoverable(true)
                     .with_suggestion(
                         "Built-in templates cannot be deleted; delete a custom template instead.",
+                    )
+            }
+            TemplateError::UnsafeTemplateId { template_id } => {
+                AppErrorPayload::new("TEMPLATE_UNSAFE_TEMPLATE_ID", message)
+                    .with_details(template_id.clone())
+                    .recoverable(true)
+                    .with_suggestion(
+                        "This template's id is invalid; re-export/re-create it and try again.",
                     )
             }
         }
@@ -137,6 +158,12 @@ mod tests {
                     template_id: "x".into(),
                 },
                 "TEMPLATE_CANNOT_DELETE_BUILT_IN",
+            ),
+            (
+                TemplateError::UnsafeTemplateId {
+                    template_id: "../../etc/passwd".into(),
+                },
+                "TEMPLATE_UNSAFE_TEMPLATE_ID",
             ),
         ];
         for (err, expected_code) in cases {

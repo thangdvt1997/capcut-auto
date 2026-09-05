@@ -473,6 +473,15 @@ pub async fn generate_media_proxy(
     source_path: String,
     mode: ProxyMode,
 ) -> Result<Option<String>, AppErrorPayload> {
+    // Path traversal prevention (master prompt §53): `media_id` is about to
+    // be joined directly onto this app's own media-cache directory below —
+    // see `fs_safety` module doc comment for why this is checked here even
+    // though every legitimate caller already only ever passes a UUID.
+    if !crate::fs_safety::is_safe_path_component(&media_id) {
+        return Err(AppErrorPayload::from(&MediaError::UnsafeMediaId {
+            media_id,
+        }));
+    }
     let source = PathBuf::from(&source_path);
     if !source.exists() {
         return Err(AppErrorPayload::from(&MediaError::PathNotFound {
@@ -617,6 +626,13 @@ pub async fn generate_thumbnail_strip(
     duration_us: i64,
     count: u32,
 ) -> Result<Vec<ThumbnailStripFrame>, AppErrorPayload> {
+    // Path traversal prevention (master prompt §53) — see `generate_media_proxy`
+    // above / `fs_safety` module doc comment.
+    if !crate::fs_safety::is_safe_path_component(&media_id) {
+        return Err(AppErrorPayload::from(&MediaError::UnsafeMediaId {
+            media_id,
+        }));
+    }
     let count = i64::from(count.clamp(1, 64));
     let source = PathBuf::from(&source_path);
     if !source.exists() {

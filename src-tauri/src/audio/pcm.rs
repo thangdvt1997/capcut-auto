@@ -65,6 +65,13 @@ pub fn extract_pcm_with_cancel(
     let mut child = cmd
         .spawn()
         .map_err(|e| fail(format!("spawning ffmpeg: {e}")))?;
+    // Tracked in the crate-wide child-pid registry for the lifetime of this
+    // function (`ffmpeg::command` module doc comment: a last-resort
+    // application-exit kill sweep, master prompt §45) — this module spawns
+    // its own child directly (a raw byte-stream reader, not
+    // `ffmpeg::command::run_with_progress`'s `key=value` progress-block
+    // reader) but still needs the same orphan-process safety net.
+    let _tracked = crate::ffmpeg::command::TrackedChildPid::new(child.id());
     let stdout = child
         .stdout
         .take()

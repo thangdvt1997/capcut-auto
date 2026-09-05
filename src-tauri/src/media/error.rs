@@ -49,6 +49,15 @@ pub enum MediaError {
     /// `MediaError` variant above.
     #[error("scene-change detection failed for {path}: {details}")]
     SceneDetectionFailed { path: String, details: String },
+
+    /// Path traversal prevention (master prompt §53): `media_id` is joined
+    /// directly onto this app's own media-cache directory
+    /// (`commands::media::generate_media_proxy`/`generate_thumbnail_strip`),
+    /// so it must be a single, safe path segment — never `../..` or an
+    /// embedded separator that could escape that directory — see
+    /// `crate::fs_safety::is_safe_path_component`.
+    #[error("media id {media_id} is not a safe path component")]
+    UnsafeMediaId { media_id: String },
 }
 
 impl From<&MediaError> for AppErrorPayload {
@@ -121,6 +130,14 @@ impl From<&MediaError> for AppErrorPayload {
                         "Highlight detection can still use the transcript/speech-density/audio-energy signals without scene changes; retry later.",
                     )
             }
+            MediaError::UnsafeMediaId { media_id } => {
+                AppErrorPayload::new("MEDIA_UNSAFE_MEDIA_ID", message)
+                    .with_details(media_id.clone())
+                    .recoverable(false)
+                    .with_suggestion(
+                        "This is an internal error — a media id should never contain a path separator.",
+                    )
+            }
         }
     }
 }
@@ -164,6 +181,12 @@ mod tests {
                     details: "locked".into(),
                 },
                 "MEDIA_DATABASE_ERROR",
+            ),
+            (
+                MediaError::UnsafeMediaId {
+                    media_id: "../../etc/passwd".into(),
+                },
+                "MEDIA_UNSAFE_MEDIA_ID",
             ),
         ];
         for (err, code) in cases {

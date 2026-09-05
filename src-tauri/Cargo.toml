@@ -72,6 +72,16 @@ whisper-rs = "0.16"
 # every other long-running job in this crate (`media::proxy`/`render::job`),
 # so a blocking client is the simpler fit.
 ureq = { version = "2.12", features = ["json"] }
+# SHA-256 for real, cryptographic downloaded-model verification
+# (`transcription::download`, master prompt §53 "Validate downloaded model
+# hashes when possible") — Hugging Face's own CDN exposes each git-LFS-
+# tracked model file's real SHA-256 via an `X-Linked-ETag` response header on
+# the pre-redirect response (verified with a real `curl -IL` against
+# `ggml-tiny.bin`, see that module's doc comment), so "when possible" is
+# genuinely possible here, not just a byte-count completeness check. Pure-
+# Rust, no OpenSSL/vendored-C dependency, matching this project's existing
+# preference (`ureq`'s `rustls` choice above) for a simple Windows build.
+sha2 = "0.10"
 # Phase 12 auto-update architecture (master prompt §62): Tauri's own
 # official updater plugin, the idiomatic mechanism for a Tauri 2 app rather
 # than a custom-built HTTP polling system. Pinned to a real, current stable

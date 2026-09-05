@@ -11,13 +11,26 @@
 //!
 //! whisper.cpp's own `models/download-ggml-model.sh` publishes no per-model
 //! checksum (checked before writing this — see `models` module doc
-//! comment), so this pass's verification is: the number of bytes actually
-//! written to the `.part` file exactly equals the `Content-Length` (or
-//! `Content-Range` total, when resuming) the server reported for this
-//! model. That is a real completeness check — a truncated/interrupted
-//! transfer is caught and never renamed into place — just not a
-//! cryptographic integrity check. A future pass could add SHA-256
-//! verification if/when an authoritative checksum source is found.
+//! comment), but Hugging Face's own CDN does expose one: a real, verified
+//! `curl -IL` against `ggml-tiny.bin`'s exact download URL (module doc
+//! comment's own verification discipline) shows the pre-redirect response
+//! carrying `X-Linked-ETag: "<64 lowercase hex characters>"` — the real
+//! SHA-256 of the underlying git-LFS-tracked blob, not the CDN's own content-
+//! addressed `etag` on the post-redirect response (a different value; do not
+//! confuse the two, see `peek_expected_sha256`). Since this is a genuinely
+//! Hugging-Face-specific CDN behavior (nothing guarantees a future non-HF
+//! mirror would expose the same header, let alone with the same meaning),
+//! `peek_expected_sha256` only ever attempts this for a real
+//! `HF_BASE_URL`-prefixed download — for anything else (a test's local mock
+//! server, a hypothetical future alternate source), this pass's
+//! verification falls back to the same byte-count completeness check as
+//! before: the number of bytes actually written to the `.part` file exactly
+//! equals the `Content-Length` (or `Content-Range` total, when resuming) the
+//! server reported. Both checks together: a truncated/interrupted transfer
+//! is always caught (byte count), and — for the real, shipped Hugging Face
+//! catalog this app actually downloads from — so is a corrupted-but-
+//! complete-length transfer (a real cryptographic hash match), before either
+//! is ever renamed into place as "installed".
 //!
 //! ## `.part` files are resumable, not disposable
 //!
@@ -38,10 +51,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use specta::Type;
 
 use super::error::ModelError;
-use super::models::{ModelCatalogEntry, ModelId};
+use super::models::{ModelCatalogEntry, ModelId, HF_BASE_URL};
 
 /// 256 KiB — large enough that read/write syscalls aren't the bottleneck
 /// for a multi-hundred-MB/multi-GB model file, small enough that a progress
@@ -73,6 +87,89 @@ pub fn final_path(dest_dir: &Path, entry: &ModelCatalogEntry) -> PathBuf {
     dest_dir.join(&entry.filename)
 }
 
+/// Normalizes a raw `X-Linked-ETag` header value into a real SHA-256 hex
+/// digest, or `None` if it isn't one — strips surrounding `"` quotes
+/// (Hugging Face's CDN always wraps it in them) and whitespace, lowercases
+/// it, then requires exactly 64 lowercase-hex-after-normalization
+/// characters (a real SHA-256 digest's length; anything else is either a
+/// different kind of etag entirely or a header this pass doesn't recognize
+/// — never treated as a match to compare against, only ever as "no
+/// verification available this time").
+fn sanitize_expected_sha256(raw: &str) -> Option<String> {
+    let cleaned = raw.trim().trim_matches('"').trim().to_ascii_lowercase();
+    if cleaned.len() == 64 && cleaned.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Some(cleaned)
+    } else {
+        None
+    }
+}
+
+/// Best-effort: looks up the real SHA-256 Hugging Face's CDN publishes for
+/// `download_url`, if (and only if) `download_url` actually starts with the
+/// real `HF_BASE_URL` this catalog downloads from (module doc comment: this
+/// is genuinely Hugging-Face-specific CDN behavior, not a general HTTP
+/// convention, so it is never attempted for anything else — a test's local
+/// mock server, or a hypothetical future non-HF mirror, both correctly get
+/// `None` here and fall back to this module's byte-count-only check).
+///
+/// Uses a dedicated `redirects(0)` agent: ureq returns the *pre-redirect*
+/// response object (with a real 3xx status, not an `Err`) when redirects are
+/// disabled, and Hugging Face's `X-Linked-ETag` header lives on exactly that
+/// pre-redirect response — the final, followed CDN response carries a
+/// different `etag` value entirely (module doc comment). Never fails the
+/// caller: any network error, missing header, or unrecognized value simply
+/// yields `None`.
+fn peek_expected_sha256(download_url: &str) -> Option<String> {
+    if !download_url.starts_with(HF_BASE_URL) {
+        return None;
+    }
+    let agent = ureq::AgentBuilder::new().redirects(0).build();
+    let response = agent.get(download_url).call().ok()?;
+    let header = response.header("x-linked-etag")?;
+    sanitize_expected_sha256(header)
+}
+
+/// Streams `path` through a real SHA-256 hasher, returning its lowercase hex
+/// digest. Pure file I/O, no network — reused by both the real download
+/// path and its own unit tests.
+fn sha256_hex_of_file(path: &Path) -> std::io::Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; CHUNK];
+    loop {
+        let read = file.read(&mut buf)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buf[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// Hashes `path` and compares it against `expected_hex_lowercase`, returning
+/// `ModelError::VerificationFailed` on any mismatch (or a real I/O error
+/// while hashing) — the real cryptographic half of this module's
+/// verification (module doc comment), composed as its own function so it's
+/// unit-testable directly against a known-content temp file rather than only
+/// indirectly through a full network download.
+fn verify_sha256_or_fail(
+    model_id: &str,
+    path: &Path,
+    expected_hex_lowercase: &str,
+) -> Result<(), ModelError> {
+    let actual = sha256_hex_of_file(path).map_err(|e| ModelError::IoFailed {
+        model_id: model_id.to_string(),
+        details: format!("hashing {} for verification: {e}", path.display()),
+    })?;
+    if actual != expected_hex_lowercase {
+        return Err(ModelError::VerificationFailed {
+            model_id: model_id.to_string(),
+            details: format!("sha256 mismatch: expected {expected_hex_lowercase}, got {actual}"),
+        });
+    }
+    Ok(())
+}
+
 /// Downloads `entry` into `dest_dir`, resuming from an existing `.part` file
 /// if one is present (module doc comment). Returns the final installed path
 /// on success.
@@ -92,6 +189,12 @@ pub fn download_model(
     let part = part_path(dest_dir, entry);
     let target = final_path(dest_dir, entry);
     let already_on_disk: u64 = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+
+    // Best-effort, before opening any connection for the real transfer:
+    // `None` for anything that isn't a real Hugging Face URL (module doc
+    // comment), in which case verification below falls back to byte-count
+    // only, exactly as before this pass.
+    let expected_sha256 = peek_expected_sha256(&entry.download_url);
 
     let fail = |details: String| ModelError::DownloadFailed {
         model_id: model_id(),
@@ -187,8 +290,10 @@ pub fn download_model(
         )));
     }
 
-    // Verify (module doc comment: byte-count completeness, no published
-    // checksum exists to check against).
+    // Verify (module doc comment): byte-count completeness always; a real
+    // SHA-256 match too, whenever `expected_sha256` peeked one (a real
+    // Hugging Face download). Both run before this file is ever renamed
+    // into place as "installed".
     let on_disk = std::fs::metadata(&part)
         .map(|m| m.len())
         .map_err(|e| ModelError::IoFailed {
@@ -200,6 +305,9 @@ pub fn download_model(
             model_id: model_id(),
             details: format!("expected {total_size} bytes on disk, found {on_disk}"),
         });
+    }
+    if let Some(expected) = &expected_sha256 {
+        verify_sha256_or_fail(&model_id(), &part, expected)?;
     }
 
     std::fs::rename(&part, &target).map_err(|e| ModelError::IoFailed {
@@ -226,6 +334,134 @@ mod tests {
     use std::io::{BufRead, BufReader};
     use std::net::{TcpListener, TcpStream};
     use std::thread;
+
+    // -- §53 model-hash verification: pure logic, no network ----------------
+
+    #[test]
+    fn sanitize_expected_sha256_accepts_a_real_quoted_hex_etag() {
+        // A real, verified example from `curl -IL` against the real
+        // `ggml-tiny.bin` URL (module doc comment).
+        let raw = "\"be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21\"";
+        assert_eq!(
+            sanitize_expected_sha256(raw).as_deref(),
+            Some("be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21")
+        );
+    }
+
+    #[test]
+    fn sanitize_expected_sha256_normalizes_case_and_surrounding_whitespace() {
+        let raw = "  \"BE07E048E1E599AD46341C8D2A135645097A538221678B7ACDD1B1919C6E1B21\"  ";
+        assert_eq!(
+            sanitize_expected_sha256(raw).as_deref(),
+            Some("be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21")
+        );
+    }
+
+    #[test]
+    fn sanitize_expected_sha256_rejects_the_wrong_length() {
+        assert!(sanitize_expected_sha256("\"deadbeef\"").is_none());
+        assert!(sanitize_expected_sha256("\"\"").is_none());
+    }
+
+    #[test]
+    fn sanitize_expected_sha256_rejects_non_hex_characters() {
+        // The real xet-hash value HF's CDN puts on the *other* header
+        // (plain `etag`, post-redirect) is 64 chars but not necessarily
+        // hex-only in general — and any header carrying something that
+        // isn't a real hex digest must never be treated as one.
+        let raw = "\"not-a-real-hash-at-all-just-some-64-character-junk-string-zzzz\"";
+        assert!(sanitize_expected_sha256(raw).is_none());
+    }
+
+    #[test]
+    fn peek_expected_sha256_never_attempts_a_network_call_for_a_non_huggingface_url() {
+        // Gated by construction (module doc comment): a URL that isn't a
+        // real Hugging Face download short-circuits to `None` without ever
+        // opening a connection — verified here by pointing at a URL with no
+        // listener at all (a real network attempt would hang/error, not
+        // silently return `None` this fast).
+        let result = peek_expected_sha256("http://127.0.0.1:1/does-not-matter");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn sha256_hex_of_file_matches_a_known_test_vector() {
+        let dir =
+            std::env::temp_dir().join(format!("ave-model-hash-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("hello.bin");
+        std::fs::write(&path, b"hello world").unwrap();
+
+        // A widely-published SHA-256 test vector for the literal bytes
+        // "hello world".
+        assert_eq!(
+            sha256_hex_of_file(&path).unwrap(),
+            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn sha256_hex_of_file_matches_the_empty_file_test_vector() {
+        let dir = std::env::temp_dir().join(format!(
+            "ave-model-hash-empty-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("empty.bin");
+        std::fs::write(&path, b"").unwrap();
+
+        assert_eq!(
+            sha256_hex_of_file(&path).unwrap(),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn verify_sha256_or_fail_succeeds_on_a_real_match() {
+        let dir =
+            std::env::temp_dir().join(format!("ave-model-verify-ok-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("hello.bin");
+        std::fs::write(&path, b"hello world").unwrap();
+
+        verify_sha256_or_fail(
+            "tiny",
+            &path,
+            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
+        )
+        .expect("matching hash verifies");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn verify_sha256_or_fail_rejects_a_real_mismatch() {
+        // The real, reportable security case: a corrupted-but-complete-
+        // length download must be caught, not silently installed.
+        let dir = std::env::temp_dir().join(format!(
+            "ave-model-verify-mismatch-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("corrupted.bin");
+        std::fs::write(&path, b"this is not the expected content at all").unwrap();
+
+        let err = verify_sha256_or_fail(
+            "tiny",
+            &path,
+            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ModelError::VerificationFailed { model_id, .. } if model_id == "tiny")
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     /// How a one-shot test server responds to the single request a test
     /// sends it.
@@ -361,6 +597,29 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    // -- §88 Windows path edge case: a dest_dir containing spaces and real
+    //    non-ASCII Unicode (a real Windows user profile can look exactly
+    //    like this) -----------------------------------------------------
+
+    #[test]
+    fn downloads_into_a_unicode_and_space_containing_dest_dir() {
+        let body = b"0123456789".repeat(1000);
+        let url = spawn_server(ServeMode::Resumable(body.clone()));
+        let entry = test_entry(url);
+        let base = temp_dir("unicode-dest");
+        let dir = base.join("Users").join("Nguyễn Văn A 🎬").join("models");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let path = download_model(&entry, &dir, None, |_| {})
+            .expect("download succeeds under a Unicode/space-containing dest_dir");
+
+        assert_eq!(path, dir.join("ggml-tiny.bin"));
+        assert!(path.to_string_lossy().contains("Nguyễn Văn A 🎬"));
+        assert_eq!(std::fs::read(&path).unwrap(), body);
+
+        std::fs::remove_dir_all(&base).ok();
+    }
+
     #[test]
     fn resumes_from_an_existing_part_file_via_range_request() {
         let body = b"abcdefghij".repeat(2000); // 20,000 bytes
@@ -481,5 +740,26 @@ mod tests {
         assert!(matches!(result, Err(ModelError::DownloadCancelled { .. })));
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Real-network smoke test for the hash-verification mechanism itself
+    /// (§53 "validate downloaded model hashes when possible" — see this
+    /// module's doc comment for how `X-Linked-ETag` makes that genuinely
+    /// possible for a real Hugging Face URL): confirms the real, hardcoded
+    /// `ggml-tiny.bin` URL actually carries the expected header shape, not
+    /// just that the byte-count path works (`real_huggingface_url_pattern_
+    /// serves_real_bytes` above already covers that). `#[ignore]`d for the
+    /// same reason — real outbound internet access, not available to every
+    /// CI runner; run explicitly with `cargo test -- --ignored`.
+    #[test]
+    #[ignore = "requires real internet access to huggingface.co"]
+    fn peek_expected_sha256_finds_a_real_64_char_hex_digest_for_the_real_catalog_url() {
+        use crate::transcription::models::catalog_entry;
+
+        let entry = catalog_entry(ModelId::Tiny);
+        let hash = peek_expected_sha256(&entry.download_url)
+            .expect("Hugging Face's real CDN response should carry a real X-Linked-ETag");
+        assert_eq!(hash.len(), 64, "{hash}");
+        assert!(hash.bytes().all(|b| b.is_ascii_hexdigit()), "{hash}");
     }
 }

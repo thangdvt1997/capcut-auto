@@ -972,6 +972,81 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    // -- §88 Windows path edge cases for the batch output-path derivation --
+
+    #[test]
+    fn default_output_path_handles_a_real_vietnamese_and_unicode_source_filename() {
+        let dir =
+            std::env::temp_dir().join(format!("ave-batch-outpath-unicode-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("Việt Nam - Xin chào 🎬.mp4");
+        let settings = render::find_preset("p1080").unwrap().settings;
+        let out = default_output_path(&source, &settings).expect("builds a path");
+        assert_eq!(out.parent().unwrap(), dir.join("batch_output"));
+        assert_eq!(
+            out.file_name().unwrap().to_str().unwrap(),
+            "Việt Nam - Xin chào 🎬_edited.mp4"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn default_output_path_handles_a_very_long_source_path() {
+        // Windows' classic MAX_PATH is 260 characters — this exercises this
+        // function's own path-joining/stem-extraction logic, not Windows'
+        // real enforcement of that limit (WSL2's filesystem doesn't
+        // reproduce it; a real Windows build still needs separate
+        // verification, including whether `\\?\` is required).
+        let dir =
+            std::env::temp_dir().join(format!("ave-batch-outpath-long-test-{}", Uuid::new_v4()));
+        let mut nested = dir.clone();
+        for i in 0..6 {
+            nested = nested.join(format!(
+                "a-very-long-nested-directory-segment-number-{i}-to-approach-the-windows-max-path-limit"
+            ));
+        }
+        std::fs::create_dir_all(&nested).unwrap();
+        let source = nested.join("clip.mp4");
+        assert!(source.to_string_lossy().len() > 260);
+
+        let settings = render::find_preset("p1080").unwrap().settings;
+        let out = default_output_path(&source, &settings)
+            .expect("builds a path even for a long source path");
+        assert_eq!(out.parent().unwrap(), nested.join("batch_output"));
+        assert_eq!(
+            out.file_name().unwrap().to_str().unwrap(),
+            "clip_edited.mp4"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn default_output_path_handles_a_unc_shaped_source_path_string() {
+        // UNC paths are a Windows-specific string convention; real network
+        // I/O against one can only be verified on real Windows. This
+        // proves the stem-extraction/join logic doesn't mis-parse a
+        // UNC-shaped string on this POSIX test environment, where the
+        // backslashes are literal filename characters rather than
+        // separators — `source.parent()`/`.file_stem()` must still behave
+        // sanely rather than assuming forward-slash-only splitting.
+        let dir =
+            std::env::temp_dir().join(format!("ave-batch-outpath-unc-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Built via `format!`, not `dir.join(r"\\server\share\...")` —
+        // `Path::join` replaces the whole path when its argument looks
+        // absolute (a real behavior difference this test wants to avoid
+        // triggering by accident; clippy's `join_absolute_paths` catches
+        // exactly this). This keeps the UNC-shaped component nested inside
+        // the real temp dir as a single filename, matching what this test
+        // actually wants to exercise.
+        let source = PathBuf::from(format!("{}/{}", dir.display(), r"\\server\share\clip.mp4"));
+        let settings = render::find_preset("p1080").unwrap().settings;
+        let out =
+            default_output_path(&source, &settings).expect("builds a path for a UNC-shaped name");
+        assert_eq!(out.parent().unwrap(), dir.join("batch_output"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     // -- run_pipeline: real end-to-end (export only, plus a dedicated
     //    deterministic silence-removal test below) ---------------------------
 

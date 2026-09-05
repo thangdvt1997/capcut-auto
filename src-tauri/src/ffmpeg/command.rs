@@ -12,13 +12,106 @@
 //! over-building for features that don't exist yet — no filter-graph DSL, no
 //! preset system here.
 
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
+use std::sync::{Mutex, OnceLock};
 
 use anyhow::{anyhow, Context, Result};
+
+// ---------------------------------------------------------------------------
+// Last-resort child-process registry (master prompt §45: never leave
+// ffmpeg.exe/sidecar.exe running after application exit).
+//
+// Cooperative cancellation (the `AtomicBool` flag every long-running caller
+// here already threads through) only kills the real OS child if the worker
+// thread that's polling that flag gets scheduled again before the whole
+// process exits — true on a user-initiated Cancel click (plenty of time),
+// NOT guaranteed true when the *application itself* is closing: Tauri/winit's
+// event loop calls `RunEvent::Exit`'s handler once and then, on several
+// platforms, terminates the process shortly after that closure returns
+// rather than waiting for every background thread to notice a flag change.
+// A still-running ffmpeg child at that moment would otherwise survive as a
+// genuine orphan (Rust's `Child` does not kill its process on `Drop`, and
+// Windows does not tie a child process's lifetime to its parent's unless
+// explicitly configured to via a Job Object, which this codebase does not
+// set up).
+//
+// This registry tracks every currently-spawned ffmpeg/ffprobe-family child's
+// OS pid (`TrackedChildPid`, an RAII guard constructed right after a
+// successful `spawn()` and dropped — untracking itself — on every return
+// path once that child has been waited on). `kill_all_tracked_children`,
+// wired into `lib.rs`'s `RunEvent::Exit` handler, force-kills anything still
+// registered at that point as a final safety net on top of (not instead of)
+// the existing cooperative-cancellation paths.
+fn registry() -> &'static Mutex<HashSet<u32>> {
+    static REGISTRY: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// RAII guard: tracks `pid` in the process-wide registry for as long as it's
+/// held, untracking automatically on `Drop` (so every return path — success,
+/// error, or cancellation — cleans up without needing to remember to do so
+/// explicitly). Construct immediately after a successful `Command::spawn()`.
+pub(crate) struct TrackedChildPid(u32);
+
+impl TrackedChildPid {
+    pub(crate) fn new(pid: u32) -> Self {
+        registry()
+            .lock()
+            .expect("child pid registry poisoned")
+            .insert(pid);
+        Self(pid)
+    }
+}
+
+impl Drop for TrackedChildPid {
+    fn drop(&mut self) {
+        registry()
+            .lock()
+            .expect("child pid registry poisoned")
+            .remove(&self.0);
+    }
+}
+
+/// Force-kills every still-tracked child pid — a last-resort application-exit
+/// sweep (module doc comment above), not the normal cancellation path (normal
+/// per-job cancellation already calls `Child::kill()` directly on its own
+/// child and relies on `TrackedChildPid`'s `Drop` to untrack it). Returns how
+/// many pids it attempted to kill, for diagnostics/tests. Best-effort: a pid
+/// that has already exited on its own simply fails to kill, which is not
+/// treated as an error (there is nothing left to clean up).
+pub fn kill_all_tracked_children() -> usize {
+    let pids: Vec<u32> = registry()
+        .lock()
+        .expect("child pid registry poisoned")
+        .iter()
+        .copied()
+        .collect();
+    for pid in &pids {
+        kill_pid_forcefully(*pid);
+    }
+    pids.len()
+}
+
+#[cfg(target_os = "windows")]
+fn kill_pid_forcefully(pid: u32) {
+    // `/T` also kills any child of this pid (ffmpeg does not normally spawn
+    // its own children, but this is a last-resort sweep — no reason not to
+    // be thorough). Best-effort: ignore the exit status/output entirely, a
+    // pid that's already gone is not a failure of this cleanup pass.
+    let _ = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .output();
+}
+
+#[cfg(not(target_os = "windows"))]
+fn kill_pid_forcefully(pid: u32) {
+    let _ = Command::new("kill").args(["-9", &pid.to_string()]).output();
+}
 
 /// An ordered list of ffmpeg/ffprobe arguments, built incrementally.
 /// Everything is an `OsString` — never a `String` that gets concatenated —
@@ -164,6 +257,9 @@ pub fn run_with_progress(
         .stderr(Stdio::piped())
         .spawn()
         .with_context(|| format!("spawning {}", binary.display()))?;
+    // Registered for the lifetime of this function, on every return path
+    // (module-level doc comment: app-exit orphan safety net, §45).
+    let _tracked = TrackedChildPid::new(child.id());
 
     let stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout"))?;
     let mut stderr_pipe = child.stderr.take().ok_or_else(|| anyhow!("no stderr"))?;
@@ -288,6 +384,58 @@ mod tests {
         );
     }
 
+    // -- §88 Windows path edge cases: other non-ASCII Unicode, a very long
+    //    path, and a UNC-shaped path string, on top of the Vietnamese/spaces
+    //    cases already above -------------------------------------------------
+
+    #[test]
+    fn preserves_other_non_ascii_unicode_japanese_and_emoji_as_a_single_argument() {
+        let path = PathBuf::from("C:/動画プロジェクト/最終版 🎬.mp4");
+        let args = FfmpegArgs::new().input(&path).build();
+        assert_eq!(args.len(), 2);
+        assert_eq!(
+            args[1].to_string_lossy(),
+            "C:/動画プロジェクト/最終版 🎬.mp4"
+        );
+    }
+
+    #[test]
+    fn preserves_a_very_long_path_as_a_single_argument() {
+        // Windows' classic MAX_PATH is 260 characters — this proves
+        // `FfmpegArgs` itself never truncates/splits a long `OsString`
+        // argument (it's just a `Vec<OsString>`, no length cap anywhere in
+        // this builder). Windows' own enforcement of that limit (and
+        // whether a `\\?\` prefix would be needed) is not something this
+        // Linux/WSL2 test environment can verify — see `HANDOFF.md`.
+        let long_dir = "a-long-directory-name-repeated-".repeat(10);
+        let path_string = format!("D:/{long_dir}/video.mp4");
+        assert!(path_string.len() > 260, "{}", path_string.len());
+        let path = PathBuf::from(&path_string);
+
+        let args = FfmpegArgs::new().input(&path).build();
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[1].to_string_lossy(), path_string);
+    }
+
+    #[test]
+    fn preserves_a_unc_shaped_path_as_a_single_argument_without_splitting_on_backslash() {
+        // UNC paths (`\\server\share\...`) are a Windows-specific string
+        // convention; real UNC network access can only be verified on real
+        // Windows. This proves `FfmpegArgs` carries a UNC-shaped string as
+        // exactly one argument regardless — it never assumes forward-
+        // slash-only splitting (it doesn't split at all; `.input()` hands
+        // the whole `OsStr` through untouched), so this is real coverage of
+        // this builder's own string handling, not of real UNC filesystem
+        // access.
+        let path = PathBuf::from(r"\\server\share\Video Projects\clip.mp4");
+        let args = FfmpegArgs::new().input(&path).build();
+        assert_eq!(args.len(), 2);
+        assert_eq!(
+            args[1].to_string_lossy(),
+            r"\\server\share\Video Projects\clip.mp4"
+        );
+    }
+
     #[test]
     fn parses_a_progress_block_with_out_time_and_speed() {
         let block = "frame=120\nfps=30.0\nout_time_us=4000000\nspeed=2.1x\nprogress=continue\n";
@@ -321,5 +469,193 @@ mod tests {
         let args = FfmpegArgs::new().arg("-not-a-real-flag");
         let result = run_checked(&ffmpeg, &args);
         assert!(result.is_err());
+    }
+
+    // -- §45 orphan-process verification --------------------------------
+    //
+    // These confirm the actual OS-level process is gone after cancellation
+    // or an app-exit sweep, not merely that the Rust-level call returned
+    // `Err`/a count. `/proc/<pid>` existence is a Linux-specific check (this
+    // crate's real dev/test environment is WSL2 — see `HANDOFF.md`); the
+    // equivalent real-Windows verification (confirming no orphaned
+    // `ffmpeg.exe` survives in Task Manager / `Get-Process`) still needs a
+    // manual pass on an actual Windows machine, since WSL2 cannot observe
+    // Windows process-tree semantics directly.
+
+    #[cfg(not(target_os = "windows"))]
+    fn process_exists(pid: u32) -> bool {
+        Path::new(&format!("/proc/{pid}")).exists()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn find_process_with_marker(marker: &str) -> Option<u32> {
+        let out = Command::new("ps").args(["-eo", "pid,args"]).output().ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        for line in text.lines() {
+            if line.contains(marker) {
+                let pid_str = line.split_whitespace().next()?;
+                if let Ok(pid) = pid_str.parse::<u32>() {
+                    return Some(pid);
+                }
+            }
+        }
+        None
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn wait_until(mut condition: impl FnMut() -> bool, timeout: std::time::Duration) -> bool {
+        let start = std::time::Instant::now();
+        while start.elapsed() < timeout {
+            if condition() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        condition()
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn cancelling_mid_flight_actually_kills_the_real_os_process_not_just_the_rust_future() {
+        // The specific thing §45 asks to be proven, not assumed: cancel a
+        // *real*, deliberately-long-running ffmpeg process mid-encode and
+        // confirm the OS process is genuinely gone afterward — found via
+        // `ps`/`/proc`, independent of `run_with_progress`'s own return
+        // value.
+        let ffmpeg = crate::ffmpeg::binaries::ffmpeg_path(None).expect("ffmpeg resolvable");
+        let dir =
+            std::env::temp_dir().join(format!("ave-ffmpeg-orphan-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("out.mp4");
+        let marker = out.to_string_lossy().into_owned();
+
+        // `-re` throttles lavfi input reading to real (wall-clock) time, so
+        // this genuinely runs for ~8 seconds regardless of how fast this
+        // machine can encode 320x240 — a deterministic "still running"
+        // window to cancel into, unlike guessing at raw encode speed.
+        let args = FfmpegArgs::new()
+            .args([
+                "-y",
+                "-v",
+                "error",
+                "-re",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=8:size=320x240:rate=25",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-progress",
+                "pipe:1",
+                "-nostats",
+            ])
+            .path(&out);
+
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cancel_for_thread = cancel.clone();
+        let ffmpeg_owned = ffmpeg.clone();
+        let join_handle = std::thread::spawn(move || {
+            run_with_progress(
+                &ffmpeg_owned,
+                &args,
+                |_| {},
+                Some(cancel_for_thread.as_ref()),
+            )
+        });
+
+        let pid = wait_until(
+            || find_process_with_marker(&marker).is_some(),
+            std::time::Duration::from_secs(5),
+        )
+        .then(|| find_process_with_marker(&marker))
+        .flatten()
+        .expect("expected to observe the real spawned ffmpeg process via `ps`");
+
+        // Give it a genuine moment mid-encode (not just spawned) before
+        // cancelling.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(
+            process_exists(pid),
+            "ffmpeg should still be running before cancel"
+        );
+
+        cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+
+        let result = join_handle
+            .join()
+            .expect("run_with_progress thread should not panic");
+        assert!(result.is_err(), "a cancelled run must return Err");
+
+        // The real, OS-level assertion: the process is actually gone, not
+        // merely abandoned by the Rust side.
+        assert!(
+            wait_until(|| !process_exists(pid), std::time::Duration::from_secs(3)),
+            "ffmpeg process {pid} should be killed on cancel, not orphaned"
+        );
+        // Checked by specific pid, not a global `tracked_child_count()` ==
+        // 0 — `cargo test` runs this whole crate's tests in parallel in one
+        // process, and other tests (elsewhere in this file, and in
+        // `audio::pcm`) may have their own, entirely unrelated real
+        // children registered in this same process-wide registry at this
+        // exact moment. Asserting the global count would be a spurious,
+        // flaky failure; asserting *our* pid specifically is untracked is
+        // the real, correct thing this test is proving.
+        assert!(
+            !registry().lock().unwrap().contains(&pid),
+            "our pid must be untracked after cancellation"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn tracked_child_pid_inserts_on_construction_and_removes_itself_on_drop() {
+        // The RAII contract `run_with_progress`/`audio::pcm` both rely on,
+        // tested in isolation against a synthetic (non-real-process) pid
+        // number so it can never collide with — or affect — any real
+        // process another parallel test may have spawned. Deliberately not
+        // a real subprocess: this test is about the bookkeeping, not the
+        // killing (see `kill_pid_forcefully_actually_terminates_a_real_process`
+        // for that).
+        let fake_pid: u32 = 4_000_000_001;
+        {
+            let _tracked = TrackedChildPid::new(fake_pid);
+            assert!(registry().lock().unwrap().contains(&fake_pid));
+        }
+        assert!(!registry().lock().unwrap().contains(&fake_pid));
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn kill_pid_forcefully_actually_terminates_a_real_process() {
+        // The real kill primitive `kill_all_tracked_children`'s app-exit
+        // sweep calls on every still-tracked pid (module doc comment) —
+        // tested directly against a dedicated real process this test alone
+        // owns, deliberately *not* via the whole-registry
+        // `kill_all_tracked_children()` sweep itself: that function iterates
+        // every pid currently in the process-wide registry, and since
+        // `cargo test` runs this crate's tests in parallel in one process,
+        // calling the real sweep here could kill another concurrently-
+        // running test's legitimate ffmpeg child out from under it. Testing
+        // the per-pid primitive it's built from proves the same thing (a
+        // real OS process is genuinely terminated) without that hazard.
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn a real long-lived process");
+        let pid = child.id();
+        assert!(process_exists(pid), "sanity: process is really running");
+
+        kill_pid_forcefully(pid);
+
+        // Reap it so it doesn't linger as a zombie; kill -9 + wait is
+        // near-instant.
+        let _ = child.wait();
+        assert!(
+            wait_until(|| !process_exists(pid), std::time::Duration::from_secs(3)),
+            "the process must actually be gone after a forceful kill"
+        );
     }
 }

@@ -311,6 +311,40 @@ mod tests {
         mark_clean_exit(&dir); // must not panic
     }
 
+    /// §88 Windows path edge case: the log directory itself living under a
+    /// path containing spaces and real Unicode — a real Windows install can
+    /// easily have `%LOCALAPPDATA%\AI Video Editor\logs` sit under a user
+    /// profile path shaped exactly like this (e.g. a Vietnamese username).
+    #[test]
+    fn build_subscriber_creates_a_real_log_file_under_a_unicode_and_space_containing_dir() {
+        let base = temp_dir("unicode-log-dir");
+        let dir = base
+            .join("Nguyễn Văn A 🎬")
+            .join("AI Video Editor")
+            .join("logs");
+
+        let (subscriber, guard) =
+            build_subscriber(&dir).expect("build_subscriber succeeds under a Unicode log dir");
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!("unicode log dir smoke test line");
+        });
+        drop(guard);
+
+        assert!(dir.is_dir());
+        let mut found = false;
+        for entry in std::fs::read_dir(&dir).expect("read log dir") {
+            let path = entry.expect("dir entry").path();
+            if path.is_file()
+                && std::fs::read_to_string(&path)
+                    .unwrap_or_default()
+                    .contains("unicode log dir smoke test line")
+            {
+                found = true;
+            }
+        }
+        assert!(found, "expected a log file under the Unicode log dir");
+    }
+
     /// Exercises the *real* panic-hook logging function (not a re-derived
     /// copy) end-to-end: install it as the process's panic hook, trigger a
     /// real panic through `catch_unwind` (so it never aborts the test

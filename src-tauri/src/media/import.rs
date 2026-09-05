@@ -131,6 +131,45 @@ mod tests {
         assert_eq!(classify_extension(path), Some(MediaKind::Video));
     }
 
+    // -- §88 Windows path edge cases: Japanese/emoji, long paths, UNC-shaped
+    //    strings, on top of the spaces/Vietnamese cases already above -----
+
+    #[test]
+    fn handles_other_non_ascii_unicode_japanese_and_emoji() {
+        let path = Path::new("C:/動画プロジェクト/映画 🎬 最終版.mp4");
+        assert_eq!(classify_extension(path), Some(MediaKind::Video));
+    }
+
+    #[test]
+    fn handles_a_very_long_path() {
+        // Windows' classic MAX_PATH is 260 characters — this is testing
+        // this function's own string/extension-parsing logic, not
+        // Windows' actual enforcement of that limit (which WSL2's
+        // filesystem doesn't reproduce; needs separate real-Windows
+        // verification, including whether a `\\?\`-prefixed path is
+        // required there).
+        let long_dir =
+            "a-long-directory-name-repeated-to-approach-the-260-character-limit/".repeat(6);
+        let path_string = format!("C:/{long_dir}video.mp4");
+        assert!(path_string.len() > 260, "{}", path_string.len());
+        assert_eq!(
+            classify_extension(Path::new(&path_string)),
+            Some(MediaKind::Video)
+        );
+    }
+
+    #[test]
+    fn handles_a_unc_shaped_path_string() {
+        // UNC paths (`\\server\share\...`) are a Windows-specific string
+        // convention; real UNC network access can only be verified on real
+        // Windows. This proves `classify_extension` (forward-slash-
+        // agnostic — it only ever looks at `Path::extension()`) doesn't
+        // mis-parse or choke on a UNC-shaped string, which is the thing
+        // actually testable here.
+        let path = Path::new(r"\\server\share\Video Projects\clip.mp4");
+        assert_eq!(classify_extension(path), Some(MediaKind::Video));
+    }
+
     #[test]
     fn scan_folder_finds_supported_files_recursively_and_skips_hidden_and_unsupported() {
         let dir = std::env::temp_dir().join(format!("ave-import-test-{}", uuid::Uuid::new_v4()));
@@ -147,5 +186,31 @@ mod tests {
         assert_eq!(found.len(), 2);
         assert!(found.iter().any(|p| p.ends_with("a.mp4")));
         assert!(found.iter().any(|p| p.ends_with("b.wav")));
+    }
+
+    #[test]
+    fn scan_folder_finds_a_real_file_with_vietnamese_and_other_unicode_names_on_disk() {
+        // A real filesystem round trip (not just string-level
+        // `classify_extension`) with the exact kind of filenames master
+        // prompt §88 calls out: a real Vietnamese filename and other
+        // non-ASCII Unicode (Japanese + emoji), plus spaces, all as real
+        // files this function actually walks and finds.
+        let dir =
+            std::env::temp_dir().join(format!("ave-import-unicode-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("Việt Nam - Xin chào.mp4"), b"x").unwrap();
+        fs::write(dir.join("動画プロジェクト 🎬.mp4"), b"x").unwrap();
+        fs::write(dir.join("My Video File.mp4"), b"x").unwrap();
+
+        let found = scan_folder(&dir);
+        fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(found.len(), 3);
+        assert!(found
+            .iter()
+            .any(|p| p.file_name().unwrap().to_string_lossy() == "Việt Nam - Xin chào.mp4"));
+        assert!(found
+            .iter()
+            .any(|p| p.file_name().unwrap().to_string_lossy() == "動画プロジェクト 🎬.mp4"));
     }
 }

@@ -97,7 +97,11 @@ pub struct ModelCatalogEntry {
     pub download_url: String,
 }
 
-const HF_BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
+/// `pub(crate)`, not private: `download::peek_expected_sha256` gates its
+/// Hugging-Face-specific `X-Linked-ETag` hash lookup on a download URL
+/// actually starting with this exact base (that module's doc comment) —
+/// shared here so the two never drift apart.
+pub(crate) const HF_BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 
 fn entry(
     id: ModelId,
@@ -334,5 +338,31 @@ mod tests {
         assert!(matches!(err, ModelError::NotInstalled { .. }));
         assert!(dir.join("ggml-tiny.bin.part").exists());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // -- §88 Windows path edge cases: a model destination directory
+    //    containing spaces and real non-ASCII Unicode (a real Windows user
+    //    profile can look exactly like this, e.g.
+    //    `C:\Users\Nguyễn Văn A\AppData\Local\AI Video Editor\models`) -----
+
+    #[test]
+    fn list_installed_and_delete_model_work_under_a_unicode_and_space_containing_dest_dir() {
+        let base = temp_dir("unicode-dest-dir");
+        let dest_dir = base.join("Users").join("Nguyễn Văn A 🎬").join("models");
+        std::fs::create_dir_all(&dest_dir).unwrap();
+        std::fs::write(dest_dir.join("ggml-tiny.bin"), b"fake-tiny-model-bytes").unwrap();
+
+        assert!(is_installed(&dest_dir, ModelId::Tiny));
+        let installed = list_installed(&dest_dir);
+        assert_eq!(installed.len(), 1);
+        assert_eq!(installed[0].id, ModelId::Tiny);
+        // The reported path really does carry the Unicode segment through,
+        // not a mangled/lossy substitute.
+        assert!(installed[0].path.contains("Nguyễn Văn A 🎬"));
+
+        delete_model(&dest_dir, ModelId::Tiny).expect("delete succeeds under a Unicode path");
+        assert!(!dest_dir.join("ggml-tiny.bin").exists());
+
+        std::fs::remove_dir_all(&base).ok();
     }
 }
