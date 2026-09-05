@@ -2,14 +2,18 @@
 //! prompt §17/§18): the `AIProvider` trait + concrete adapters, secure
 //! credential storage, and the `EditPlan` schema + strict validation.
 //!
-//! This module is the **foundation** a later pass (Smart Edit / AI semantic
-//! editing, the natural-language command box, highlight detection —
-//! `IMPLEMENTATION_PLAN.md` Phase 10's remaining bullets) builds on top of.
-//! It does NOT implement any of those features itself — it only answers two
-//! questions: "how do we talk to *some* LLM provider" (`provider`,
-//! `openai_compat`, `anthropic`, `gemini`, `credentials`) and "how do we
-//! turn whatever text an LLM hands back into something safe to feed the
-//! timeline engine" (`edit_plan`).
+//! `provider`/`openai_compat`/`anthropic`/`gemini`/`credentials`/`edit_plan`
+//! are this subsystem's **foundation**: "how do we talk to *some* LLM
+//! provider" and "how do we turn whatever text an LLM hands back into
+//! something safe to feed the timeline engine". `smart_edit` and
+//! `nl_command` are features built on top of that foundation: `smart_edit`
+//! is Smart Edit / AI semantic editing (master prompt §19); `nl_command` is
+//! the natural-language AI command box's prompt-construction layer (master
+//! prompt §20, `commands::ai::generate_edit_plan_from_nl_command`). Real
+//! highlight detection (master prompt §21) lives in the separate
+//! `crate::highlights` module, since it needs its own non-AI signal
+//! machinery (`vad`/`audio`/`media::scene`) alongside an optional AI call,
+//! not just a prompt in front of `edit_plan`.
 //!
 //! **Security note (master prompt §53):** the AI layer never mutates the
 //! timeline directly and never executes anything an LLM returns as code —
@@ -28,8 +32,10 @@ pub mod credentials;
 pub mod edit_plan;
 pub mod error;
 pub mod gemini;
+pub mod nl_command;
 pub mod openai_compat;
 pub mod provider;
+pub mod smart_edit;
 
 /// Shared one-shot mock HTTP server for adapter tests (`openai_compat`,
 /// `anthropic`, `gemini`), following `transcription::download`'s own

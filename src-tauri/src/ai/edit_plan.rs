@@ -208,18 +208,29 @@ pub fn plan_to_remove_cuts(plan: &EditPlan, source_media_id: &str) -> Vec<Cut> {
                 end_us,
                 reason: _reason,
                 confidence: _,
-            } => Some(Cut {
-                id: uuid::Uuid::new_v4().to_string(),
-                kind: CutKind::Remove,
-                source_media_id: source_media_id.to_string(),
-                start_us: *start_us,
-                end_us: *end_us,
-                reason: CutReason::AiSuggested,
-                applied: false,
-            }),
+            } => Some(ai_suggested_cut(source_media_id, *start_us, *end_us)),
             EditOperation::Zoom { .. } => None,
         })
         .collect()
+}
+
+/// Builds a proposed (`applied: false`) `Cut { kind: Remove, reason:
+/// AiSuggested }` spanning `start_us..end_us` on `source_media_id` — the one
+/// piece of `Cut`-construction logic every AI-derived removal (this module's
+/// `EditOperation::Remove`, and `ai::smart_edit`'s `Remove`/`Shorten`
+/// recommendations) shares, kept in one place rather than duplicated at each
+/// call site. Crate-visible (not `pub`) since it's an internal building
+/// block, not part of this module's public schema.
+pub(crate) fn ai_suggested_cut(source_media_id: &str, start_us: i64, end_us: i64) -> Cut {
+    Cut {
+        id: uuid::Uuid::new_v4().to_string(),
+        kind: CutKind::Remove,
+        source_media_id: source_media_id.to_string(),
+        start_us,
+        end_us,
+        reason: CutReason::AiSuggested,
+        applied: false,
+    }
 }
 
 #[cfg(test)]

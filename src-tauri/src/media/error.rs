@@ -41,6 +41,14 @@ pub enum MediaError {
 
     #[error("import failed for {path}: {details}")]
     ImportFailed { path: String, details: String },
+
+    /// Highlight detection's real, non-AI scene-change signal
+    /// (`crate::media::scene`, Phase 10 follow-up, master prompt §21) shells
+    /// out to ffmpeg's own `select='gt(scene,THRESHOLD)'` filter — this is
+    /// that call's failure mode, same shape as every other ffmpeg-backed
+    /// `MediaError` variant above.
+    #[error("scene-change detection failed for {path}: {details}")]
+    SceneDetectionFailed { path: String, details: String },
 }
 
 impl From<&MediaError> for AppErrorPayload {
@@ -104,6 +112,14 @@ impl From<&MediaError> for AppErrorPayload {
                     .with_details(details.clone())
                     .recoverable(true)
                     .with_suggestion("Check the file/folder is accessible, then retry the import.")
+            }
+            MediaError::SceneDetectionFailed { details, .. } => {
+                AppErrorPayload::new("MEDIA_SCENE_DETECTION_FAILED", message)
+                    .with_details(details.clone())
+                    .recoverable(true)
+                    .with_suggestion(
+                        "Highlight detection can still use the transcript/speech-density/audio-energy signals without scene changes; retry later.",
+                    )
             }
         }
     }

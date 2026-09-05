@@ -134,7 +134,14 @@ The unified project file is the application's own format and the single source o
     //     { "type": "zoom", "start_us": 32000000, "end_us": 36000000, "scale": 1.12, "reason": "emphasis" }
     //   ]
     // }
-    "highlights": []              // still opaque JSON — real Highlight type is a follow-up pass's job
+    // Phase 10 follow-up: a real, strictly-typed Highlight schema
+    // (src-tauri/src/highlights/types.rs), not opaque JSON. `score` is 0-100
+    // (matching the master prompt's own "Score: 92" UI example), not the
+    // 0.0-1.0 convention used elsewhere in this schema (SpeechSegment
+    // confidence, EditOperation::Remove.confidence).
+    "highlights": []
+    // [ { "id": "uuid", "start_us": 12300000, "end_us": 18700000, "score": 92.0,
+    //     "title": "The big reveal", "reason": "high speech density, strong audio energy, and a scene change" } ]
   },
   "export": {
     "last_render_preset": "string or null",

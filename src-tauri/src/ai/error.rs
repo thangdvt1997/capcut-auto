@@ -141,6 +141,52 @@ impl From<&EditPlanError> for AppErrorPayload {
     }
 }
 
+/// `ai::smart_edit`'s validation-stage error — same two-stage split as
+/// `EditPlanError` above (module doc comment): a provider call can succeed
+/// and still return text that fails `SmartEditError` validation.
+#[derive(Debug, Clone, Serialize, Type, Error)]
+#[serde(tag = "variant")]
+pub enum SmartEditError {
+    #[error("could not parse AI output as JSON: {details}")]
+    MalformedJson { details: String },
+
+    #[error("unsupported SmartEdit schema version: {version}")]
+    UnsupportedVersion { version: u32 },
+
+    #[error("recommendation {index} is invalid: {details}")]
+    InvalidRecommendation { index: usize, details: String },
+}
+
+impl From<&SmartEditError> for AppErrorPayload {
+    fn from(err: &SmartEditError) -> Self {
+        let message = err.to_string();
+        match err {
+            SmartEditError::MalformedJson { details } => {
+                AppErrorPayload::new("SMART_EDIT_MALFORMED_JSON", message)
+                    .with_details(details.clone())
+                    .recoverable(true)
+                    .with_suggestion(
+                        "The AI response was not valid Smart Edit JSON; ask it to try again.",
+                    )
+            }
+            SmartEditError::UnsupportedVersion { version } => {
+                AppErrorPayload::new("SMART_EDIT_UNSUPPORTED_VERSION", message)
+                    .with_details(version.to_string())
+                    .recoverable(false)
+                    .with_suggestion("This app only understands Smart Edit schema version 1.")
+            }
+            SmartEditError::InvalidRecommendation { index, details } => {
+                AppErrorPayload::new("SMART_EDIT_INVALID_RECOMMENDATION", message)
+                    .with_details(format!("recommendations[{index}]: {details}"))
+                    .recoverable(true)
+                    .with_suggestion(
+                        "Reject this recommendation set and ask the AI to produce a corrected one.",
+                    )
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,6 +261,34 @@ mod tests {
                     details: "d".into(),
                 },
                 "EDIT_PLAN_INVALID_OPERATION",
+            ),
+        ];
+        for (err, code) in cases {
+            let payload = AppErrorPayload::from(&err);
+            assert_eq!(payload.code, code);
+            assert!(!payload.message.is_empty());
+        }
+    }
+
+    #[test]
+    fn every_smart_edit_error_variant_maps_to_a_stable_code() {
+        let cases: Vec<(SmartEditError, &str)> = vec![
+            (
+                SmartEditError::MalformedJson {
+                    details: "d".into(),
+                },
+                "SMART_EDIT_MALFORMED_JSON",
+            ),
+            (
+                SmartEditError::UnsupportedVersion { version: 2 },
+                "SMART_EDIT_UNSUPPORTED_VERSION",
+            ),
+            (
+                SmartEditError::InvalidRecommendation {
+                    index: 0,
+                    details: "d".into(),
+                },
+                "SMART_EDIT_INVALID_RECOMMENDATION",
             ),
         ];
         for (err, code) in cases {

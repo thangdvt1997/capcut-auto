@@ -26,6 +26,7 @@ pub mod db;
 pub mod error;
 pub mod fcpxml;
 pub mod ffmpeg;
+pub mod highlights;
 pub mod jobs;
 pub mod media;
 pub mod project;
@@ -108,6 +109,13 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::ai::build_cuts_from_edit_plan,
         commands::ai::apply_edit_plan_to_clip,
         commands::ai::apply_edit_plan_to_track,
+        commands::ai::generate_edit_plan_from_nl_command,
+        commands::ai::analyze_smart_edit,
+        commands::ai::build_cuts_from_smart_edit_recommendations,
+        commands::ai::apply_smart_edit_recommendations_to_clip,
+        commands::ai::apply_smart_edit_recommendations_to_track,
+        commands::highlights::detect_media_scene_changes,
+        commands::highlights::detect_highlights,
         fcpxml::export::export_fcpxml,
         capcut::export::export_project_to_capcut_draft,
     ])

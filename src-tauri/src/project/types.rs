@@ -478,10 +478,15 @@ pub struct AiState {
     /// field as `serde_json::Value`. `None` until an EditPlan has been
     /// validated at least once for this project.
     pub last_edit_plan: Option<crate::ai::edit_plan::EditPlan>,
-    /// Still opaque — a real `Highlight` type is the follow-up
-    /// highlight-detection pass's job, once real detection logic exists to
-    /// produce one (Phase 10 brief). Left untouched by this pass.
-    pub highlights: Vec<serde_json::Value>,
+    /// Most recent detected highlights (Phase 10 follow-up,
+    /// `crate::highlights`, master prompt §21) — a real, strictly-typed
+    /// `{id, start_us, end_us, score, title, reason}` schema
+    /// (`crate::highlights::types::Highlight`), not opaque JSON: like
+    /// `last_edit_plan` above, the schema now exists and is closed by
+    /// construction, so there is no "schema doesn't exist yet" reason left
+    /// to keep this field as `serde_json::Value`. Empty until highlight
+    /// detection has been run at least once for this project.
+    pub highlights: Vec<crate::highlights::types::Highlight>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Default)]

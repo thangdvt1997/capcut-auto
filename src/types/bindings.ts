@@ -676,6 +676,124 @@ async applyEditPlanToTrack(trackId: string, sourceMediaId: string, plan: EditPla
 }
 },
 /**
+ * **Natural language → AI Provider → EditPlan → Schema validation**
+ * (master prompt §20's pipeline, up through validation — Preview/Apply are
+ * the existing [`build_cuts_from_edit_plan`]/[`apply_edit_plan_to_clip`]/
+ * [`apply_edit_plan_to_track`] commands above, reused unchanged): builds a
+ * real grounding prompt from `nl_command` + `transcript` + `total_duration_us`
+ * (`ai::nl_command::build_edit_plan_prompt`), calls the configured
+ * provider, and validates the response through the exact same
+ * `edit_plan::parse_and_validate` [`validate_edit_plan`] already uses —
+ * never a second, parallel validation path. Never a partially-populated
+ * plan: any malformed/invalid response is a clear `AppErrorPayload`, not a
+ * best-effort guess.
+ * 
+ * See `ai::nl_command` module doc comment for exactly which of master
+ * prompt §20's own example commands this can express end-to-end today
+ * (pure removal/timing edits) versus which need operation kinds this pass's
+ * `EditPlan` schema doesn't have yet.
+ */
+async generateEditPlanFromNlCommand(settings: AiProviderSettings, nlCommand: string, transcript: TranscriptEntry[], totalDurationUs: number) : Promise<Result<EditPlan, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("generate_edit_plan_from_nl_command", { settings, nlCommand, transcript, totalDurationUs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * **Analyze**: builds a Smart Edit prompt from `entries` (the caller-
+ * supplied transcript — same "caller passes the transcript in directly"
+ * convention `commands::transcription::detect_filler_words` already uses,
+ * rather than this command reaching into project state itself), calls the
+ * configured provider, and validates the response into a strict
+ * `Vec<SmartEditRecommendation>` — or a clear error, never a partially
+ * populated result (`ai::smart_edit` module doc comment).
+ * 
+ * This is a *proposal* the frontend shows the user for review (a later
+ * pass) — nothing here mutates the timeline. See
+ * [`apply_smart_edit_recommendations_to_clip`]/
+ * [`apply_smart_edit_recommendations_to_track`] for the separate, explicit
+ * apply step.
+ */
+async analyzeSmartEdit(settings: AiProviderSettings, entries: TranscriptEntry[]) : Promise<Result<SmartEditRecommendation[], AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("analyze_smart_edit", { settings, entries }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Pure conversion of a caller-selected (and possibly action-overridden)
+ * subset of recommendations into unapplied `Cut`s scoped to
+ * `source_media_id` — the same "propose the cutlist, don't apply it yet"
+ * step [`build_cuts_from_edit_plan`] already exposes for `EditPlan`-derived
+ * cuts.
+ */
+async buildCutsFromSmartEditRecommendations(sourceMediaId: string, recommendations: SmartEditRecommendation[]) : Promise<Cut[]> {
+    return await TAURI_INVOKE("build_cuts_from_smart_edit_recommendations", { sourceMediaId, recommendations });
+},
+/**
+ * **Apply** (scoped to one clip): converts `recommendations`' `Remove`/
+ * `Shorten` actions into `Cut`s against `source_media_id` and applies them
+ * to `clip_id` through the exact same `commands::timeline::apply_silence_cuts`
+ * path VAD/filler-word/`EditPlan` cuts already use — one atomic undo step,
+ * never a second mutation path. `Keep`/`Highlight` recommendations in
+ * `recommendations` simply produce no `Cut` (module doc comment).
+ */
+async applySmartEditRecommendationsToClip(clipId: string, sourceMediaId: string, recommendations: SmartEditRecommendation[]) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("apply_smart_edit_recommendations_to_clip", { clipId, sourceMediaId, recommendations }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Same as [`apply_smart_edit_recommendations_to_clip`], but for every clip
+ * currently on `track_id` (delegates to
+ * `commands::timeline::apply_silence_cuts_to_track`).
+ */
+async applySmartEditRecommendationsToTrack(trackId: string, sourceMediaId: string, recommendations: SmartEditRecommendation[]) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("apply_smart_edit_recommendations_to_track", { trackId, sourceMediaId, recommendations }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Real, non-AI scene-change detection on its own (`media::scene`,
+ * master prompt §21's "scene changes" signal) — exposed as its own command
+ * so a caller can use it independently of the full highlight pipeline
+ * below (e.g. a future scene-markers timeline feature, per
+ * `IMPLEMENTATION_PLAN.md` Phase 11).
+ */
+async detectMediaSceneChanges(mediaPath: string, threshold: number | null) : Promise<Result<number[], AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("detect_media_scene_changes", { mediaPath, threshold }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Runs highlight detection end-to-end for one real media file (master
+ * prompt §21's full signal list: transcript, speech density, audio energy,
+ * scene changes, and — only when `ai_settings` is `Some` — semantic
+ * importance). No real AI provider call is ever attempted unless the
+ * caller passes real `ai_settings` (module doc comment).
+ */
+async detectHighlights(mediaPath: string, transcript: TranscriptEntry[], totalDurationUs: number, aiSettings: AiProviderSettings | null, maxHighlights: number | null) : Promise<Result<HighlightDetectionResult, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("detect_highlights", { mediaPath, transcript, totalDurationUs, aiSettings, maxHighlights }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Tauri command: export `project` as a FCPXML 1.11 file at `output_path`.
  * Specta-typed, following `commands/timeline.rs`/`commands/vad.rs`'s
  * naming/error-envelope conventions.
@@ -759,11 +877,16 @@ provider_settings_ref: string | null;
  */
 last_edit_plan: EditPlan | null; 
 /**
- * Still opaque — a real `Highlight` type is the follow-up
- * highlight-detection pass's job, once real detection logic exists to
- * produce one (Phase 10 brief). Left untouched by this pass.
+ * Most recent detected highlights (Phase 10 follow-up,
+ * `crate::highlights`, master prompt §21) — a real, strictly-typed
+ * `{id, start_us, end_us, score, title, reason}` schema
+ * (`crate::highlights::types::Highlight`), not opaque JSON: like
+ * `last_edit_plan` above, the schema now exists and is closed by
+ * construction, so there is no "schema doesn't exist yet" reason left
+ * to keep this field as `serde_json::Value`. Empty until highlight
+ * detection has been run at least once for this project.
  */
-highlights: JsonValue[] }
+highlights: Highlight[] }
 export type Animation = { id: string; clip_id: string; kind: AnimationKind; name: string; duration_us: number }
 export type AnimationKind = "in" | "out" | "loop" | "group"
 export type AppErrorPayload = { code: string; message: string; details: string | null; recoverable: boolean; suggested_action: string | null }
@@ -1058,6 +1181,31 @@ export type HardwareEncoderReport = { encoders: DetectedEncoder[];
  * the user has chosen H.265/VP9.
  */
 active_encoder_label: string }
+/**
+ * One detected highlight candidate/segment: `{start, end, score, title,
+ * reason}` (master prompt §21's exact return shape).
+ * 
+ * `score` is `0.0..=100.0` — matching master prompt §21's own UI mockup
+ * ("Score: 92"), a deliberate difference from the `0.0..=1.0` convention
+ * `vad::provider::SpeechSegment::confidence`/`ai::edit_plan::EditOperation
+ * ::Remove.confidence` use elsewhere in this crate, so a highlight score
+ * reads the same way the master prompt's own example shows it rather than
+ * silently rescaling a UI-facing number a second time.
+ */
+export type Highlight = { id: string; start_us: number; end_us: number; score: number; title: string; reason: string }
+/**
+ * Result alongside the highlights themselves, so a caller (and a test) can
+ * tell whether the semantic (AI) signal actually ran without re-deriving it
+ * from whether `ai_settings` was passed.
+ */
+export type HighlightDetectionResult = { highlights: Highlight[]; 
+/**
+ * `true` only if AI settings were provided and the AI call/parse
+ * actually succeeded and its candidates were used. `false` means the
+ * result came entirely from real local signals — never a silent
+ * fallback the caller can't distinguish from "the AI path worked".
+ */
+used_ai_semantic_signal: boolean }
 export type ImportResult = { source_path: string; media: MediaItem | null; error: AppErrorPayload | null }
 /**
  * A model found actually installed on disk (master prompt §60 "Installed
@@ -1222,6 +1370,58 @@ export type SafeMargins = { top: number; bottom: number; left: number; right: nu
  * System Information" panel (master prompt §78) is Phase 12 scope.
  */
 export type ShellInfo = { app_version: string; tauri_version: string; os: string; arch: string }
+/**
+ * Master prompt §19's exact action list. Closed enum, `#[serde(tag =
+ * "type")]` — same "no free-form string ever gets pattern-matched or
+ * interpreted at runtime" discipline as `ai::edit_plan::EditOperation`
+ * (that module's doc comment explains the master prompt §53 threat model
+ * this defends against; identical reasoning applies here).
+ */
+export type SmartEditAction = 
+/**
+ * No-op on the timeline: the user/AI judged this span should stay
+ * exactly as-is.
+ */
+{ type: "keep" } | 
+/**
+ * Maps to one `Cut` spanning the recommendation's whole
+ * `start_us..end_us` — see [`recommendations_to_cuts`].
+ */
+{ type: "remove" } | 
+/**
+ * Maps to one `Cut` trimming the recommendation's span down to
+ * `target_duration_us` — see module doc comment ("Shorten's exact
+ * timeline interpretation") and [`recommendations_to_cuts`].
+ */
+{ type: "shorten"; target_duration_us: number } | 
+/**
+ * No-op on the timeline: a user-facing "this span is worth calling
+ * out" verdict, distinct from Phase 10's separate highlight-detection
+ * feature (module doc comment).
+ */
+{ type: "highlight" }
+/**
+ * Master prompt §19's exact category list.
+ */
+export type SmartEditCategory = "repetition" | "false_start" | "off_topic" | "weak_sentence" | "long_pause" | "filler_word" | "unnecessary_intro" | "duplicate_idea" | "boring_section"
+/**
+ * A single Smart Edit recommendation. Every field master prompt §19
+ * requires ("time range, transcript, reason, confidence, suggested
+ * action") plus `id` (so a frontend/caller can reference one recommendation
+ * across the propose -> user-reviews -> apply round trip) and `category`
+ * (which of §19's nine categories this recommendation falls under).
+ * 
+ * Closed, strictly typed, specta-typed for eventual frontend consumption —
+ * this is a *proposal the user reviews*, never auto-applied (master prompt
+ * §53's discipline, same as `EditPlan`).
+ */
+export type SmartEditRecommendation = { id: string; start_us: number; end_us: number; 
+/**
+ * The actual transcript text this recommendation is about — not just a
+ * time range, so a user can judge the recommendation without having to
+ * scrub the timeline first.
+ */
+transcript: string; category: SmartEditCategory; reason: string; confidence: number; suggested_action: SmartEditAction }
 /**
  * A detected speech region, master prompt §13's `{start, end, confidence}`
  * return shape.
