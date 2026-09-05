@@ -1067,6 +1067,54 @@ async generateShorts(mediaPath: string, transcript: TranscriptEntry[], settings:
 }
 },
 /**
+ * Starts a new batch: one `BatchJob` per `media_paths` entry, all `config`.
+ * Returns the batch id immediately; per-job progress arrives via
+ * `batch:progress` events, and `list_batch_jobs` can be polled at any time.
+ */
+async startBatch(mediaPaths: string[], config: BatchPipelineConfig) : Promise<string> {
+    return await TAURI_INVOKE("start_batch", { mediaPaths, config });
+},
+async listBatchJobs(batchId: string) : Promise<Result<BatchJob[], AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_batch_jobs", { batchId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pauseBatchJob(jobId: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pause_batch_job", { jobId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async resumeBatchJob(jobId: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("resume_batch_job", { jobId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cancelBatchJob(jobId: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_batch_job", { jobId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async retryBatchJob(jobId: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("retry_batch_job", { jobId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Tauri command: export `project` as a FCPXML 1.11 file at `output_path`.
  * Specta-typed, following `commands/timeline.rs`/`commands/vad.rs`'s
  * naming/error-envelope conventions.
@@ -1265,6 +1313,133 @@ export type BRollSuggestion = { id: string; insertion_time_us: number; duration_
  */
 keyword: string; reason: string }
 export type BRollSuggestionWithCandidatesPayload = { suggestion: BRollSuggestion; candidates: BRollCandidate[] }
+/**
+ * One item in a batch (master prompt §42's Jobs UI row: Name/Status/
+ * Progress/Stage/Elapsed/ETA/Output). `elapsed_us`/`eta_us` are computed
+ * fresh every time a snapshot is taken (`batch::manager::JobState::snapshot`)
+ * from `started_at` and the current progress — never separately mutated
+ * fields that could drift out of sync.
+ */
+export type BatchJob = { id: string; 
+/**
+ * The source filename (master prompt §42's own "Name" column example).
+ */
+name: string; status: BatchJobStatus; 
+/**
+ * `0.0..=1.0`.
+ */
+progress: number; 
+/**
+ * Human-readable current-step label (e.g. `"Removing silence"`,
+ * `"Rendering"`) — finer-grained than `status` alone, matching the
+ * master prompt's separate "Stage" column.
+ */
+stage: string; 
+/**
+ * RFC3339 timestamp of when this job actually started running (left
+ * `Queued` and entered `Analyzing`) — not when the batch itself was
+ * created. A job that is still `Queued` reports its creation time here
+ * (overwritten the moment it starts) with `elapsed_us: 0`.
+ */
+started_at: string; 
+/**
+ * Microseconds from `started_at` to now (still-running) or to the
+ * moment it reached a terminal state (frozen thereafter).
+ */
+elapsed_us: number; 
+/**
+ * A real, extrapolated-from-progress-so-far estimate, or `None` when
+ * there isn't yet enough signal to extrapolate honestly (progress is
+ * still `0.0`, the job hasn't started, or it's already finished) — per
+ * this feature's own requirement, never a fabricated precise number.
+ */
+eta_us: number | null; output_path: string | null; error: string | null }
+/**
+ * Closed state enum. Matches the master prompt's own Jobs UI state list
+ * (`Queued`/`Analyzing`/`Transcribing`/`Editing`/`Rendering`/`Completed`/
+ * `Failed`/`Cancelled`) with one addition: **`Paused`**.
+ * 
+ * The master prompt's own state list has no separate "Paused" row, but its
+ * "Allow" list separately names `pause` as an action distinct from any one
+ * processing state — pausing is legal while `Analyzing`/`Transcribing`/
+ * `Editing`/`Rendering`, or even while still `Queued`. Two designs were
+ * available: (a) a `paused: bool` flag layered on top of whichever
+ * processing state was active, or (b) `Paused` as its own closed-enum
+ * variant. This module picks **(b)**: the required Jobs UI "Status" column
+ * (master prompt §42) needs exactly one value per row, and a flag-on-top-of-
+ * state design would force the frontend to combine two independent fields
+ * into that one cell. The stage the job will resume from is not lost by
+ * this choice — `BatchJob::stage` keeps showing the last real stage label
+ * (e.g. `"Editing"`) while `status` is `Paused`, and the manager's own pause
+ * checkpoint (module doc comment, `batch::pipeline`) always resumes at the
+ * next real stage boundary regardless of which enum shape recorded it.
+ */
+export type BatchJobStatus = "queued" | "analyzing" | "transcribing" | "editing" | "rendering" | "paused" | "completed" | "failed" | "cancelled"
+/**
+ * Which stages a batch runs, and their real parameters — every field here
+ * is either an existing, real settings type from elsewhere in this
+ * codebase, or references one by id (module doc comment). Every stage is
+ * independently toggleable via `Option`/`None` = skip, except rendering/
+ * export, which always runs (a batch item with no output isn't really a
+ * "batch job" in the master prompt's own Jobs-UI-with-an-Output-column
+ * sense).
+ */
+export type BatchPipelineConfig = { 
+/**
+ * `None` skips the whole silence-removal stage. When both this and
+ * `template_id` are given, this explicit value always wins over the
+ * template's own `silence_settings` (see `template_id`'s doc comment).
+ */
+remove_silence: CutParams | null; 
+/**
+ * `None` skips caption generation entirely, and with it the whole
+ * Transcribing stage (module doc comment: transcription only runs when
+ * a downstream stage — captioning, here — actually needs a transcript).
+ */
+captions: CaptionGenerationSettings | null; 
+/**
+ * Required (and validated up front, before any real work starts)
+ * whenever `captions` is `Some` — captioning needs a transcript, and
+ * transcription needs a specific installed Whisper model
+ * (`commands::transcription::transcribe_media`'s own required
+ * parameter). Ignored when `captions` is `None`.
+ */
+transcription_model_id: string | null; 
+/**
+ * Optional forced transcription language (Whisper's own "auto-detect
+ * when `None`" behavior otherwise). Ignored when `captions` is `None`.
+ */
+transcription_language: string | null; 
+/**
+ * References `templates::all_templates()`'s stable id, or a custom
+ * template's `custom_<uuid>` id (`templates::io`). When set, the
+ * template's `canvas` is applied to every batch item's project, its
+ * `caption_style` is applied to generated captions (only meaningful
+ * when `captions` is also `Some`), and its `silence_settings` becomes
+ * the *default* `remove_silence` value when the caller left that field
+ * `None` (an explicit `remove_silence` always overrides it). `None` =
+ * no template applied at all.
+ * 
+ * Honest scope note: this pipeline does **not** apply
+ * `Template::zoom_intensity`/`transition_settings`/`sports_overlay` —
+ * doing so correctly for zoom would require re-deriving
+ * `media::scene`/`zoom`'s trigger detection against the *post-silence-
+ * cut* multi-fragment timeline (the same source-time -> timeline-time
+ * remapping this module already builds for captions,
+ * `batch::pipeline::remap_transcript_across_fragments`, but for
+ * keyframes instead of captions), which is real additional complexity
+ * out of scope for this pass. `transition_settings`/`sports_overlay`
+ * remain structural-only even in `templates` itself (that module's own
+ * doc comment) — there is nothing working to apply yet.
+ */
+template_id: string | null; 
+/**
+ * References `render::presets::all_presets()`. Required unless
+ * `template_id` is given, in which case the template's own
+ * `export_preset_id` is used as the fallback (same precedence rule as
+ * `remove_silence` above: an explicit value here always wins).
+ */
+export_preset_id: string | null }
 export type CanvasRatioPreset = "16:9" | "9:16" | "1:1" | "4:5" | "custom"
 export type CanvasV1 = { width: number; height: number; fps: Rational; ratio_preset: CanvasRatioPreset }
 /**

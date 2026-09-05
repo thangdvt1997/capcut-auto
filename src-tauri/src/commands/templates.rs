@@ -15,7 +15,12 @@ use crate::templates::{self, io as template_io, SaveAsTemplateInput, Template, T
 /// templates/" instruction): `$APPLOCALDATA/templates/` — the same
 /// this-app's-own-data-directory convention
 /// `commands::transcription::models_dir` uses for downloaded Whisper models.
-fn templates_dir(app: &AppHandle) -> Result<PathBuf, TemplateError> {
+///
+/// `pub(crate)`, not private: `commands::batch` reuses this exact
+/// resolution logic to resolve a batch's `template_id` (built-in or
+/// custom) against the same on-disk catalog `list_templates`/`export_template`
+/// already read from, rather than duplicating it.
+pub(crate) fn templates_dir(app: &AppHandle) -> Result<PathBuf, TemplateError> {
     app.path()
         .app_local_data_dir()
         .map(|p| p.join("templates"))

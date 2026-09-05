@@ -19,6 +19,7 @@
 
 pub mod ai;
 pub mod audio;
+pub mod batch;
 pub mod broll;
 pub mod capcut;
 pub mod captions;
@@ -141,6 +142,12 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::templates::export_template,
         commands::templates::delete_custom_template,
         commands::shorts::generate_shorts,
+        commands::batch::start_batch,
+        commands::batch::list_batch_jobs,
+        commands::batch::pause_batch_job,
+        commands::batch::resume_batch_job,
+        commands::batch::cancel_batch_job,
+        commands::batch::retry_batch_job,
         fcpxml::export::export_fcpxml,
         capcut::export::export_project_to_capcut_draft,
     ])
@@ -222,6 +229,10 @@ pub fn run() {
                 app,
                 crate::commands::transcription::TranscriptionJobs::default(),
             );
+            // Live batch jobs (Phase 11, master prompt §42/§43): one
+            // `BatchJobManager` for the whole app, tracking every in-flight
+            // batch job by id — see `batch::manager` module doc comment.
+            tauri::Manager::manage(app, crate::batch::BatchJobManager::default());
             Ok(())
         })
         .run(tauri::generate_context!())

@@ -53,7 +53,12 @@ pub fn detect_filler_words(
 /// same convention `commands::media`'s `media_cache_dir` uses for generated
 /// thumbnails/proxies, **not** the repo-root `models/.gitkeep` placeholder
 /// (that's a dev-tree placeholder only, never a runtime path).
-fn models_dir(app: &AppHandle) -> Result<PathBuf, transcription::ModelError> {
+///
+/// `pub(crate)`, not private: `commands::batch` reuses this exact
+/// resolution logic to find installed Whisper models for its own
+/// Transcribing stage, rather than duplicating it (same "reuse resolution
+/// logic" precedent as `commands::media::resolve_ffmpeg`).
+pub(crate) fn models_dir(app: &AppHandle) -> Result<PathBuf, transcription::ModelError> {
     app.path()
         .app_local_data_dir()
         .map(|p| p.join("models"))
