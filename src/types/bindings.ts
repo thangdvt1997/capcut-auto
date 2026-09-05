@@ -1115,6 +1115,85 @@ async retryBatchJob(jobId: string) : Promise<Result<null, AppErrorPayload>> {
 }
 },
 /**
+ * Runs a real update check against the configured manifest endpoint(s),
+ * then — only if a newer version was actually found — checks whether a
+ * render/batch job is in flight before ever reporting the update as safe
+ * to install. Never downloads or installs anything itself; that's
+ * `install_available_update`'s job, which re-checks busy state again right
+ * before installing (state can change between these two calls).
+ */
+async checkForUpdate(mode: UpdateCheckMode) : Promise<Result<UpdateCheckOutcome, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("check_for_update", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Installs an update the user has already been shown via `check_for_update`
+ * (`UpdateCheckOutcome::Available`). Re-validates both gates for real
+ * rather than trusting the caller's last `check_for_update` result: mode
+ * could have been switched to `Disabled` in between, and a render/batch job
+ * could have started in between — this command re-queries the update
+ * endpoint and the job registries fresh before ever calling `install()`.
+ * 
+ * On success, `tauri-plugin-updater`'s own `Update::download_and_install`
+ * verifies the downloaded artifact's signature against `pubkey` before
+ * installing anything (a placeholder pubkey today — see module doc
+ * comment). On Windows specifically, a successful `install()` exits this
+ * process itself to hand off to the platform installer (which, per this
+ * plugin's default `restart_after_install: true`, relaunches the app once
+ * done) — so the `Ok(UpdateCheckOutcome::Installing)` return below is only
+ * actually observed on platforms where `install()` returns instead of
+ * exiting the process; `tauri-plugin-process` (registered in `lib.rs`
+ * alongside this plugin) still backs an explicit `app.request_restart()`
+ * call in that case, so this command never leaves the app in an
+ * installed-but-not-relaunched state on any platform.
+ */
+async installAvailableUpdate(mode: UpdateCheckMode) : Promise<Result<UpdateCheckOutcome, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("install_available_update", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getSystemInformation() : Promise<Result<SystemInformation, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_system_information") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLogsFolderPath() : Promise<Result<string, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_logs_folder_path") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Opens the real logs folder in the OS file explorer (`explorer.exe` on
+ * Windows — see `crate::logging::open_folder`). Creates the directory
+ * first if it somehow doesn't exist yet (e.g. logging failed to
+ * initialize at startup — see `lib.rs`), so the button never opens a
+ * "path not found" dialog.
+ */
+async openLogsFolder() : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_logs_folder") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLastSessionStatus() : Promise<SessionStatus> {
+    return await TAURI_INVOKE("get_last_session_status");
+},
+/**
  * Tauri command: export `project` as a FCPXML 1.11 file at `output_path`.
  * Specta-typed, following `commands/timeline.rs`/`commands/vad.rs`'s
  * naming/error-envelope conventions.
@@ -1662,6 +1741,15 @@ export type DetectedEncoder = { backend: EncoderBackend; label: string; h264_enc
  */
 working: boolean }
 /**
+ * Free/total space at one directory this app actually cares about. `path`
+ * may not exist yet (e.g. a models dir before any model was ever
+ * downloaded) — [`disk_space_for`] still reports real space for whichever
+ * ancestor directory *does* exist, since the disk backing a not-yet-created
+ * subdirectory is exactly the disk a "will there be room for this" check
+ * needs to know about.
+ */
+export type DiskSpaceInfo = { path: string; total_bytes: number; available_bytes: number }
+/**
  * Auto-ducking parameters (master prompt §38's exact field list) for one
  * `Music`-role track, keyed by track id in `ProjectV1::track_ducking`.
  * Presence in the map (for a track whose `AudioRole` is `Music`) means
@@ -2011,11 +2099,34 @@ caption_style_id: string; zoom_intensity: ZoomIntensity; silence_settings: CutPa
  */
 export type Scene = { id: string; start_us: number; end_us: number; thumbnail_path: string | null; score: number }
 /**
+ * Where the app's Tauri-managed [`SessionStatus`] state (see `lib.rs`)
+ * reports the answer to "did the app shut down cleanly last time" from —
+ * computed once at startup, before this session's own marker overwrites
+ * the evidence.
+ */
+export type SessionStatus = { 
+/**
+ * `true` if no stale marker was found at startup (previous session, if
+ * any, shut down cleanly or this is the first-ever launch). `false`
+ * means a marker from a previous session was still present — the app
+ * did not reach [`mark_clean_exit`] last time (crash, panic, or a hard
+ * kill of the process).
+ */
+previous_exit_was_clean: boolean; 
+/**
+ * Always `None` — see this module's doc comment: no project auto-save
+ * system exists yet to recover *from*. Kept as a real (not omitted)
+ * field so a future auto-save pass can wire it up additively without
+ * an IPC-shape change on the frontend side.
+ */
+recovered_project_path: string | null }
+/**
  * Static, build-time facts about this build. No telemetry, no network
  * calls, nothing environment-dependent beyond `std::env::consts`. Exists in
  * Phase 2 to exercise the Rust -> specta -> TypeScript pipeline end-to-end
  * with a genuinely working command; the full Settings > About / "Copy
- * System Information" panel (master prompt §78) is Phase 12 scope.
+ * System Information" panel (master prompt §78) is [`get_system_information`]
+ * below, added in Phase 12.
  */
 export type ShellInfo = { app_version: string; tauri_version: string; os: string; arch: string }
 /**
@@ -2177,6 +2288,68 @@ clip_ids: string[];
  */
 offsets_us: Partial<{ [key in string]: number }> }
 /**
+ * One real system diagnostics snapshot (master prompt §78), gathered from
+ * this crate's own already-real detectors — nothing here is
+ * reimplemented: FFmpeg/FFprobe resolution+version reuse
+ * `commands::media::resolve_ffmpeg`/`resolve_ffprobe` +
+ * `ffmpeg::binaries::version_string` (Phase 3), hardware-encoder detection
+ * reuses `render::hwaccel::detect_encoders` (Phase 6), CapCut/Jianying
+ * detection reuses `capcut::detect::detect_windows_installations` (Phase
+ * 9), installed transcription models reuse
+ * `transcription::list_installed` (Phase 7). Only CPU/RAM/OS-version/disk
+ * space have no existing source elsewhere in this crate — those come from
+ * the `sysinfo` crate, added for exactly this command.
+ */
+export type SystemInformation = { app_version: string; tauri_version: string; os: string; 
+/**
+ * `sysinfo::System::long_os_version()` — on Windows this includes the
+ * build number (e.g. "Windows 11 Pro 23H2"), which is what master
+ * prompt §78's "Windows version" line actually wants; `None` if
+ * `sysinfo` couldn't determine it (never observed on this crate's own
+ * Linux dev host either — it reports a real Linux description there).
+ */
+os_version: string | null; arch: string; cpu_brand: string | null; cpu_core_count: number; total_memory_bytes: number; used_memory_bytes: number; ffmpeg_path: string; ffprobe_path: string; ffmpeg_version: string; ffprobe_version: string; 
+/**
+ * See `ffmpeg::binaries` module doc comment / `commands::media::FfmpegDiagnostics`
+ * — the same honest provenance note, not duplicated logic.
+ */
+ffmpeg_source_note: string; 
+/**
+ * GPU-adjacent signal this crate actually has: which hardware encoder
+ * backends (NVENC/Quick Sync/AMF) are both registered in this FFmpeg
+ * build *and* pass a real smoke-test encode on this machine. There is
+ * no separate "GPU model name" detector anywhere in this codebase —
+ * reusing `render::hwaccel` rather than adding one gives the same real
+ * signal the render pipeline itself already uses to choose an encoder.
+ */
+hardware_encoders: DetectedEncoder[]; active_encoder_label: string; 
+/**
+ * Every confirmed CapCut/Jianying draft-root installation found on this
+ * machine (empty `Vec` is a legitimate "not installed" answer, not an
+ * error — see `capcut::detect` module doc comment). No "CapCut
+ * version" field exists here: this crate's detector has never had one
+ * (filesystem-marker-based detection, not a version read from
+ * CapCut/Jianying's own installed files) — honestly omitted rather
+ * than fabricated.
+ */
+capcut_installations: DetectedCapCutInstallation[]; transcription_backend: string; installed_transcription_models: InstalledModel[]; models_dir: string; templates_dir: string; media_cache_dir: string; 
+/**
+ * Always `None` — there is no canonical default project-save directory
+ * anywhere in this codebase yet. `project::io::ProjectV1::save_atomic`/
+ * `load` take an arbitrary caller-chosen path with no default location
+ * convention (no Project Manager / recent-projects / "default project
+ * folder" setting has been built as of Phase 11 — see `HANDOFF.md`).
+ * Honestly omitted rather than inventing a location nothing in this
+ * app actually uses.
+ */
+project_directory: string | null; logs_dir: string; 
+/**
+ * Disk space at every directory above that currently resolves to a
+ * real path (`models_dir`/`templates_dir`/`media_cache_dir`/
+ * `logs_dir` — never `project_directory`, which is always `None`).
+ */
+disk_space: DiskSpaceInfo[] }
+/**
  * One reusable project/edit template (master prompt §36). Every field is a
  * reference to (or the exact type of) an existing, real settings type
  * elsewhere in this codebase — see the module doc comment for the mapping
@@ -2262,6 +2435,87 @@ duration_us: number }
  * records *intent* for a future `render::graph` blending pass.
  */
 export type TransitionType = "cut" | "cross_fade"
+/**
+ * The three update-check behaviors master prompt §62 requires, named
+ * exactly as it lists them ("Automatically check" / "Notify only" /
+ * "Disabled"). Persisted the same way every other non-project, app-level
+ * setting in this codebase is — `localStorage`, via a small frontend store
+ * mirroring `stores/aiSettings.svelte.ts`'s/`stores/capcut.svelte.ts`'s own
+ * precedent (no backend settings-persistence surface exists yet, same gap
+ * those stores' own doc comments already note). This backend enum exists
+ * so that value still round-trips through `check_for_update`/
+ * `install_available_update` with real specta-typed correctness (this
+ * phase's own required test) instead of as a bare untyped string, and so
+ * the backend independently refuses to check/install when `Disabled` is
+ * selected even if a future frontend bug ever got that gating wrong —
+ * defense in depth, not the only place this is enforced.
+ * 
+ * What each mode actually changes, by design (documented here since the
+ * master prompt itself only names the three options, not their exact
+ * behavior): `AutomaticallyCheck` has the frontend call `check_for_update`
+ * once on startup (in addition to the manual "Check for Updates Now"
+ * button); `NotifyOnly` never checks on its own — only the manual button
+ * checks, and only ever *notifies* via the status display, never
+ * auto-installs; `Disabled` disables the button entirely and this enum's
+ * own backend gate short-circuits before any network access. No mode ever
+ * auto-installs without an explicit further user action — master prompt
+ * §62 names three *checking* behaviors, not an auto-install behavior, and
+ * "never updating mid-render" would be meaningless to enforce if an update
+ * could silently install itself the moment a check succeeded.
+ */
+export type UpdateCheckMode = "automatically_check" | "notify_only" | "disabled"
+/**
+ * What `commands::update::check_for_update`/`install_available_update`
+ * report back — a closed, specifically-named outcome (rather than a loose
+ * `available: bool`) so the frontend can render one unambiguous status
+ * line, and so the mid-render deferral case has its own distinct,
+ * real-testable variant instead of being folded into a generic error.
+ */
+export type UpdateCheckOutcome = 
+/**
+ * `UpdateCheckMode::Disabled` is selected — no network request was
+ * made.
+ */
+{ status: "disabled" } | 
+/**
+ * A real check against the update manifest endpoint found no newer
+ * version (or, honestly, in this build: the endpoint is still an
+ * unconfigured placeholder — see `lib.rs`'s plugin-registration
+ * comment — so this variant in practice only appears once a human has
+ * filled in a real `endpoints`/`pubkey`).
+ */
+{ status: "up_to_date" } | 
+/**
+ * A newer version exists but at least one render or batch job is
+ * currently running — installing is deferred until it's safe (master
+ * prompt §62: "Never update while rendering"). Nothing was downloaded
+ * or installed.
+ */
+{ status: "deferred"; version: string; notes: string | null } | 
+/**
+ * A newer version exists and nothing is currently running — safe to
+ * install; `install_available_update` performs the real download,
+ * signature verification, and restart-to-apply.
+ */
+{ status: "available"; version: string; notes: string | null } | 
+/**
+ * The update endpoint could not be reached, or returned something the
+ * updater couldn't parse/verify — carries the real underlying error.
+ * This is the outcome every check honestly produces today, since the
+ * endpoint is still a documented placeholder with zero configured
+ * endpoints (no network request is ever actually attempted).
+ */
+{ status: "check_failed"; message: string } | 
+/**
+ * `install_available_update` only: the download + signature
+ * verification succeeded and the platform installer has been launched
+ * (Windows: the app process exits itself right after this to hand off
+ * to the installer, so a caller should not expect to observe this
+ * variant in practice — it exists for the non-Windows/mobile code
+ * paths where `tauri-plugin-updater`'s `install()` returns instead of
+ * exiting the process directly).
+ */
+{ status: "installing" }
 /**
  * Segmentation parameters — everything `segments_from_scores` needs, and
  * nothing `score_chunks` needs (see module doc comment). i64-microsecond

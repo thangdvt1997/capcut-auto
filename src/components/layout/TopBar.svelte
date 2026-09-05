@@ -52,6 +52,7 @@
   import { capcutStore } from "../../stores/capcut.svelte";
   import { aiSettingsStore } from "../../stores/aiSettings.svelte";
   import { batchStore } from "../../stores/batch.svelte";
+  import { updateSettingsStore } from "../../stores/updateSettings.svelte";
 
   let shellInfo: ShellInfo | null = $state(null);
   let shellInfoError: string | null = $state(null);
@@ -210,6 +211,19 @@
     title={t("topBar.batchJobsTooltip")}
   >
     {t("topBar.batchJobsButton")}
+  </button>
+
+  <!-- Phase 12 auto-update settings entry point (master prompt §62) — same
+       placement rationale as "Models…"/"CapCut…"/"AI Settings…"/"Batch…"
+       just above: no master prompt §46 Settings surface exists yet to host
+       this as a section, so it's a standalone dialog reachable from here
+       (see UpdateSettingsDialog.svelte's own doc comment). -->
+  <button
+    class="btn btn-ghost"
+    onclick={() => updateSettingsStore.openDialog()}
+    title={t("topBar.updateSettingsTooltip")}
+  >
+    {t("topBar.updateSettingsButton")}
   </button>
 
   {#if lastProject}

@@ -4,7 +4,15 @@ version = "0.1.0"
 description = "AI Video Editor — Windows desktop app for AI-assisted video editing"
 authors = ["AI Video Editor contributors"]
 edition = "2021"
-rust-version = "1.77"
+# Bumped from "1.77.2" (Phase 12 crash handling, master prompt §54/§86):
+# `crate::logging`'s panic hook uses `std::panic::PanicHookInfo`, stable
+# since 1.81.0 (a rename of the now-deprecated `std::panic::PanicInfo`,
+# which `cargo clippy -D warnings` would otherwise flag as deprecated on
+# this project's real 1.98.1 build toolchain). Same "a new dependency/API
+# needs a newer MSRV than the declared floor" precedent
+# `tauri-plugin-updater` already set when it bumped this from "1.77" to
+# "1.77.2" above it.
+rust-version = "1.81"
 default-run = "ai-video-editor"
 
 [lib]
@@ -64,6 +72,38 @@ whisper-rs = "0.16"
 # every other long-running job in this crate (`media::proxy`/`render::job`),
 # so a blocking client is the simpler fit.
 ureq = { version = "2.12", features = ["json"] }
+# Phase 12 auto-update architecture (master prompt §62): Tauri's own
+# official updater plugin, the idiomatic mechanism for a Tauri 2 app rather
+# than a custom-built HTTP polling system. Pinned to a real, current stable
+# release (not "2", so `cargo update` can't silently jump onto a yet-newer
+# manifest-schema revision) — required bumping `rust-version` above from
+# "1.77" to "1.77.2" since 2.11.0 itself declares that MSRV. Wired in
+# `lib.rs` alongside `tauri-plugin-process` (below), which supplies the
+# real "restart to apply" action after an update installs — see
+# `commands::update` module doc comment for the full design, including the
+# still-placeholder `endpoints`/`pubkey` in `tauri.conf.json`.
+tauri-plugin-updater = "2.11.0"
+tauri-plugin-process = "2.3.1"
+# Phase 12 crash handling/logging (master prompt §54/§55/§86): structured,
+# leveled logging to a real rolling log file under
+# `%LOCALAPPDATA%\AI Video Editor\logs\` (see `crate::logging`), plus the
+# backbone for the panic hook that captures Rust panics with a real
+# backtrace instead of a stderr console window that doesn't exist in a
+# release GUI build. `tracing` + `tracing-subscriber` (fmt + env-filter, so
+# `RUST_LOG`/a future Settings "debug logging" toggle can raise verbosity
+# per master prompt §55's "allow debug logging from settings") +
+# `tracing-appender` (daily-rolling non-blocking file writer) is the
+# idiomatic combination for a Tauri/Rust app, not a bespoke logger.
+tracing = "0.1.44"
+tracing-appender = "0.2.5"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+# System Information panel (master prompt §78): real OS version/CPU/RAM/disk
+# facts `crate::logging`/`commands::diagnostics` has no other source for
+# (GPU/FFmpeg/CapCut/models are all reused from their own Phase 6/3/9/7
+# detectors instead of duplicated here). `disk` feature only for the
+# models/templates/project-adjacent free-space checks; `network`/`component`/
+# `user` left off since nothing here needs them.
+sysinfo = { version = "0.36.1", default-features = false, features = ["system", "disk"] }
 
 [features]
 default = ["custom-protocol"]

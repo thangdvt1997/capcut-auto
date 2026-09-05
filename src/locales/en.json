@@ -28,7 +28,9 @@
     "aiSettingsButton": "AI Settings…",
     "aiSettingsTooltip": "Configure the AI provider (OpenAI/Ollama/Anthropic/Gemini/custom) used by natural-language editing and Smart Edit",
     "batchJobsButton": "Batch…",
-    "batchJobsTooltip": "Process many media files through one pipeline (remove silence, generate captions, apply a template, export) and track them as Jobs"
+    "batchJobsTooltip": "Process many media files through one pipeline (remove silence, generate captions, apply a template, export) and track them as Jobs",
+    "updateSettingsButton": "Updates…",
+    "updateSettingsTooltip": "Configure automatic update checking, and check for updates now"
   },
   "leftPanel": {
     "tabMedia": "Media",
@@ -777,5 +779,26 @@
     "saveButton": "Save Template",
     "saving": "Saving…",
     "cancelButton": "Cancel"
+  },
+  "updateSettings": {
+    "title": "Software Updates",
+    "close": "Close",
+    "explainer": "Choose how AI Video Editor checks for new versions. An update is never installed while a render or batch job is running — it's deferred until your current job finishes.",
+    "modeSectionTitle": "Update Checking",
+    "modeAutomatic": "Automatically check for updates",
+    "modeNotifyOnly": "Only check when I ask",
+    "modeDisabled": "Disabled",
+    "checkSectionTitle": "Status",
+    "checkButton": "Check for Updates Now",
+    "checking": "Checking…",
+    "installButton": "Install & Restart",
+    "installing": "Installing…",
+    "statusIdle": "Not checked yet.",
+    "statusDisabled": "Update checking is disabled.",
+    "statusUpToDate": "You're up to date.",
+    "statusAvailable": "Version {{version}} is available.",
+    "statusDeferred": "Version {{version}} is ready, but will be installed after your current render or batch job finishes.",
+    "statusCheckFailed": "Couldn't check for updates: {{message}}",
+    "statusInstalling": "Installing update — the app will restart shortly."
   }
 }

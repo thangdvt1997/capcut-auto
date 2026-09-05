@@ -19,6 +19,7 @@
   import CapCutExportDialog from "./components/capcut/CapCutExportDialog.svelte";
   import AiSettingsDialog from "./components/ai/AiSettingsDialog.svelte";
   import BatchJobsDialog from "./components/batch/BatchJobsDialog.svelte";
+  import UpdateSettingsDialog from "./components/update/UpdateSettingsDialog.svelte";
 </script>
 
 <main class="shell">
@@ -105,6 +106,11 @@
        see BatchJobsDialog.svelte's own doc comment. Renders its own nested
        `StartBatchDialog` internally, so nothing else needs mounting here. -->
   <BatchJobsDialog />
+
+  <!-- Phase 12: mounted once here for the same "one shared store-backed
+       dialog, reachable from a TopBar button" reason as the dialogs above —
+       see UpdateSettingsDialog.svelte's own doc comment. -->
+  <UpdateSettingsDialog />
 </main>
 
 <style>

@@ -30,6 +30,7 @@ pub mod fcpxml;
 pub mod ffmpeg;
 pub mod highlights;
 pub mod jobs;
+pub mod logging;
 pub mod media;
 pub mod project;
 pub mod reframe;
@@ -38,6 +39,7 @@ pub mod shorts;
 pub mod templates;
 pub mod timeline;
 pub mod transcription;
+pub mod update;
 pub mod vad;
 pub mod zoom;
 
@@ -148,6 +150,12 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::batch::resume_batch_job,
         commands::batch::cancel_batch_job,
         commands::batch::retry_batch_job,
+        commands::update::check_for_update,
+        commands::update::install_available_update,
+        commands::diagnostics::get_system_information,
+        commands::diagnostics::get_logs_folder_path,
+        commands::diagnostics::open_logs_folder,
+        commands::diagnostics::get_last_session_status,
         fcpxml::export::export_fcpxml,
         capcut::export::export_project_to_capcut_draft,
     ])
@@ -191,9 +199,65 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // Phase 12 auto-update architecture (master prompt §62). Config
+        // (`endpoints`/`pubkey`/`windows.installMode`) comes from
+        // `tauri.conf.json`'s `plugins.updater` — still a documented
+        // human-fill-in placeholder (empty `endpoints`, a placeholder
+        // `pubkey` string) until a real update-manifest host and signing
+        // keypair exist; see that file's own `_comment_*` keys and
+        // `commands::update` module doc comment for exactly what to fill in
+        // and how. Paired with `tauri_plugin_process` immediately below,
+        // which backs the restart-after-install action
+        // `commands::update::install_available_update` falls back to on
+        // platforms where the updater's own `install()` doesn't already
+        // exit the process itself (Windows does, per that crate's docs).
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(specta_builder.invoke_handler())
         .setup(move |app| {
             specta_builder.mount_events(app);
+            // Phase 12 crash handling/logging (master prompt §54/§55/§86),
+            // run first, before any other startup step below: a panic
+            // during, say, media-library init should still be captured by
+            // the panic hook, and "was the last exit clean" has to be
+            // decided before anything in *this* session could write to the
+            // marker `check_and_mark_session_start` itself manages. Real
+            // logging-init failure (unwritable app-data dir, etc.) is
+            // intentionally non-fatal — printed to stderr and skipped —
+            // since crash-logging infrastructure failing should never be
+            // *why* the whole app refuses to start. See `crate::logging`
+            // module doc comment for the full design.
+            match crate::commands::diagnostics::logs_dir(app.handle()) {
+                Ok(log_dir) => match crate::logging::init_logging(&log_dir) {
+                    Ok(guard) => {
+                        crate::logging::keep_alive_for_process_lifetime(guard);
+                        crate::logging::install_panic_hook();
+                        tracing::info!(
+                            "AI Video Editor starting up (log dir: {})",
+                            log_dir.display()
+                        );
+                    }
+                    Err(e) => eprintln!(
+                        "warning: failed to initialize file logging at {}: {e}",
+                        log_dir.display()
+                    ),
+                },
+                Err(e) => eprintln!("warning: failed to resolve logs directory: {e:?}"),
+            }
+            let previous_exit_was_clean = tauri::Manager::path(app)
+                .app_local_data_dir()
+                .ok()
+                .and_then(|dir| crate::logging::check_and_mark_session_start(&dir).ok())
+                // Best-effort: if the app-data dir can't even be resolved,
+                // assume clean rather than block startup on a recovery flag.
+                .unwrap_or(true);
+            tauri::Manager::manage(
+                app,
+                crate::logging::SessionStatus {
+                    previous_exit_was_clean,
+                    recovered_project_path: None,
+                },
+            );
             // Opens/creates the media library SQLite database (master
             // prompt §35) as managed state, used by every
             // `commands::media::*` command. A failure here is a real
@@ -235,6 +299,20 @@ pub fn run() {
             tauri::Manager::manage(app, crate::batch::BatchJobManager::default());
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running AI Video Editor");
+        .build(tauri::generate_context!())
+        .expect("error while running AI Video Editor")
+        // `.build()` + a `run` callback (rather than the simpler
+        // `.run(tauri::generate_context!())` every other phase used) is the
+        // only way to observe `RunEvent::Exit` — the one lifecycle event
+        // that corresponds to an actual graceful shutdown, as opposed to a
+        // crash/panic/force-kill. That's what lets `mark_clean_exit` (master
+        // prompt §86 unclean-exit recovery marker — see `crate::logging`
+        // module doc comment) only ever fire on a real clean exit.
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                if let Ok(dir) = tauri::Manager::path(app_handle).app_local_data_dir() {
+                    crate::logging::mark_clean_exit(&dir);
+                }
+            }
+        });
 }

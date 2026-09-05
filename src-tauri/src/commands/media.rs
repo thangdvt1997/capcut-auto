@@ -35,7 +35,11 @@ fn app_local_data_dir(app: &AppHandle) -> Result<PathBuf, MediaError> {
 /// project-file storage) and covered by its own `tauri.conf.json`
 /// `assetProtocol.scope` entry so thumbnails render without a per-file
 /// runtime scope grant.
-fn media_cache_dir(app: &AppHandle) -> Result<PathBuf, MediaError> {
+/// `pub(crate)`, not private: `commands::diagnostics::get_system_information`
+/// (Phase 12, master prompt §78) reports this same cache-directory path/disk
+/// usage in the System Information panel, rather than duplicating the
+/// `"media_cache"` join.
+pub(crate) fn media_cache_dir(app: &AppHandle) -> Result<PathBuf, MediaError> {
     Ok(app_local_data_dir(app)?.join("media_cache"))
 }
 
@@ -62,7 +66,12 @@ pub(crate) fn resolve_ffmpeg(app: &AppHandle) -> Result<PathBuf, MediaError> {
     })
 }
 
-fn resolve_ffprobe(app: &AppHandle) -> Result<PathBuf, MediaError> {
+/// `pub(crate)`, not private: `commands::diagnostics::get_system_information`
+/// reuses this exact resolution logic rather than duplicating it (the way
+/// `commands::shorts` already deliberately duplicates it — see that module's
+/// comment — this one instead widens visibility since diagnostics has no
+/// other reason to diverge).
+pub(crate) fn resolve_ffprobe(app: &AppHandle) -> Result<PathBuf, MediaError> {
     let resource_dir = app.path().resource_dir().ok();
     binaries::ffprobe_path(resource_dir.as_deref()).map_err(|e| MediaError::BinaryNotFound {
         tool: "ffprobe".into(),

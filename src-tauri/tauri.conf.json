@@ -39,6 +39,36 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "publisher": "AI Video Editor (publisher name TBD -- fill in the real publisher/company or developer name before shipping; do not ship with this placeholder)",
+    "copyright": "Copyright (c) 2026 AI Video Editor contributors",
+    "category": "Video",
+    "shortDescription": "AI-assisted video editor for Windows with CapCut/Jianying draft export.",
+    "longDescription": "AI Video Editor is a Windows desktop app for AI-assisted video editing: automatic silence/filler-word cutting, local Whisper transcription, AI-assisted edit plans, caption generation, short-form video generation, and direct CapCut/Jianying draft export, alongside local FFmpeg rendering.",
+    "windows": {
+      "allowDowngrades": false,
+      "nsis": {
+        "installMode": "perMachine",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "languages": ["English"],
+        "displayLanguageSelector": false
+      },
+      "wix": {
+        "language": "en-US",
+        "upgradeCode": "791c1b26-3b4e-4f6b-be42-37e85a335950"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "_comment_endpoints": "TODO (Phase 12, master prompt §62): this array is intentionally EMPTY — no real update-hosting endpoint exists yet, and this project deliberately does not fabricate a fake-but-plausible-looking one. Before this can ever check for a real update: host a `latest.json` manifest matching Tauri's updater manifest schema (https://v2.tauri.app/plugin/updater/#update-server-json-format) at a stable HTTPS URL, then put that real URL here as a single-element array, e.g. [\"https://updates.yourdomain.example/ai-video-editor/{{target}}/{{arch}}/{{current_version}}\"] — Tauri substitutes {{target}}/{{arch}}/{{current_version}} at check time. With this array empty, `commands::update::check_for_update` makes ZERO network requests (verified against tauri-plugin-updater 2.11.0's own source: an empty endpoints list skips its request loop and returns Err(ReleaseNotFound), surfaced honestly as UpdateCheckOutcome::CheckFailed) rather than silently succeeding or fabricating a result.",
+      "endpoints": [],
+      "_comment_pubkey": "TODO (Phase 12): placeholder — NOT a real key, cannot verify anything. A human must generate a real Ed25519 signing keypair once, on any machine that can run the Tauri CLI interactively (this WSL2 build container cannot do this non-interactively without inventing a fake key): run `pnpm dlx @tauri-apps/cli signer generate -w <path-to-save-private-key>` (e.g. `~/.tauri/ai-video-editor.key`), which prints the matching public key — paste that printed public key string in as the `pubkey` value below, and keep the generated private-key file secret (never commit it). Every release artifact referenced by the manifest above must then be signed with that same private key at release time via `pnpm dlx @tauri-apps/cli signer sign -k <private-key-path> <artifact-path>` (Tauri's bundler can also do this automatically during `tauri build` once `TAURI_SIGNING_PRIVATE_KEY`/`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` env vars are set to that key).",
+      "pubkey": "TODO: replace with your real generated public key",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

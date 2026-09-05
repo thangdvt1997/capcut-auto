@@ -28,7 +28,9 @@
     "aiSettingsButton": "Cài đặt AI…",
     "aiSettingsTooltip": "Cấu hình nhà cung cấp AI (OpenAI/Ollama/Anthropic/Gemini/tùy chỉnh) dùng cho chỉnh sửa bằng ngôn ngữ tự nhiên và Smart Edit",
     "batchJobsButton": "Hàng loạt…",
-    "batchJobsTooltip": "Xử lý nhiều tệp media qua cùng một quy trình (xóa khoảng lặng, tạo phụ đề, áp dụng mẫu, xuất) và theo dõi dưới dạng các Job"
+    "batchJobsTooltip": "Xử lý nhiều tệp media qua cùng một quy trình (xóa khoảng lặng, tạo phụ đề, áp dụng mẫu, xuất) và theo dõi dưới dạng các Job",
+    "updateSettingsButton": "Cập nhật…",
+    "updateSettingsTooltip": "Cấu hình chế độ kiểm tra cập nhật tự động, và kiểm tra cập nhật ngay bây giờ"
   },
   "leftPanel": {
     "tabMedia": "Thư viện",
@@ -777,5 +779,26 @@
     "saveButton": "Lưu mẫu",
     "saving": "Đang lưu…",
     "cancelButton": "Hủy"
+  },
+  "updateSettings": {
+    "title": "Cập nhật phần mềm",
+    "close": "Đóng",
+    "explainer": "Chọn cách AI Video Editor kiểm tra phiên bản mới. Bản cập nhật sẽ không bao giờ được cài đặt khi đang có một tác vụ dựng video hoặc xử lý hàng loạt đang chạy — việc cài đặt sẽ được hoãn lại đến khi tác vụ hiện tại hoàn tất.",
+    "modeSectionTitle": "Kiểm tra cập nhật",
+    "modeAutomatic": "Tự động kiểm tra cập nhật",
+    "modeNotifyOnly": "Chỉ kiểm tra khi tôi yêu cầu",
+    "modeDisabled": "Tắt",
+    "checkSectionTitle": "Trạng thái",
+    "checkButton": "Kiểm tra cập nhật ngay",
+    "checking": "Đang kiểm tra…",
+    "installButton": "Cài đặt & Khởi động lại",
+    "installing": "Đang cài đặt…",
+    "statusIdle": "Chưa kiểm tra.",
+    "statusDisabled": "Việc kiểm tra cập nhật đang tắt.",
+    "statusUpToDate": "Bạn đang dùng phiên bản mới nhất.",
+    "statusAvailable": "Đã có phiên bản {{version}}.",
+    "statusDeferred": "Phiên bản {{version}} đã sẵn sàng, nhưng sẽ được cài đặt sau khi tác vụ dựng video hoặc xử lý hàng loạt hiện tại hoàn tất.",
+    "statusCheckFailed": "Không thể kiểm tra cập nhật: {{message}}",
+    "statusInstalling": "Đang cài đặt bản cập nhật — ứng dụng sẽ khởi động lại trong giây lát."
   }
 }

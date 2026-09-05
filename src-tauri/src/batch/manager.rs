@@ -271,7 +271,14 @@ impl BatchJobManager {
     /// all sharing `config`. Returns the new batch id and its ordered job
     /// ids — the caller (`commands::batch::start_batch`) is responsible for
     /// actually spawning the worker thread that processes them.
-    fn create_batch(
+    ///
+    /// `pub(crate)` (not private) specifically so `commands::update`'s own
+    /// tests can construct a real, freshly-`Queued` batch to exercise the
+    /// "never update mid-render" deferral logic against real manager state,
+    /// without needing a running `AppHandle` — same "test the pure
+    /// AppHandle-free logic directly" split this function already exists
+    /// for (doc comment above).
+    pub(crate) fn create_batch(
         &self,
         media_paths: Vec<String>,
         config: BatchPipelineConfig,
@@ -341,6 +348,30 @@ impl BatchJobManager {
                     .snapshot()
             })
             .collect())
+    }
+
+    /// Whether ANY batch job tracked by this manager (across every batch,
+    /// not just one) is currently non-terminal — `Queued`/`Analyzing`/
+    /// `Transcribing`/`Editing`/`Rendering`/`Paused`. Used by
+    /// `commands::update`'s "never update mid-render" enforcement (master
+    /// prompt §62) as one half of the aggregating "is anything running"
+    /// check alongside `commands::render::RenderJobs` — see that module's
+    /// doc comment for why `Queued`/`Paused` count as busy too (installing
+    /// mid-batch, even between stages, is still exactly the kind of
+    /// mid-operation update this rule exists to prevent).
+    pub fn has_active_jobs(&self) -> bool {
+        self.jobs
+            .lock()
+            .expect("batch jobs mutex poisoned")
+            .values()
+            .any(|handle| {
+                !handle
+                    .state
+                    .lock()
+                    .expect("batch job state mutex poisoned")
+                    .status
+                    .is_terminal()
+            })
     }
 
     pub fn set_paused(&self, job_id: &str, paused: bool) -> Result<(), BatchError> {
@@ -617,6 +648,51 @@ mod tests {
         let names: Vec<&str> = jobs.iter().map(|j| j.name.as_str()).collect();
         assert!(names.contains(&"a.mp4"));
         assert!(names.contains(&"b.mp4"));
+    }
+
+    #[test]
+    fn has_active_jobs_is_true_for_a_freshly_created_queued_batch() {
+        let manager = BatchJobManager::default();
+        assert!(!manager.has_active_jobs(), "no batches created yet");
+        manager.create_batch(vec!["a.mp4".to_string()], minimal_config("p1080"));
+        assert!(
+            manager.has_active_jobs(),
+            "a freshly Queued job is not yet terminal, so it counts as active"
+        );
+    }
+
+    #[test]
+    fn has_active_jobs_is_false_once_every_job_reaches_a_terminal_state() {
+        let manager = BatchJobManager::default();
+        let (_, job_ids) = manager.create_batch(
+            vec!["a.mp4".to_string(), "b.mp4".to_string()],
+            minimal_config("p1080"),
+        );
+        for job_id in &job_ids {
+            let handle = manager.handle_for(job_id).unwrap();
+            handle.state.lock().unwrap().status = BatchJobStatus::Completed;
+        }
+        assert!(
+            !manager.has_active_jobs(),
+            "every job is terminal, so nothing should count as active"
+        );
+    }
+
+    #[test]
+    fn has_active_jobs_is_true_while_a_job_is_paused() {
+        let manager = BatchJobManager::default();
+        let (_, job_ids) = manager.create_batch(vec!["a.mp4".to_string()], minimal_config("p1080"));
+        manager
+            .handle_for(&job_ids[0])
+            .unwrap()
+            .state
+            .lock()
+            .unwrap()
+            .status = BatchJobStatus::Paused;
+        assert!(
+            manager.has_active_jobs(),
+            "Paused is not terminal — an update must still be deferred"
+        );
     }
 
     #[test]

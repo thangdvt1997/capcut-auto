@@ -263,4 +263,50 @@ mod tests {
         let version = version_string(&ffmpeg).expect("ffmpeg -version runs");
         assert!(version.to_lowercase().contains("ffmpeg"), "{version}");
     }
+
+    /// Phase 12 (Windows packaging) fixture test for the resolution logic
+    /// `scripts/fetch-ffmpeg.ps1`'s output and `tauri.windows.conf.json`'s
+    /// `bundle.externalBin` both depend on. Two of `bundled_candidates`'
+    /// three lookup locations are *not* safely test-isolatable here:
+    /// candidate #1 (next to `std::env::current_exe()`) and candidate #3
+    /// (`CARGO_MANIFEST_DIR/binaries/...`, the fetch script's actual real
+    /// output path) are both fixed, global, non-parameterized paths that
+    /// every other ffmpeg/ffprobe-touching test in this crate *also*
+    /// resolves against (many via the cached `ffmpeg_path`/`ffprobe_path`
+    /// wrappers) — `cargo test`'s default multi-threaded parallelism means
+    /// writing a fixture file to either would risk another, unrelated test
+    /// racily resolving to (and caching!) this test's fixture instead of a
+    /// real binary. Candidate #2 (the `resource_dir` parameter) is the one
+    /// caller-supplied, per-call location `bundled_candidates` offers —
+    /// exercising it here, with a unique temp directory no other test
+    /// shares, validates the exact same filename/suffix-matching logic
+    /// (bare name vs. `-<target-triple>` suffixed name, platform `.exe`
+    /// extension handling) with zero cross-test interference, and is
+    /// exactly the code path a bundled app resolves through in production
+    /// (`commands::media::resolve_ffmpeg` passes the real Tauri
+    /// `resource_dir()` here the same way).
+    #[test]
+    fn a_fixture_binary_placed_at_the_documented_resource_dir_naming_convention_is_found() {
+        let resource_dir = std::env::temp_dir().join(format!(
+            "ave-ffmpeg-binaries-fixture-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&resource_dir).expect("create fixture resource dir");
+        let fixture_path = resource_dir.join(format!("ffprobe-{TARGET_TRIPLE}{}", ext()));
+        std::fs::write(
+            &fixture_path,
+            b"not a real binary, just a resolution-logic fixture",
+        )
+        .expect("write fixture file");
+
+        let resolved =
+            binary_path(Tool::Ffprobe, Some(&resource_dir)).expect("fixture binary should resolve");
+        assert_eq!(
+            resolved, fixture_path,
+            "expected binary_path to find the fixture placed at the documented \
+             `<resource_dir>/<tool>-<target-triple><ext>` naming convention"
+        );
+
+        std::fs::remove_dir_all(&resource_dir).expect("clean up fixture dir");
+    }
 }
