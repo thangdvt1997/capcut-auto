@@ -18,6 +18,7 @@
 
   import PanelPlaceholder from "./PanelPlaceholder.svelte";
   import CaptionsPanel from "../captions/CaptionsPanel.svelte";
+  import AutoZoomPanel from "../zoom/AutoZoomPanel.svelte";
 </script>
 
 <div class="stack">
@@ -35,6 +36,8 @@
   <div class="panel-body">
     {#if active === "captions"}
       <CaptionsPanel />
+    {:else if active === "properties"}
+      <AutoZoomPanel />
     {:else}
       <PanelPlaceholder title={t(activeTab.labelKey)} phase={t(activeTab.phaseKey)} />
     {/if}

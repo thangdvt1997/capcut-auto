@@ -20,6 +20,7 @@
   import PanelPlaceholder from "./PanelPlaceholder.svelte";
   import MediaLibrary from "../media/MediaLibrary.svelte";
   import TranscriptEditor from "../transcript/TranscriptEditor.svelte";
+  import TemplatesPanel from "../templates/TemplatesPanel.svelte";
 </script>
 
 <div class="stack">
@@ -39,6 +40,8 @@
       <MediaLibrary />
     {:else if active === "transcript"}
       <TranscriptEditor />
+    {:else if active === "templates"}
+      <TemplatesPanel />
     {:else}
       <PanelPlaceholder title={t(activeTab.labelKey)} phase={t(activeTab.phaseKey)} />
     {/if}

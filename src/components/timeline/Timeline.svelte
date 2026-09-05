@@ -41,6 +41,10 @@
   import { smartEdit } from "../../stores/smartEdit.svelte";
   import HighlightDetectionDialog from "../highlights/HighlightDetectionDialog.svelte";
   import { highlightDetection } from "../../stores/highlightDetection.svelte";
+  import ShortsGeneratorDialog from "../shorts/ShortsGeneratorDialog.svelte";
+  import { shortsGenerator } from "../../stores/shortsGenerator.svelte";
+  import SceneDetector from "../scenes/SceneDetector.svelte";
+  import { sceneDetector } from "../../stores/sceneDetector.svelte";
   import { renderStore } from "../../stores/render.svelte";
   import { t } from "../../lib/i18n.svelte";
 
@@ -332,6 +336,12 @@
       <button class="btn btn-ghost" onclick={() => highlightDetection.openFor()} title={t("highlightDetection.title")}>
         {t("timelinePanel.highlightDetectionButton")}
       </button>
+      <button class="btn btn-ghost" onclick={() => sceneDetector.openFor()} title={t("sceneDetector.title")}>
+        {t("timelinePanel.sceneDetectorButton")}
+      </button>
+      <button class="btn btn-ghost" onclick={() => shortsGenerator.openFor()} title={t("shortsGenerator.title")}>
+        {t("timelinePanel.shortsGeneratorButton")}
+      </button>
       <button
         class="btn btn-ghost"
         disabled={timeline.selectedClipIds.size < 2}
@@ -434,6 +444,8 @@
   <AiCommandBox />
   <SmartEditDialog />
   <HighlightDetectionDialog />
+  <ShortsGeneratorDialog />
+  <SceneDetector />
 </div>
 
 <style>

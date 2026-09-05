@@ -33,6 +33,14 @@
   `AiSettingsDialog.svelte` / `stores/aiSettings.svelte.ts`, same
   no-Settings-surface-yet placement rationale as "Models…"/"CapCut…" above —
   see that dialog's own doc comment).
+
+  Phase 11 pass: added a "Batch…" button next to "AI Settings…" (opens
+  `BatchJobsDialog.svelte` / `stores/batch.svelte.ts`, master prompt §42/§43
+  Jobs UI). Same no-Settings-surface-yet placement rationale as the other
+  standalone dialogs above, but for a distinct reason (see that dialog's own
+  doc comment): batch processing is an app-level, dashboard-style concern,
+  not scoped to whatever project happens to be open, so it belongs here
+  rather than as a Timeline toolbar button.
 -->
 <script lang="ts">
   import { commands } from "../../types/bindings";
@@ -43,6 +51,7 @@
   import { modelManagerStore } from "../../stores/modelManager.svelte";
   import { capcutStore } from "../../stores/capcut.svelte";
   import { aiSettingsStore } from "../../stores/aiSettings.svelte";
+  import { batchStore } from "../../stores/batch.svelte";
 
   let shellInfo: ShellInfo | null = $state(null);
   let shellInfoError: string | null = $state(null);
@@ -187,6 +196,20 @@
     title={t("topBar.aiSettingsTooltip")}
   >
     {t("topBar.aiSettingsButton")}
+  </button>
+
+  <!-- Phase 11 Batch Jobs entry point (master prompt §42/§43) — same
+       placement rationale as "Models…"/"CapCut…"/"AI Settings…" just above:
+       no master prompt §46 Settings surface exists yet to host this as a
+       section, plus batch processing is itself an app-level, dashboard-style
+       concern rather than a per-project Timeline toolbar action (see
+       BatchJobsDialog.svelte's own doc comment). -->
+  <button
+    class="btn btn-ghost"
+    onclick={() => batchStore.openJobsDialog()}
+    title={t("topBar.batchJobsTooltip")}
+  >
+    {t("topBar.batchJobsButton")}
   </button>
 
   {#if lastProject}

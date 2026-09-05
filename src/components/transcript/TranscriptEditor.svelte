@@ -23,6 +23,7 @@
   import { t } from "../../lib/i18n.svelte";
   import { formatTimecode } from "../../timeline/algebra";
   import TranscriptEntryRow from "./TranscriptEntryRow.svelte";
+  import BRollPanel from "../broll/BRollPanel.svelte";
 
   $effect(() => {
     if (transcriptEditor.anchorMedia && !transcriptEditor.hasTranscript) {
@@ -180,6 +181,11 @@
           </div>
         {/if}
       {/if}
+
+      <!-- Phase 11 B-Roll panel (master prompt §34): transcript-driven, so
+           it's appended here rather than a new left-panel tab — see
+           `stores/broll.svelte.ts`'s doc comment for the full rationale. -->
+      <BRollPanel />
     {/if}
   </div>
 </div>

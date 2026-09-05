@@ -12,7 +12,7 @@
 // horizontal scroll, and session-local markers.
 
 import { commands } from "../types/bindings";
-import type { AppErrorPayload, Clip, MediaItem, ProjectV1, Result, Track, TrackKind, TranscriptEntry } from "../types/bindings";
+import type { AppErrorPayload, CanvasV1, Clip, MediaItem, ProjectV1, Result, Track, TrackKind, TranscriptEntry } from "../types/bindings";
 import {
   clampZoom,
   clipContainsUs,
@@ -394,6 +394,24 @@ class TimelineStore {
     // proxies, which `structuredClone()`/IPC choke on directly) — no need
     // to pre-snapshot here too.
     const { project: next } = projectWithMediaClip(current, media, opts);
+    await this.pushWholeProject(next);
+  }
+
+  /**
+   * Phase 11 follow-up (`stores/templates.svelte.ts`'s "Apply Template"):
+   * there is no dedicated `set_canvas` backend command — `ProjectV1::canvas`
+   * is otherwise only ever set once, at `new_project` time. Same
+   * "no backend primitive exists, so clone + `pushWholeProject`" bridge
+   * `addMediaAsClip` above already uses, kept as its own small method rather
+   * than inlined in the template store so any other future caller can reuse
+   * it too. Not an undo-able timeline command, like every other bridge in
+   * this section.
+   */
+  async setCanvas(canvas: CanvasV1): Promise<void> {
+    const current = this.project;
+    if (!current) return;
+    const next: ProjectV1 = structuredClone(snap(current));
+    next.canvas = canvas;
     await this.pushWholeProject(next);
   }
 

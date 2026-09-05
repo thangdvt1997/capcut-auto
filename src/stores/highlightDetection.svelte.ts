@@ -149,6 +149,21 @@ class HighlightDetectionStore {
     this.clipId = opts.clipId ?? clips[0]?.id ?? null;
   }
 
+  /** Phase 11 follow-up bridge: `stores/sceneDetector.svelte.ts`'s "Generate
+   * Highlights from Scenes" (master prompt §25) hands its externally
+   * computed `Highlight[]` here so they render through this exact dialog /
+   * `HighlightCard.svelte` list, with the same full Preview/Add to
+   * timeline/Create project/Export clip action set, instead of a second,
+   * poorer results UI. `used_ai_semantic_signal` is always `false` here —
+   * scene-derived highlights carry no AI semantic signal at all. */
+  showExternalHighlights(highlights: Highlight[], opts: { trackId?: string | null; clipId?: string | null } = {}): void {
+    this.resetResults();
+    this.open = true;
+    this.trackId = opts.trackId ?? this.eligibleTracks[0]?.id ?? null;
+    this.clipId = opts.clipId ?? null;
+    this.result = { highlights, used_ai_semantic_signal: false };
+  }
+
   close(): void {
     this.open = false;
     this.resetResults();
