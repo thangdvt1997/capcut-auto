@@ -17,6 +17,7 @@
   import ModelManagerDialog from "./components/transcription/ModelManagerDialog.svelte";
   import CapCutSettingsDialog from "./components/capcut/CapCutSettingsDialog.svelte";
   import CapCutExportDialog from "./components/capcut/CapCutExportDialog.svelte";
+  import AiSettingsDialog from "./components/ai/AiSettingsDialog.svelte";
 </script>
 
 <main class="shell">
@@ -88,6 +89,15 @@
        CapCut…"). See each component's own doc comment. -->
   <CapCutSettingsDialog />
   <CapCutExportDialog />
+
+  <!-- Phase 10: mounted once here for the same "one shared store-backed
+       dialog, reachable from a TopBar button" reason as the two dialogs
+       above — see AiSettingsDialog.svelte's own doc comment. The
+       NL-command-box dialog (`AiCommandBox.svelte`) is mounted inside
+       `components/timeline/Timeline.svelte` instead, matching
+       `SilenceDetector`/`FillerWordDetector`'s own precedent there (its
+       only entry point is that toolbar). -->
+  <AiSettingsDialog />
 </main>
 
 <style>

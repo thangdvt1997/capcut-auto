@@ -28,6 +28,11 @@
   `App.svelte`, alongside "Export…"/"Export to FCPXML…") and a "CapCut…"
   button next to "Models…" (opens `CapCutSettingsDialog.svelte`, same
   no-Settings-surface-yet placement rationale as "Models…" above).
+
+  Phase 10 pass: added an "AI Settings…" button next to "CapCut…" (opens
+  `AiSettingsDialog.svelte` / `stores/aiSettings.svelte.ts`, same
+  no-Settings-surface-yet placement rationale as "Models…"/"CapCut…" above —
+  see that dialog's own doc comment).
 -->
 <script lang="ts">
   import { commands } from "../../types/bindings";
@@ -37,6 +42,7 @@
   import { renderStore } from "../../stores/render.svelte";
   import { modelManagerStore } from "../../stores/modelManager.svelte";
   import { capcutStore } from "../../stores/capcut.svelte";
+  import { aiSettingsStore } from "../../stores/aiSettings.svelte";
 
   let shellInfo: ShellInfo | null = $state(null);
   let shellInfoError: string | null = $state(null);
@@ -168,6 +174,19 @@
     title={t("topBar.capcutSettingsTooltip")}
   >
     {t("topBar.capcutSettingsButton")}
+  </button>
+
+  <!-- Phase 10 AI Settings entry point (master prompt §17) — same
+       placement rationale as "Models…"/"CapCut…" just above: no master
+       prompt §46 Settings surface exists yet to host this as a section, so
+       it's a standalone dialog reachable from here (see
+       AiSettingsDialog.svelte's own doc comment). -->
+  <button
+    class="btn btn-ghost"
+    onclick={() => aiSettingsStore.openDialog()}
+    title={t("topBar.aiSettingsTooltip")}
+  >
+    {t("topBar.aiSettingsButton")}
   </button>
 
   {#if lastProject}

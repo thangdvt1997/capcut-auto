@@ -102,6 +102,77 @@ function withDefaultTracksIfEmpty(project: ProjectV1): ProjectV1 {
   };
 }
 
+/**
+ * Pure counterpart of `TimelineStore.addMediaAsClip` below, factored out
+ * (Phase 10 follow-up, `stores/highlightDetection.svelte.ts`) so a caller
+ * that is *not* mutating the live session — a synthetic single-clip project
+ * built only to hand to `start_render_job` for a highlight's "Export clip"
+ * action, or a freshly-created project being seeded for "Create new
+ * project" before it's ever loaded into the session — can build the exact
+ * same clip-append shape without going through `pushWholeProject`/IPC.
+ * `addMediaAsClip` itself now just calls this and pushes the result.
+ *
+ * `sourceInUs`/`sourceOutUs` default to the whole media (unchanged
+ * behavior); a caller passing a highlight's own `start_us`/`end_us` gets a
+ * clip trimmed to exactly that span, positioned at the end of whatever's
+ * already on the destination track (0 for a fresh project with none).
+ */
+export function projectWithMediaClip(
+  project: ProjectV1,
+  media: MediaItem,
+  opts: { trackKind?: TrackKind; sourceInUs?: number; sourceOutUs?: number } = {},
+): { project: ProjectV1; clip: Clip } {
+  // Snapshot both inputs before touching them, regardless of whether the
+  // caller already did — `structuredClone`/IPC both choke on a raw Svelte 5
+  // `$state` proxy (see `snap()`'s own doc comment), and unlike
+  // `addMediaAsClip` (which snaps its own `this.project`/`media` before
+  // delegating here), external callers building a synthetic/fresh project
+  // (`stores/highlightDetection.svelte.ts`'s "Export clip"/"Create new
+  // project", which resolve `media` from `timeline.mediaById` — a live,
+  // reactive `MediaItem`) may not. `snap()` is idempotent on an
+  // already-plain object, so this is always safe.
+  media = snap(media);
+  const kind: TrackKind = opts.trackKind ?? (media.kind === "audio" ? "audio" : "video");
+  const sourceInUs = opts.sourceInUs ?? 0;
+  const sourceOutUs = opts.sourceOutUs ?? media.duration_us;
+  const next: ProjectV1 = structuredClone(snap(project));
+
+  let track = next.tracks.find((t) => t.kind === kind && !t.locked);
+  if (!track) {
+    track = makeDefaultTrack(kind, kind === "audio" ? "A1" : kind === "caption" ? "CC" : "V1", next.tracks.length);
+    next.tracks.push(track);
+  }
+
+  const trackClips = next.clips.filter((c) => c.track_id === track!.id);
+  const position = trackClips.reduce((max, c) => Math.max(max, clipEndUs(c)), 0);
+  const clip: Clip = {
+    id: randomId(),
+    track_id: track.id,
+    media_id: media.id,
+    source_in_us: sourceInUs,
+    source_out_us: sourceOutUs,
+    position_us: position,
+    speed: 1,
+    enabled: true,
+    group_id: null,
+    clip_settings: {
+      opacity: 1,
+      flip_h: false,
+      flip_v: false,
+      rotation_deg: 0,
+      scale_x: 1,
+      scale_y: 1,
+      transform_x: 0,
+      transform_y: 0,
+    },
+  };
+  next.clips.push(clip);
+  track.clip_ids.push(clip.id);
+  if (!next.media.some((m) => m.id === media.id)) next.media.push(media);
+
+  return { project: next, clip };
+}
+
 class TimelineStore {
   project = $state<ProjectV1 | null>(null);
   loading = $state(false);
@@ -303,55 +374,27 @@ class TimelineStore {
    * is **not** an undo-able timeline command (there is no backend primitive
    * for it to wrap) — it replaces the session project directly, the same
    * as opening a project would.
+   *
+   * `sourceInUs`/`sourceOutUs` (Phase 10 follow-up): optionally trim the
+   * appended clip to a sub-range of `media` instead of its whole duration —
+   * added for `stores/highlightDetection.svelte.ts`'s "Add to timeline"
+   * action (a detected highlight's `start_us`/`end_us`), reusing this exact
+   * bridge rather than a second one. See `projectWithMediaClip` (the pure
+   * half of this method, factored out above) for the actual clip-append
+   * logic.
    */
-  async addMediaAsClip(media: MediaItem, opts: { trackKind?: TrackKind } = {}): Promise<void> {
-    if (!this.project) return;
-    const kind: TrackKind = opts.trackKind ?? (media.kind === "audio" ? "audio" : "video");
-    // `this.project` and `media` are Svelte-5-reactive ($state) proxies —
-    // structuredClone() chokes on those directly ("could not be cloned"),
-    // so take a plain-object snapshot first (Svelte's own recommended
-    // pattern for handing reactive state to a non-Svelte-aware API).
-    // `snap()` (defined below) takes a plain-object copy through an opaque
-    // generic, sidestepping Svelte's recursive `Snapshot<T>` inference,
-    // which blows up ("Type instantiation is excessively deep") on
-    // `ProjectV1`'s nested-`JsonValue` fields.
-    const project: ProjectV1 = structuredClone(snap(this.project));
-    media = snap(media);
-
-    let track = project.tracks.find((t) => t.kind === kind && !t.locked);
-    if (!track) {
-      track = makeDefaultTrack(kind, kind === "audio" ? "A1" : kind === "caption" ? "CC" : "V1", project.tracks.length);
-      project.tracks.push(track);
-    }
-
-    const trackClips = project.clips.filter((c) => c.track_id === track!.id);
-    const position = trackClips.reduce((max, c) => Math.max(max, clipEndUs(c)), 0);
-    const clip: Clip = {
-      id: randomId(),
-      track_id: track.id,
-      media_id: media.id,
-      source_in_us: 0,
-      source_out_us: media.duration_us,
-      position_us: position,
-      speed: 1,
-      enabled: true,
-      group_id: null,
-      clip_settings: {
-        opacity: 1,
-        flip_h: false,
-        flip_v: false,
-        rotation_deg: 0,
-        scale_x: 1,
-        scale_y: 1,
-        transform_x: 0,
-        transform_y: 0,
-      },
-    };
-    project.clips.push(clip);
-    track.clip_ids.push(clip.id);
-    if (!project.media.some((m) => m.id === media.id)) project.media.push(media);
-
-    await this.pushWholeProject(project);
+  async addMediaAsClip(
+    media: MediaItem,
+    opts: { trackKind?: TrackKind; sourceInUs?: number; sourceOutUs?: number } = {},
+  ): Promise<void> {
+    const current = this.project;
+    if (!current) return;
+    // `projectWithMediaClip` snaps both its `project`/`media` arguments
+    // itself now (its own doc comment: both are Svelte-5-reactive `$state`
+    // proxies, which `structuredClone()`/IPC choke on directly) — no need
+    // to pre-snapshot here too.
+    const { project: next } = projectWithMediaClip(current, media, opts);
+    await this.pushWholeProject(next);
   }
 
   // -------------------------------------------------------------------

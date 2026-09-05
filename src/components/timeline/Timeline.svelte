@@ -35,6 +35,12 @@
   import { silenceDetector } from "../../stores/silenceDetector.svelte";
   import FillerWordDetector from "../filler/FillerWordDetector.svelte";
   import { fillerWordDetector } from "../../stores/fillerWordDetector.svelte";
+  import AiCommandBox from "../ai/AiCommandBox.svelte";
+  import { aiNlCommandStore } from "../../stores/aiNlCommand.svelte";
+  import SmartEditDialog from "../smartEdit/SmartEditDialog.svelte";
+  import { smartEdit } from "../../stores/smartEdit.svelte";
+  import HighlightDetectionDialog from "../highlights/HighlightDetectionDialog.svelte";
+  import { highlightDetection } from "../../stores/highlightDetection.svelte";
   import { renderStore } from "../../stores/render.svelte";
   import { t } from "../../lib/i18n.svelte";
 
@@ -43,6 +49,13 @@
   // where the user already has clips selected/visible. See
   // `SilenceDetector.svelte`/`SyncGroupDialog.svelte`'s own doc comments for
   // the full placement rationale.
+  //
+  // Phase 10 pass: added the AI Command Box (`AiCommandBox.svelte` /
+  // `stores/aiNlCommand.svelte.ts`, master prompt §20) as a third
+  // toolbar-triggered dialog in this same group — it needs the exact same
+  // track/clip picker + apply-mode choice as Silence Detector/Filler Words,
+  // so it reuses their established "toolbar button -> dialog mounted here"
+  // shape rather than a separate always-visible command bar.
   let syncDialogOpen = $state(false);
 
   const HEADER_WIDTH_PX = 168;
@@ -310,6 +323,15 @@
       <button class="btn btn-ghost" onclick={() => fillerWordDetector.openFor()} title={t("fillerWordDetector.title")}>
         {t("timelinePanel.fillerWordDetectorButton")}
       </button>
+      <button class="btn btn-ghost" onclick={() => aiNlCommandStore.openFor()} title={t("aiCommandBox.title")}>
+        {t("timelinePanel.aiCommandBoxButton")}
+      </button>
+      <button class="btn btn-ghost" onclick={() => smartEdit.openFor()} title={t("smartEdit.title")}>
+        {t("timelinePanel.smartEditButton")}
+      </button>
+      <button class="btn btn-ghost" onclick={() => highlightDetection.openFor()} title={t("highlightDetection.title")}>
+        {t("timelinePanel.highlightDetectionButton")}
+      </button>
       <button
         class="btn btn-ghost"
         disabled={timeline.selectedClipIds.size < 2}
@@ -409,6 +431,9 @@
   <SyncGroupDialog bind:open={syncDialogOpen} />
   <SilenceDetector />
   <FillerWordDetector />
+  <AiCommandBox />
+  <SmartEditDialog />
+  <HighlightDetectionDialog />
 </div>
 
 <style>
