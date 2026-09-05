@@ -101,6 +101,13 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::render::detect_hardware_encoders,
         commands::render::start_render_job,
         commands::render::cancel_render_job,
+        commands::ai::set_ai_api_key,
+        commands::ai::delete_ai_api_key,
+        commands::ai::test_ai_connection,
+        commands::ai::validate_edit_plan,
+        commands::ai::build_cuts_from_edit_plan,
+        commands::ai::apply_edit_plan_to_clip,
+        commands::ai::apply_edit_plan_to_track,
         fcpxml::export::export_fcpxml,
         capcut::export::export_project_to_capcut_draft,
     ])

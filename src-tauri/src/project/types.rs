@@ -467,12 +467,20 @@ pub struct SyncGroup {
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Default)]
 pub struct AiState {
     /// Opaque id — actual credentials live in the Windows Credential
-    /// Manager, never in `project.json` (master prompt §17, Phase 10).
+    /// Manager, never in `project.json` (master prompt §17, Phase 10). Never
+    /// carries a secret itself; see `ai::credentials` module doc comment.
     pub provider_settings_ref: Option<String>,
-    /// Most recent `EditPlan` JSON (`docs/ai-engine.md`, Phase 10). Opaque
-    /// here for the same reason as `Effect::params`: the schema doesn't
-    /// exist yet.
-    pub last_edit_plan: Option<serde_json::Value>,
+    /// Most recent validated `EditPlan` (Phase 10, `ai::edit_plan`) — a
+    /// real, strictly-typed schema (master prompt §18), not opaque JSON:
+    /// unlike `Effect::params`, this schema exists and is closed by
+    /// construction (`EditOperation`'s `#[serde(tag = "type")]` enum), so
+    /// there is no "schema doesn't exist yet" reason left to keep this
+    /// field as `serde_json::Value`. `None` until an EditPlan has been
+    /// validated at least once for this project.
+    pub last_edit_plan: Option<crate::ai::edit_plan::EditPlan>,
+    /// Still opaque — a real `Highlight` type is the follow-up
+    /// highlight-detection pass's job, once real detection logic exists to
+    /// produce one (Phase 10 brief). Left untouched by this pass.
     pub highlights: Vec<serde_json::Value>,
 }
 

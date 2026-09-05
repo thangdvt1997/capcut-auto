@@ -593,6 +593,88 @@ async cancelRenderJob(jobId: string) : Promise<Result<null, AppErrorPayload>> {
     else return { status: "error", error: e  as any };
 }
 },
+async setAiApiKey(credentialRef: string, apiKey: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_ai_api_key", { credentialRef, apiKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteAiApiKey(credentialRef: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_ai_api_key", { credentialRef }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Calls the configured provider with a trivial request and reports
+ * success/failure — never returns a stored API key to the frontend
+ * (module doc comment). Folds every failure mode (missing key, unreachable
+ * endpoint, bad credentials, malformed response) into
+ * `AiConnectionTestResult { success: false, .. }` rather than an `Err`, so
+ * the frontend can render a plain pass/fail indicator without a thrown
+ * error.
+ */
+async testAiConnection(settings: AiProviderSettings) : Promise<AiConnectionTestResult> {
+    return await TAURI_INVOKE("test_ai_connection", { settings });
+},
+/**
+ * **Validate** (master prompt §18's "JSON Schema validation" stage): parses
+ * `raw` (whatever text an `AIProvider::complete` returned) into a strict
+ * `EditPlan`, or a specific validation error — never a partially-populated
+ * plan. The frontend's Edit Plan Preview (a later pass) is built on the
+ * `EditPlan` this returns.
+ */
+async validateEditPlan(raw: string) : Promise<Result<EditPlan, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("validate_edit_plan", { raw }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Pure conversion of an already-validated plan's `Remove` operations into
+ * unapplied `Cut`s scoped to `source_media_id` — the same
+ * "propose the cutlist, don't apply it yet" step
+ * `commands::vad::build_silence_cutlist` already exposes for VAD-derived
+ * cuts. `Zoom` operations are dropped here (`edit_plan` module doc comment
+ * — structural-only in this pass).
+ */
+async buildCutsFromEditPlan(sourceMediaId: string, plan: EditPlan) : Promise<Cut[]> {
+    return await TAURI_INVOKE("build_cuts_from_edit_plan", { sourceMediaId, plan });
+},
+/**
+ * **Apply** (master prompt §18's "User Approves → Timeline Engine" stage,
+ * scoped to one clip): converts `plan`'s `Remove` operations into `Cut`s
+ * against `source_media_id` and applies them to `clip_id` through the
+ * exact same split/trim/delete → `Command::Batch` → undo-history path
+ * `commands::timeline::apply_silence_cuts` already provides for VAD/
+ * filler-word cuts — one atomic undo step, never a second mutation path.
+ */
+async applyEditPlanToClip(clipId: string, sourceMediaId: string, plan: EditPlan) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("apply_edit_plan_to_clip", { clipId, sourceMediaId, plan }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Same as [`apply_edit_plan_to_clip`], but for every clip currently on
+ * `track_id` (delegates to `commands::timeline::apply_silence_cuts_to_track`).
+ */
+async applyEditPlanToTrack(trackId: string, sourceMediaId: string, plan: EditPlan) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("apply_edit_plan_to_track", { trackId, sourceMediaId, plan }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Tauri command: export `project` as a FCPXML 1.11 file at `output_path`.
  * Specta-typed, following `commands/timeline.rs`/`commands/vad.rs`'s
@@ -631,18 +713,57 @@ async exportProjectToCapcutDraft(project: ProjectV1, draftOutputPath: string) : 
 
 /** user-defined types **/
 
+export type AiConnectionTestResult = { success: boolean; 
+/**
+ * Human-readable outcome — the provider's own trivial reply on
+ * success, or an error message on failure. Never a raw API key, on
+ * either path.
+ */
+message: string }
+/**
+ * Which wire protocol a configured provider profile speaks. `OpenAi`,
+ * `Ollama`, and `CustomOpenAiCompatible` all construct the same
+ * `OpenAiCompatProvider` (`ai::openai_compat` module doc comment) — they
+ * are still distinct variants here because the *frontend* still needs to
+ * tell them apart for defaults/labeling/whether a key is normally required,
+ * even though the backend adapter code doesn't.
+ */
+export type AiProviderKind = "open_ai" | "ollama" | "custom_open_ai_compatible" | "anthropic" | "gemini"
+/**
+ * Master prompt §17's exact settings list (Provider/Base URL/Model/
+ * Temperature/Timeout), minus API Key — the key itself never travels
+ * through this struct; `credential_ref`, if present, names where
+ * [`credentials::CredentialStore`] should look one up.
+ */
+export type AiProviderSettings = { provider: AiProviderKind; base_url: string; model: string; temperature: number; timeout_ms: number; 
+/**
+ * `None` for a provider that needs no auth (e.g. a local Ollama
+ * instance).
+ */
+credential_ref: string | null }
 export type AiState = { 
 /**
  * Opaque id — actual credentials live in the Windows Credential
- * Manager, never in `project.json` (master prompt §17, Phase 10).
+ * Manager, never in `project.json` (master prompt §17, Phase 10). Never
+ * carries a secret itself; see `ai::credentials` module doc comment.
  */
 provider_settings_ref: string | null; 
 /**
- * Most recent `EditPlan` JSON (`docs/ai-engine.md`, Phase 10). Opaque
- * here for the same reason as `Effect::params`: the schema doesn't
- * exist yet.
+ * Most recent validated `EditPlan` (Phase 10, `ai::edit_plan`) — a
+ * real, strictly-typed schema (master prompt §18), not opaque JSON:
+ * unlike `Effect::params`, this schema exists and is closed by
+ * construction (`EditOperation`'s `#[serde(tag = "type")]` enum), so
+ * there is no "schema doesn't exist yet" reason left to keep this
+ * field as `serde_json::Value`. `None` until an EditPlan has been
+ * validated at least once for this project.
  */
-last_edit_plan: JsonValue | null; highlights: JsonValue[] }
+last_edit_plan: EditPlan | null; 
+/**
+ * Still opaque — a real `Highlight` type is the follow-up
+ * highlight-detection pass's job, once real detection logic exists to
+ * produce one (Phase 10 brief). Left untouched by this pass.
+ */
+highlights: JsonValue[] }
 export type Animation = { id: string; clip_id: string; kind: AnimationKind; name: string; duration_us: number }
 export type AnimationKind = "in" | "out" | "loop" | "group"
 export type AppErrorPayload = { code: string; message: string; details: string | null; recoverable: boolean; suggested_action: string | null }
@@ -869,6 +990,33 @@ export type DetectedEncoder = { backend: EncoderBackend; label: string; h264_enc
  * passed a real smoke-test encode on this machine.
  */
 working: boolean }
+/**
+ * A single edit action (master prompt §18's example: `{"type": "remove",
+ * "start": 12.3, "end": 15.7, "reason": "long pause"}` /
+ * `{"type": "zoom", "start": 32, "end": 36, "scale": 1.12}`). Time fields
+ * are `_us` microseconds per this crate's own timebase convention
+ * (`project::types` module doc comment), not the master prompt's own
+ * float-seconds example — every other timestamp in this schema
+ * (`Cut`/`Clip`/`Caption`/...) already made that same conversion.
+ */
+export type EditOperation = 
+/**
+ * Maps directly onto a `Cut { kind: Remove, reason: AiSuggested, .. }`
+ * — see `plan_to_remove_cuts` below. `confidence`, when present, is
+ * carried through only for the frontend's Edit Plan Preview UI (a
+ * future pass); this schema doesn't otherwise interpret it.
+ */
+{ type: "remove"; start_us: number; end_us: number; reason: string; confidence: number | null } | 
+/**
+ * Structural-only in this pass — see module doc comment "`Remove` vs.
+ * `Zoom`" above for why real timeline application is deferred.
+ */
+{ type: "zoom"; start_us: number; end_us: number; scale: number; reason: string }
+/**
+ * The structured edit plan an `AIProvider` must produce instead of ever
+ * mutating the timeline directly (master prompt §18).
+ */
+export type EditPlan = { version: number; operations: EditOperation[] }
 export type Effect = { id: string; clip_id: string; kind: string; 
 /**
  * Freeform, effect-kind-specific parameters. Kept as opaque JSON here

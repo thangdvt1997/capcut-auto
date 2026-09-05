@@ -53,14 +53,17 @@ voice_activity_detector = "0.2"
 # this environment).
 whisper-rs = "0.16"
 # Blocking HTTP client for resumable model downloads
-# (`transcription::download`, master prompt §60). Default features pull in
-# `rustls` (pure-Rust TLS, no system/vendored OpenSSL to manage for Windows
-# packaging) + gzip. Chosen over `reqwest` because this crate has no async
-# runtime dependency elsewhere for HTTP — downloads run on a background
-# thread (`tauri::async_runtime::spawn_blocking`), the same synchronous
-# shape as every other long-running job in this crate
-# (`media::proxy`/`render::job`), so a blocking client is the simpler fit.
-ureq = "2.12"
+# (`transcription::download`, master prompt §60) and, since Phase 10, every
+# `ai::*` provider adapter's JSON request/response bodies
+# (`Request::send_json`/`Response::into_json`, gated behind the `json`
+# feature below). Default features pull in `rustls` (pure-Rust TLS, no
+# system/vendored OpenSSL to manage for Windows packaging) + gzip. Chosen
+# over `reqwest` because this crate has no async runtime dependency
+# elsewhere for HTTP — downloads/provider calls run on a background thread
+# (`tauri::async_runtime::spawn_blocking`), the same synchronous shape as
+# every other long-running job in this crate (`media::proxy`/`render::job`),
+# so a blocking client is the simpler fit.
+ureq = { version = "2.12", features = ["json"] }
 
 [features]
 default = ["custom-protocol"]
@@ -84,3 +87,10 @@ cuda = ["whisper-rs/cuda"]
 # graph itself Windows-only to match.
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
+# Windows-only: `crate::ai::credentials::WindowsCredentialStore` (Phase 10,
+# master prompt §17 "Store credentials securely using Windows Credential
+# Manager"). `keyring`'s default Windows backend wraps the real Win32
+# Credential Manager API (CredWriteW/CredReadW/CredDeleteW) — same
+# cfg(windows)-only-dependency pattern as `winreg` above, and for the same
+# reason: never resolved/compiled on this crate's actual Linux dev/test host.
+keyring = "2"

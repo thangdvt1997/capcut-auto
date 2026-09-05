@@ -122,8 +122,19 @@ The unified project file is the application's own format and the single source o
   ],
   "ai": {
     "provider_settings_ref": "opaque id — actual credentials live in Windows Credential Manager, never here",
-    "last_edit_plan": null,       // most recent EditPlan JSON, see docs/ai-engine.md
-    "highlights": []
+    // Phase 10: a real, strictly-typed EditPlan (src-tauri/src/ai/edit_plan.rs), not opaque JSON.
+    // `operations[].type` is a closed enum — "remove" (real, applies via the existing Cut/timeline
+    // machinery) and "zoom" (structural-only in Phase 10; no keyframe-authoring UI exists yet to
+    // apply it for real — see that module's doc comment).
+    "last_edit_plan": null,
+    // {
+    //   "version": 1,
+    //   "operations": [
+    //     { "type": "remove", "start_us": 12300000, "end_us": 15700000, "reason": "long pause", "confidence": 0.95 },
+    //     { "type": "zoom", "start_us": 32000000, "end_us": 36000000, "scale": 1.12, "reason": "emphasis" }
+    //   ]
+    // }
+    "highlights": []              // still opaque JSON — real Highlight type is a follow-up pass's job
   },
   "export": {
     "last_render_preset": "string or null",
@@ -161,3 +172,5 @@ Standardized Rust error enum, one variant per subsystem (master prompt §56), ea
 `ProjectError` covers this file's own failure modes specifically: `SchemaVersionTooNew`, `CorruptJson`, `MigrationFailed`, `AtomicWriteFailed`, `RecoverySnapshotFound` (surfaced at startup per master prompt §86).
 
 `TranscriptionError` (Phase 7, `src-tauri/src/transcription/error.rs`) covers the Whisper transcription pipeline itself: model not installed, model load failure, unsupported input sample rate, inference failure, cancellation. `ModelError` (same file) covers the separate Model Manager concern — catalog lookups, storage-directory resolution, download failure/cancellation/verification, delete-when-not-installed.
+
+`AiProviderError` (Phase 10, `src-tauri/src/ai/error.rs`) covers talking to an LLM backend: request/transport failure, non-2xx HTTP responses, unparseable responses, a missing API key, and secure-credential-store failures. `EditPlanError` (same file) is the separate concern of validating an `EditPlan` (Phase 10, `src-tauri/src/ai/edit_plan.rs`) — malformed JSON (including an unknown/closed-enum-rejected operation `type`), an unsupported schema version, or an out-of-range operation field (negative/inverted time range, invalid `scale`, out-of-range `confidence`).
