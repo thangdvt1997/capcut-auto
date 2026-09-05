@@ -14,6 +14,7 @@
 
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
+import { defaultSavePath } from "./projectFolder.svelte";
 import { commands } from "../types/bindings";
 import type {
   AudioCodec,
@@ -328,7 +329,12 @@ class RenderStore {
     const ext = this.container === "mp_4" ? "mp4" : "webm";
     const chosen = await save({
       filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
-      defaultPath: `export.${ext}`,
+      // Starts the native picker at the First-Run Wizard's "Project Folder"
+      // default-save-browsing location (`stores/projectFolder.svelte.ts`)
+      // when one was chosen, else just the bare filename — see that store's
+      // own doc comment for why this is a lightweight preference, not a real
+      // enforced project directory.
+      defaultPath: defaultSavePath(`export.${ext}`),
     });
     if (chosen) this.outputPath = chosen;
   }
@@ -393,7 +399,7 @@ class RenderStore {
     if (!project || this.fcpxmlExporting) return;
     const chosen = await save({
       filters: [{ name: "FCPXML", extensions: ["fcpxml"] }],
-      defaultPath: "export.fcpxml",
+      defaultPath: defaultSavePath("export.fcpxml"),
     });
     if (!chosen) return;
     this.fcpxmlExporting = true;

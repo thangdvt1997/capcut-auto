@@ -20,6 +20,8 @@
   import AiSettingsDialog from "./components/ai/AiSettingsDialog.svelte";
   import BatchJobsDialog from "./components/batch/BatchJobsDialog.svelte";
   import UpdateSettingsDialog from "./components/update/UpdateSettingsDialog.svelte";
+  import SystemInfoDialog from "./components/system/SystemInfoDialog.svelte";
+  import FirstRunWizard from "./components/onboarding/FirstRunWizard.svelte";
 </script>
 
 <main class="shell">
@@ -111,6 +113,19 @@
        dialog, reachable from a TopBar button" reason as the dialogs above —
        see UpdateSettingsDialog.svelte's own doc comment. -->
   <UpdateSettingsDialog />
+
+  <!-- Phase 12: System Information panel (master prompt §78) — same "one
+       shared store-backed dialog, reachable from a TopBar button" reason as
+       the dialogs above — see SystemInfoDialog.svelte's own doc comment. -->
+  <SystemInfoDialog />
+
+  <!-- Phase 12: First-Run Wizard (master prompt §58) — mounted once here,
+       above every other dialog (highest z-index), since it can auto-open on
+       first launch independent of any button click, and its own steps open
+       several of the dialogs above (CapCutSettingsDialog/AiSettingsDialog/
+       ModelManagerDialog/SystemInfoDialog) as sub-actions. See
+       FirstRunWizard.svelte's own doc comment. -->
+  <FirstRunWizard />
 </main>
 
 <style>

@@ -41,6 +41,18 @@
   doc comment): batch processing is an app-level, dashboard-style concern,
   not scoped to whatever project happens to be open, so it belongs here
   rather than as a Timeline toolbar button.
+
+  Phase 12 pass (auto-update): added an "Updates…" button next to "Batch…"
+  (opens `UpdateSettingsDialog.svelte`, master prompt §62), same
+  no-Settings-surface-yet placement rationale as every other standalone
+  dialog above.
+
+  Phase 12 pass (First-Run Wizard / System Information): added a
+  "System Info…" button (opens `SystemInfoDialog.svelte`, master prompt
+  §78, same no-Settings-surface-yet placement rationale) and a
+  "Setup Wizard…" button (reopens `FirstRunWizard.svelte`, master prompt
+  §58, manually — that dialog also auto-opens on first launch on its own,
+  gated by its own `localStorage` "completed" flag; see its doc comment).
 -->
 <script lang="ts">
   import { commands } from "../../types/bindings";
@@ -53,6 +65,8 @@
   import { aiSettingsStore } from "../../stores/aiSettings.svelte";
   import { batchStore } from "../../stores/batch.svelte";
   import { updateSettingsStore } from "../../stores/updateSettings.svelte";
+  import { systemInfoStore } from "../../stores/systemInfo.svelte";
+  import { firstRunWizardStore } from "../../stores/firstRunWizard.svelte";
 
   let shellInfo: ShellInfo | null = $state(null);
   let shellInfoError: string | null = $state(null);
@@ -224,6 +238,27 @@
     title={t("topBar.updateSettingsTooltip")}
   >
     {t("topBar.updateSettingsButton")}
+  </button>
+
+  <!-- Phase 12 System Information entry point (master prompt §78) — same
+       placement rationale as the standalone dialogs above. -->
+  <button
+    class="btn btn-ghost"
+    onclick={() => systemInfoStore.openDialog()}
+    title={t("topBar.systemInfoTooltip")}
+  >
+    {t("topBar.systemInfoButton")}
+  </button>
+
+  <!-- Phase 12 First-Run Wizard manual re-entry point (master prompt §58) —
+       `openManually()` always reopens at step 0 regardless of the
+       "completed" flag; see FirstRunWizard.svelte's own doc comment. -->
+  <button
+    class="btn btn-ghost"
+    onclick={() => firstRunWizardStore.openManually()}
+    title={t("topBar.wizardTooltip")}
+  >
+    {t("topBar.wizardButton")}
   </button>
 
   {#if lastProject}
