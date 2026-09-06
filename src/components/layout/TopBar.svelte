@@ -53,6 +53,32 @@
   "Setup Wizard…" button (reopens `FirstRunWizard.svelte`, master prompt
   §58, manually — that dialog also auto-opens on first launch on its own,
   gated by its own `localStorage` "completed" flag; see its doc comment).
+
+  Upgrade U3 pass: added an "Assets…" button next to "Models…" (opens
+  `AssetLibraryDialog.svelte` / `stores/assets.svelte.ts`, upgrade spec §17)
+  — same no-Settings-surface-yet placement rationale as every other
+  standalone dialog above: Asset Library is an app-level catalog, not
+  scoped to whatever project happens to be open.
+
+  Upgrade U3 pass (History): added a "History…" button next to "Batch…"
+  (opens `HistoryDialog.svelte` / `stores/history.svelte.ts`, upgrade spec
+  §21) — same no-Settings-surface-yet placement rationale as the other
+  standalone dialogs above, plus the same "app-level, dashboard-style
+  concern, not scoped to whatever project happens to be open" reasoning
+  `BatchJobsDialog` already established (a finished job's history outlives
+  whatever project was open when it ran).
+
+  Upgrade U2 pass: added a "Template Generator…" button next to "AI
+  Settings…" (opens `TemplateGeneratorDialog.svelte` /
+  `stores/templateGenerator.svelte.ts`, upgrade spec §8). Same
+  no-Settings-surface-yet placement rationale as the other standalone
+  dialogs, chosen specifically over adding a button inside
+  `TemplatesPanel.svelte` itself since that panel was under concurrent edit
+  by the Asset Library/Template-versioning pass — this feature needs no
+  track/clip picker (it builds a template from a text prompt alone), so it
+  doesn't fit `Timeline.svelte`'s toolbar either, unlike its sibling AI Auto
+  Template dialog (which does need one, and lives there instead — see
+  `Timeline.svelte`'s own doc comment).
 -->
 <script lang="ts">
   import { commands } from "../../types/bindings";
@@ -64,9 +90,12 @@
   import { capcutStore } from "../../stores/capcut.svelte";
   import { aiSettingsStore } from "../../stores/aiSettings.svelte";
   import { batchStore } from "../../stores/batch.svelte";
+  import { historyStore } from "../../stores/history.svelte";
   import { updateSettingsStore } from "../../stores/updateSettings.svelte";
   import { systemInfoStore } from "../../stores/systemInfo.svelte";
   import { firstRunWizardStore } from "../../stores/firstRunWizard.svelte";
+  import { assetsStore } from "../../stores/assets.svelte";
+  import { templateGenerator } from "../../stores/templateGenerator.svelte";
 
   let shellInfo: ShellInfo | null = $state(null);
   let shellInfoError: string | null = $state(null);
@@ -187,6 +216,17 @@
     {t("topBar.modelManagerButton")}
   </button>
 
+  <!-- Upgrade U3 Asset Library entry point (upgrade spec §17) — same
+       no-Settings-surface-yet placement rationale as "Models…" just above
+       (see AssetLibraryDialog.svelte's own doc comment). -->
+  <button
+    class="btn btn-ghost"
+    onclick={() => assetsStore.openDialog()}
+    title={t("topBar.assetLibraryTooltip")}
+  >
+    {t("topBar.assetLibraryButton")}
+  </button>
+
   <!-- Phase 9 CapCut/Jianying Settings entry point (master prompt §30) —
        same placement rationale as the "Models…" button just above: no
        master prompt §46 Settings surface exists yet to host this as a
@@ -213,6 +253,19 @@
     {t("topBar.aiSettingsButton")}
   </button>
 
+  <!-- Upgrade U2 AI Template Generator entry point (upgrade spec §8) — same
+       no-Settings-surface-yet placement rationale as "AI Settings…" just
+       above (see TemplateGeneratorDialog.svelte's own doc comment for why
+       this lives here rather than inside TemplatesPanel.svelte or
+       Timeline.svelte's toolbar). -->
+  <button
+    class="btn btn-ghost"
+    onclick={() => templateGenerator.openDialog()}
+    title={t("topBar.templateGeneratorTooltip")}
+  >
+    {t("topBar.templateGeneratorButton")}
+  </button>
+
   <!-- Phase 11 Batch Jobs entry point (master prompt §42/§43) — same
        placement rationale as "Models…"/"CapCut…"/"AI Settings…" just above:
        no master prompt §46 Settings surface exists yet to host this as a
@@ -225,6 +278,17 @@
     title={t("topBar.batchJobsTooltip")}
   >
     {t("topBar.batchJobsButton")}
+  </button>
+
+  <!-- Upgrade U3 History entry point (upgrade spec §21) — same
+       placement rationale as "Batch…" just above (see HistoryDialog.svelte's
+       own doc comment). -->
+  <button
+    class="btn btn-ghost"
+    onclick={() => historyStore.openDialog()}
+    title={t("topBar.historyTooltip")}
+  >
+    {t("topBar.historyButton")}
   </button>
 
   <!-- Phase 12 auto-update settings entry point (master prompt §62) — same

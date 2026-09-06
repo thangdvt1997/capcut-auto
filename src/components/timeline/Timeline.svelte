@@ -45,6 +45,8 @@
   import { shortsGenerator } from "../../stores/shortsGenerator.svelte";
   import SceneDetector from "../scenes/SceneDetector.svelte";
   import { sceneDetector } from "../../stores/sceneDetector.svelte";
+  import AutoTemplateDialog from "../templates/AutoTemplateDialog.svelte";
+  import { autoTemplate } from "../../stores/autoTemplate.svelte";
   import { renderStore } from "../../stores/render.svelte";
   import { t } from "../../lib/i18n.svelte";
 
@@ -60,6 +62,15 @@
   // track/clip picker + apply-mode choice as Silence Detector/Filler Words,
   // so it reuses their established "toolbar button -> dialog mounted here"
   // shape rather than a separate always-visible command bar.
+  //
+  // Upgrade U2 pass: added the AI Auto Template dialog
+  // (`AutoTemplateDialog.svelte` / `stores/autoTemplate.svelte.ts`, upgrade
+  // spec §7) next to Highlight Detection — same "analyzes the currently
+  // selected clip's underlying media" source track/clip picker shape. The
+  // sibling AI Template Generator dialog (upgrade spec §8) needs no such
+  // picker (it builds a template from a text prompt alone, not from any
+  // selected media) so it lives as its own `TopBar.svelte` entry point
+  // instead — see that dialog's own doc comment.
   let syncDialogOpen = $state(false);
 
   const HEADER_WIDTH_PX = 168;
@@ -336,6 +347,9 @@
       <button class="btn btn-ghost" onclick={() => highlightDetection.openFor()} title={t("highlightDetection.title")}>
         {t("timelinePanel.highlightDetectionButton")}
       </button>
+      <button class="btn btn-ghost" onclick={() => autoTemplate.openFor()} title={t("autoTemplate.title")}>
+        {t("timelinePanel.autoTemplateButton")}
+      </button>
       <button class="btn btn-ghost" onclick={() => sceneDetector.openFor()} title={t("sceneDetector.title")}>
         {t("timelinePanel.sceneDetectorButton")}
       </button>
@@ -444,6 +458,7 @@
   <AiCommandBox />
   <SmartEditDialog />
   <HighlightDetectionDialog />
+  <AutoTemplateDialog />
   <ShortsGeneratorDialog />
   <SceneDetector />
 </div>

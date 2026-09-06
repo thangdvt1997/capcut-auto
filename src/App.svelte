@@ -22,6 +22,9 @@
   import UpdateSettingsDialog from "./components/update/UpdateSettingsDialog.svelte";
   import SystemInfoDialog from "./components/system/SystemInfoDialog.svelte";
   import FirstRunWizard from "./components/onboarding/FirstRunWizard.svelte";
+  import AssetLibraryDialog from "./components/assets/AssetLibraryDialog.svelte";
+  import HistoryDialog from "./components/history/HistoryDialog.svelte";
+  import TemplateGeneratorDialog from "./components/templates/TemplateGeneratorDialog.svelte";
 </script>
 
 <main class="shell">
@@ -126,6 +129,30 @@
        ModelManagerDialog/SystemInfoDialog) as sub-actions. See
        FirstRunWizard.svelte's own doc comment. -->
   <FirstRunWizard />
+
+  <!-- Upgrade U3: Asset Library management dialog (upgrade spec §17) — same
+       "one shared store-backed dialog, reachable from a TopBar button"
+       reason as the dialogs above — see AssetLibraryDialog.svelte's own doc
+       comment. Also the shared catalog `TemplatesPanel.svelte`'s
+       intro/outro/watermark/background-music pickers read from. -->
+  <AssetLibraryDialog />
+
+  <!-- Upgrade U3: Video Processing History dialog (upgrade spec §21) — same
+       "one shared store-backed dialog, reachable from a TopBar button"
+       reason as the dialogs above — see HistoryDialog.svelte's own doc
+       comment. Its "Clone settings"/re-run actions drive `batchStore`'s own
+       `StartBatchDialog`/Jobs dialog (already mounted via `BatchJobsDialog`
+       above), so nothing else needs mounting here. -->
+  <HistoryDialog />
+
+  <!-- Upgrade U2: AI Template Generator dialog (upgrade spec §8) — same "one
+       shared store-backed dialog, reachable from a TopBar button" reason as
+       the dialogs above — see TemplateGeneratorDialog.svelte's own doc
+       comment. Its own sibling, the AI Auto Template dialog (upgrade spec
+       §7), is mounted inside `components/timeline/Timeline.svelte` instead,
+       since it needs that toolbar's source track/clip picker context — see
+       that component's own doc comment. -->
+  <TemplateGeneratorDialog />
 </main>
 
 <style>

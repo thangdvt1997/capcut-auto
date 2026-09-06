@@ -6,15 +6,27 @@
   matching capture logic.
 -->
 <script lang="ts">
-  import { templatesStore, ALL_SMART_EDIT_CATEGORIES } from "../../stores/templates.svelte";
+  import { templatesStore, ALL_SMART_EDIT_CATEGORIES, ALL_WATERMARK_POSITIONS, templateVersion } from "../../stores/templates.svelte";
   import { captionsStore } from "../../stores/captions.svelte";
   import { renderStore } from "../../stores/render.svelte";
   import { timeline } from "../../stores/timeline.svelte";
+  import { assetsStore } from "../../stores/assets.svelte";
   import { t } from "../../lib/i18n.svelte";
-  import type { TransitionType, ZoomIntensity } from "../../types/bindings";
+  import type { Template, TransitionType, ZoomIntensity } from "../../types/bindings";
 
   const ZOOM_INTENSITIES: ZoomIntensity[] = ["off", "low", "medium", "high"];
   const TRANSITION_TYPES: TransitionType[] = ["cut", "cross_fade"];
+
+  function onHistoryKeydown(e: KeyboardEvent): void {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      templatesStore.closeHistory();
+    }
+  }
+
+  const historyTemplate = $derived<Template | null>(
+    templatesStore.allTemplates.find((t2) => t2.id === templatesStore.historyTemplateId) ?? null,
+  );
 
   function presetName(id: string): string {
     return renderStore.presets.find((p) => p.id === id)?.name ?? id;
@@ -53,6 +65,9 @@
   {#if templatesStore.lastAppliedName}
     <div class="tp-note">{t("templatesPanel.appliedNote", { name: templatesStore.lastAppliedName })}</div>
   {/if}
+  {#if templatesStore.lastUpdatedVersion !== null}
+    <div class="tp-note">{t("templatesPanel.updatedNote", { version: templatesStore.lastUpdatedVersion })}</div>
+  {/if}
   {#if templatesStore.loadError}
     <div class="tp-error">{templatesStore.loadError}</div>
   {/if}
@@ -69,6 +84,7 @@
         <div class="tp-card">
           <div class="tp-card-header">
             <span class="tp-name">{card.name}</span>
+            <span class="tp-badge tp-version-badge">{t("templatesPanel.versionBadge", { version: templateVersion(card) })}</span>
             <span class="tp-badge">{t("templatesPanel.builtInBadge")}</span>
           </div>
           <p class="tp-desc muted-2">{card.description}</p>
@@ -108,6 +124,7 @@
           <div class="tp-card">
             <div class="tp-card-header">
               <span class="tp-name">{card.name}</span>
+              <span class="tp-badge tp-version-badge">{t("templatesPanel.versionBadge", { version: templateVersion(card) })}</span>
               <span class="tp-badge tp-badge-custom">{t("templatesPanel.customBadge")}</span>
             </div>
             <p class="tp-desc muted-2">{card.description}</p>
@@ -132,6 +149,14 @@
               >
                 {templatesStore.exportingId === card.id ? t("templatesPanel.exporting") : t("templatesPanel.exportButton")}
               </button>
+              <button class="btn btn-ghost btn-sm" onclick={() => templatesStore.openEditForm(card)}>
+                {t("templatesPanel.editButton")}
+              </button>
+              {#if templateVersion(card) > 1}
+                <button class="btn btn-ghost btn-sm" onclick={() => void templatesStore.openHistory(card)}>
+                  {t("templatesPanel.historyButton")}
+                </button>
+              {/if}
               {#if templatesStore.pendingDeleteId === card.id}
                 <button class="btn btn-danger btn-sm" disabled={templatesStore.deletingId === card.id} onclick={() => void templatesStore.confirmDelete(card.id)}>
                   {t("templatesPanel.deleteConfirmButton")}
@@ -154,13 +179,15 @@
       class="tp-dialog"
       role="dialog"
       aria-modal="true"
-      aria-label={t("templatesPanel.saveFormTitle")}
+      aria-label={templatesStore.editingTemplateId ? t("templatesPanel.editFormTitle") : t("templatesPanel.saveFormTitle")}
       tabindex="-1"
       onclick={(e) => e.stopPropagation()}
       onkeydown={onKeydown}
     >
       <div class="tp-dialog-header">
-        <span class="tp-dialog-title">{t("templatesPanel.saveFormTitle")}</span>
+        <span class="tp-dialog-title">
+          {templatesStore.editingTemplateId ? t("templatesPanel.editFormTitle") : t("templatesPanel.saveFormTitle")}
+        </span>
         <button class="btn btn-ghost" onclick={() => templatesStore.closeSaveForm()}>×</button>
       </div>
       <div class="tp-dialog-body">
@@ -235,16 +262,135 @@
           <input type="checkbox" bind:checked={templatesStore.saveIncludeSportsOverlay} />
           {t("templatesPanel.includeSportsOverlayLabel")}
         </label>
+
+        <h4 class="tp-subsection-title">{t("templatesPanel.assetsSectionTitle")}</h4>
+        <p class="tp-static-value muted-2">{t("templatesPanel.assetsSectionNote")}</p>
+        {#if assetsStore.assets.length === 0 && !assetsStore.loading}
+          <p class="tp-static-value muted-2">{t("templatesPanel.noAssetsNote")}</p>
+        {/if}
+
+        <div class="tp-field-row">
+          <label class="tp-field-label" for="tp-intro">{t("templatesPanel.introLabel")}</label>
+          <select id="tp-intro" class="tp-input" bind:value={templatesStore.saveIntroAssetId}>
+            <option value={null}>{t("templatesPanel.noneOption")}</option>
+            {#each assetsStore.byKinds(["intro"]) as asset (asset.id)}
+              <option value={asset.id}>{asset.name}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="tp-field-row">
+          <label class="tp-field-label" for="tp-outro">{t("templatesPanel.outroLabel")}</label>
+          <select id="tp-outro" class="tp-input" bind:value={templatesStore.saveOutroAssetId}>
+            <option value={null}>{t("templatesPanel.noneOption")}</option>
+            {#each assetsStore.byKinds(["outro"]) as asset (asset.id)}
+              <option value={asset.id}>{asset.name}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="tp-field-row">
+          <label class="tp-field-label" for="tp-watermark">{t("templatesPanel.watermarkLabel")}</label>
+          <select id="tp-watermark" class="tp-input" bind:value={templatesStore.saveWatermarkAssetId}>
+            <option value={null}>{t("templatesPanel.noneOption")}</option>
+            {#each assetsStore.byKinds(["logo", "watermark"]) as asset (asset.id)}
+              <option value={asset.id}>{asset.name}</option>
+            {/each}
+          </select>
+          {#if templatesStore.saveWatermarkAssetId}
+            <select class="tp-input tp-input-narrow" bind:value={templatesStore.saveWatermarkPosition}>
+              {#each ALL_WATERMARK_POSITIONS as p (p)}
+                <option value={p}>{t(`templatesPanel.watermarkPosition.${p}`)}</option>
+              {/each}
+            </select>
+          {/if}
+        </div>
+        <div class="tp-field-row">
+          <label class="tp-field-label" for="tp-music">{t("templatesPanel.backgroundMusicLabel")}</label>
+          <select id="tp-music" class="tp-input" bind:value={templatesStore.saveMusicAssetId}>
+            <option value={null}>{t("templatesPanel.noneOption")}</option>
+            {#each assetsStore.byKinds(["music"]) as asset (asset.id)}
+              <option value={asset.id}>{asset.name}</option>
+            {/each}
+          </select>
+          {#if templatesStore.saveMusicAssetId}
+            <input
+              class="tp-input tp-input-narrow"
+              type="number"
+              min="0"
+              max="2"
+              step="0.05"
+              bind:value={templatesStore.saveMusicVolume}
+            />
+            <span class="muted-2">{t("templatesPanel.volumeGainSuffix")}</span>
+          {/if}
+        </div>
+
         {#if templatesStore.saveError}
           <div class="tp-error">{templatesStore.saveError}</div>
         {/if}
       </div>
       <div class="tp-dialog-footer">
         <button class="btn" disabled={templatesStore.saving} onclick={() => void templatesStore.submitSave()}>
-          {templatesStore.saving ? t("templatesPanel.saving") : t("templatesPanel.saveButton")}
+          {templatesStore.saving
+            ? t("templatesPanel.saving")
+            : templatesStore.editingTemplateId
+              ? t("templatesPanel.updateButton")
+              : t("templatesPanel.saveButton")}
         </button>
         <span class="tp-footer-spacer"></span>
         <button class="btn btn-ghost" onclick={() => templatesStore.closeSaveForm()}>{t("templatesPanel.cancelButton")}</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if templatesStore.historyTemplateId}
+  <div class="tp-backdrop" role="presentation" onclick={() => templatesStore.closeHistory()}>
+    <div
+      class="tp-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-label={t("templatesPanel.historyDialogTitle", { name: historyTemplate?.name ?? "" })}
+      tabindex="-1"
+      onclick={(e) => e.stopPropagation()}
+      onkeydown={onHistoryKeydown}
+    >
+      <div class="tp-dialog-header">
+        <span class="tp-dialog-title">
+          {t("templatesPanel.historyDialogTitle", { name: historyTemplate?.name ?? "" })}
+        </span>
+        <button class="btn btn-ghost" onclick={() => templatesStore.closeHistory()}>×</button>
+      </div>
+      <div class="tp-dialog-body">
+        {#if templatesStore.historyError}
+          <div class="tp-error">{templatesStore.historyError}</div>
+        {/if}
+        {#if templatesStore.historyLoading}
+          <p class="tp-empty muted-2">{t("templatesPanel.historyLoading")}</p>
+        {:else if templatesStore.historyEntries.length === 0}
+          <p class="tp-empty muted-2">{t("templatesPanel.historyEmpty")}</p>
+        {:else}
+          <div class="tp-history-list">
+            {#each templatesStore.historyEntries as entry (templateVersion(entry))}
+              <div class="tp-history-entry">
+                <div class="tp-history-entry-header">
+                  <span class="tp-badge tp-version-badge">{t("templatesPanel.versionBadge", { version: templateVersion(entry) })}</span>
+                  <span class="tp-name">{entry.name}</span>
+                </div>
+                <p class="tp-desc muted-2">{entry.description}</p>
+                <div class="tp-meta">
+                  <span class="tp-meta-item mono">{entry.canvas.ratio_preset}</span>
+                  <span class="tp-meta-item">{entry.caption_style.name}</span>
+                  <span class="tp-meta-item">{t(`autoZoom.intensity.${entry.zoom_intensity}`)}</span>
+                  <span class="tp-meta-item">{presetName(entry.export_preset_id)}</span>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+      <div class="tp-dialog-footer">
+        <span class="tp-footer-spacer"></span>
+        <button class="btn btn-ghost" onclick={() => templatesStore.closeHistory()}>{t("templatesPanel.cancelButton")}</button>
       </div>
     </div>
   </div>
@@ -340,6 +486,10 @@
   .tp-badge-custom {
     color: var(--accent);
     border-color: var(--accent);
+  }
+  .tp-version-badge {
+    color: var(--foreground);
+    font-family: var(--font-mono, monospace);
   }
   .tp-desc {
     margin: 0;
@@ -443,6 +593,33 @@
   }
   .tp-static-value {
     font-size: 11px;
+  }
+  .tp-subsection-title {
+    margin: 4px 0 0;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .tp-history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .tp-history-entry {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 8px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+  .tp-history-entry-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
   .tp-category-list {
     display: flex;

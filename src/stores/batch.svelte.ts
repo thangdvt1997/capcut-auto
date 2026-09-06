@@ -168,6 +168,32 @@ class BatchStore {
     }
   }
 
+  /** Adopts a batch this store did not itself start (Phase U3 History's
+   * "Re-run"/"Re-run with another template" — `stores/history.svelte.ts`
+   * calls this after `rerun_from_history`/`rerun_from_history_with_template`
+   * return a fresh `RerunResult`) into the same Jobs table/dialog every
+   * batch started from `StartBatchDialog` already lands in, rather than
+   * building a second "where did my re-run go" UI. Mirrors `startBatch`'s
+   * own seed-then-select-then-open sequence exactly, just without also
+   * calling `start_batch` itself (the caller already has a real batch id). */
+  async adoptExternalBatch(batchId: string, jobIds: string[]): Promise<void> {
+    const listResult = await commands.listBatchJobs(batchId);
+    if (listResult.status === "ok") {
+      for (const job of listResult.data) {
+        if (!this.jobsById[job.id]) this.jobsById[job.id] = job;
+      }
+      this.batchJobIds[batchId] = listResult.data.map((j) => j.id);
+    } else {
+      this.batchJobIds[batchId] = this.batchJobIds[batchId] ?? jobIds;
+    }
+    this.batches = [
+      { id: batchId, createdAtMs: Date.now(), fileCount: jobIds.length },
+      ...this.batches,
+    ];
+    this.selectedBatchId = batchId;
+    this.jobsDialogOpen = true;
+  }
+
   /** Manual refresh fallback — live updates via `batch:progress` are the
    * primary mechanism (task brief: not polling), but this gives the user a
    * deliberate way to re-sync if the dialog was closed for a long time and

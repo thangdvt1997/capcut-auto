@@ -17,16 +17,33 @@
   preset pickers are sourced directly from the real `list_templates`/
   `list_render_presets` commands (no separate Templates-browser UI exists
   yet to defer to, per this pass's own task brief).
+
+  Phase U3 pass: added a "Preview (Dry Run)" step (upgrade spec §18) —
+  calls the real `dry_run_batch_job` against the first selected file with
+  this form's own currently-configured settings, rendering the honest,
+  structured result (`DryRunResultPanel.svelte`) before the user commits to
+  "Start Batch". Chosen over a separate standalone dry-run dialog per the
+  task brief: a dry run previews exactly the config this dialog is already
+  building, so it belongs in this same flow, one step before the real
+  action. Also consumes `stores/history.svelte.ts`'s "Clone settings" hand-off
+  (`historyStore.consumeClone()`) — pre-fills this form's own local fields
+  the next time this dialog opens after a History row's "Clone settings"
+  action, exactly like `ensureCatalogsLoaded`'s existing "load once per open"
+  effect below.
 -->
 <script lang="ts">
   import { open } from "@tauri-apps/plugin-dialog";
   import { batchStore } from "../../stores/batch.svelte";
+  import { historyStore } from "../../stores/history.svelte";
+  import { aiSettingsStore, currentAiProviderSettings, keyRequirementFor } from "../../stores/aiSettings.svelte";
   import { commands } from "../../types/bindings";
   import { t } from "../../lib/i18n.svelte";
+  import DryRunResultPanel from "./DryRunResultPanel.svelte";
   import type {
     AvailableModel,
     BatchPipelineConfig,
     CaptionGroupingMode,
+    DryRunResult,
     RenderPreset,
     Template,
   } from "../../types/bindings";
@@ -89,8 +106,44 @@
     }
   }
 
+  /** Applies a cloned `BatchPipelineConfig` (§21 "Clone settings") to this
+   * form's own local fields — the µs->ms conversion mirrors `buildConfig`'s
+   * own conversion in reverse. Does NOT touch `selectedPaths`: cloning
+   * settings from a History entry is deliberately about the *settings*
+   * only, never the original input file (`clone_history_entry_settings`'s
+   * own doc comment: "returns the exact config, starts nothing itself") —
+   * the user picks their own file(s) as normal. */
+  function applyClonedConfig(config: BatchPipelineConfig): void {
+    if (config.remove_silence) {
+      removeSilenceEnabled = true;
+      paddingBeforeMs = Math.round(config.remove_silence.padding_before_us / 1000);
+      paddingAfterMs = Math.round(config.remove_silence.padding_after_us / 1000);
+      mergeGapMs = Math.round(config.remove_silence.merge_gap_us / 1000);
+    } else {
+      removeSilenceEnabled = false;
+    }
+    if (config.captions) {
+      captionsEnabled = true;
+      maxWordsPerLine = config.captions.max_words_per_line;
+      maxCharsPerLine = config.captions.max_chars_per_line;
+      grouping = config.captions.grouping;
+    } else {
+      captionsEnabled = false;
+    }
+    transcriptionModelId = config.transcription_model_id;
+    transcriptionLanguage = config.transcription_language ?? "";
+    templateId = config.template_id;
+    exportPresetId = config.export_preset_id;
+    dryRunResult = null;
+    dryRunError = null;
+  }
+
   $effect(() => {
-    if (batchStore.startDialogOpen) void ensureCatalogsLoaded();
+    if (batchStore.startDialogOpen) {
+      void ensureCatalogsLoaded();
+      const cloned = historyStore.consumeClone();
+      if (cloned) applyClonedConfig(cloned);
+    }
   });
 
   async function pickFiles(): Promise<void> {
@@ -105,10 +158,16 @@
     const merged = [...selectedPaths];
     for (const p of paths) if (!merged.includes(p)) merged.push(p);
     selectedPaths = merged;
+    // The previous preview (if any) described a possibly different first
+    // file's real predicted outcome — stale once the file selection changes.
+    dryRunResult = null;
+    dryRunError = null;
   }
 
   function removePath(path: string): void {
     selectedPaths = selectedPaths.filter((p) => p !== path);
+    dryRunResult = null;
+    dryRunError = null;
   }
 
   function basename(path: string): string {
@@ -121,6 +180,59 @@
       (templateId !== null || exportPresetId !== null) &&
       (!captionsEnabled || transcriptionModelId !== null),
   );
+
+  // -------------------------------------------------------------------
+  // Preview (Dry Run) — upgrade spec §18. Enabled under the same real
+  // config-completeness condition as `canStart` (minus `batchStore.starting`,
+  // which has no bearing on a dry run), so a user previews the exact same
+  // config Start Batch would use, on the first selected file only.
+  // -------------------------------------------------------------------
+
+  let dryRunLoading = $state(false);
+  let dryRunError = $state<string | null>(null);
+  let dryRunResult = $state<DryRunResult | null>(null);
+
+  const canDryRun = $derived(
+    selectedPaths.length > 0 &&
+      !dryRunLoading &&
+      (templateId !== null || exportPresetId !== null) &&
+      (!captionsEnabled || transcriptionModelId !== null),
+  );
+
+  /** Same "is a real AI provider actually usable right now" gate
+   * `stores/smartEdit.svelte.ts`/`stores/broll.svelte.ts` already establish
+   * — reused verbatim rather than re-deriving it a third way. Only relevant
+   * when no template is chosen (`dry_run_batch_job`'s own doc comment: AI
+   * Auto Template is attempted only when `config.template_id` is `None`). */
+  const canUseAiForDryRun = $derived(
+    templateId === null &&
+      aiSettingsStore.model.trim().length > 0 &&
+      (keyRequirementFor(aiSettingsStore.provider) !== "required" || aiSettingsStore.hasKeyConfigured),
+  );
+
+  async function runDryRun(): Promise<void> {
+    const firstPath = selectedPaths[0];
+    if (!canDryRun || !firstPath) return;
+    dryRunLoading = true;
+    dryRunError = null;
+    dryRunResult = null;
+    try {
+      const result = await commands.dryRunBatchJob(
+        firstPath,
+        buildConfig(),
+        canUseAiForDryRun ? currentAiProviderSettings() : null,
+      );
+      if (result.status === "ok") {
+        dryRunResult = result.data;
+      } else {
+        dryRunError = result.error.message;
+      }
+    } catch (err) {
+      dryRunError = String(err);
+    } finally {
+      dryRunLoading = false;
+    }
+  }
 
   function buildConfig(): BatchPipelineConfig {
     return {
@@ -317,6 +429,22 @@
               {/each}
             </select>
           </div>
+        </section>
+
+        <section class="sb-section">
+          <h3 class="sb-section-title">{t("startBatchDialog.previewSectionTitle")}</h3>
+          <p class="sb-hint muted-2">{t("startBatchDialog.previewHint")}</p>
+          <div class="sb-row">
+            <button class="btn btn-ghost" disabled={!canDryRun} onclick={() => void runDryRun()}>
+              {dryRunLoading ? t("startBatchDialog.previewing") : t("startBatchDialog.previewButton")}
+            </button>
+          </div>
+          {#if dryRunError}
+            <div class="sb-error">{t("startBatchDialog.previewFailed", { error: dryRunError })}</div>
+          {/if}
+          {#if dryRunResult}
+            <DryRunResultPanel result={dryRunResult} />
+          {/if}
         </section>
 
         {#if catalogsError}
