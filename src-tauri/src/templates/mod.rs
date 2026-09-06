@@ -663,7 +663,13 @@ pub struct SaveAsTemplateInput {
 /// directly unit-testable against a synthetic `HashSet`, same separation of
 /// concerns `save_as_template_from_project` already keeps between "pure
 /// validation" and "the command layer's own I/O".
-fn validate_asset_references(
+///
+/// `pub(crate)`, not private: `ai::template_generator::parse_and_validate`
+/// (upgrade spec §8's AI Template Generator) reuses this exact function to
+/// validate an AI-proposed template's asset references against the real
+/// Asset Library, rather than re-implementing the same id-membership check a
+/// second time.
+pub(crate) fn validate_asset_references(
     intro: Option<&AssetReference>,
     outro: Option<&AssetReference>,
     watermark: Option<&WatermarkReference>,

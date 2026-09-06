@@ -235,6 +235,152 @@ impl From<&MediaTagError> for AppErrorPayload {
     }
 }
 
+/// `ai::auto_template`'s validation-stage error — same two-stage split as
+/// `EditPlanError`/`SmartEditError`/`MediaTagError` above: a provider call
+/// can succeed and still return text that fails `AutoTemplateError`
+/// validation. `UnknownTemplateId` is this module's own extra case (see
+/// `ai::auto_template` module doc comment, "Why `parse_and_validate` needs a
+/// real catalog, not just a schema") — a `template_id` the caller's real
+/// catalog (built-ins + custom templates) doesn't actually contain.
+#[derive(Debug, Clone, Serialize, Type, Error)]
+#[serde(tag = "variant")]
+pub enum AutoTemplateError {
+    #[error("could not parse AI output as JSON: {details}")]
+    MalformedJson { details: String },
+
+    #[error("unsupported Auto Template schema version: {version}")]
+    UnsupportedVersion { version: u32 },
+
+    #[error("confidence must be within 0.0..=1.0, got {confidence}")]
+    InvalidConfidence { confidence: f32 },
+
+    #[error("unknown template id: {template_id}")]
+    UnknownTemplateId { template_id: String },
+}
+
+impl From<&AutoTemplateError> for AppErrorPayload {
+    fn from(err: &AutoTemplateError) -> Self {
+        let message = err.to_string();
+        match err {
+            AutoTemplateError::MalformedJson { details } => {
+                AppErrorPayload::new("AUTO_TEMPLATE_MALFORMED_JSON", message)
+                    .with_details(details.clone())
+                    .recoverable(true)
+                    .with_suggestion(
+                        "The AI response was not valid Auto Template JSON; ask it to try again.",
+                    )
+            }
+            AutoTemplateError::UnsupportedVersion { version } => {
+                AppErrorPayload::new("AUTO_TEMPLATE_UNSUPPORTED_VERSION", message)
+                    .with_details(version.to_string())
+                    .recoverable(false)
+                    .with_suggestion("This app only understands Auto Template schema version 1.")
+            }
+            AutoTemplateError::InvalidConfidence { confidence } => {
+                AppErrorPayload::new("AUTO_TEMPLATE_INVALID_CONFIDENCE", message)
+                    .with_details(confidence.to_string())
+                    .recoverable(true)
+                    .with_suggestion(
+                        "Reject this recommendation and ask the AI to produce a corrected one.",
+                    )
+            }
+            AutoTemplateError::UnknownTemplateId { template_id } => {
+                AppErrorPayload::new("AUTO_TEMPLATE_UNKNOWN_TEMPLATE_ID", message)
+                    .with_details(template_id.clone())
+                    .recoverable(true)
+                    .with_suggestion(
+                        "The AI recommended a template id that doesn't exist in this install's catalog; ask it to try again.",
+                    )
+            }
+        }
+    }
+}
+
+/// `ai::template_generator`'s validation-stage error (upgrade spec §8's AI
+/// Template Generator) — same two-stage split as `EditPlanError`/
+/// `SmartEditError`/`MediaTagError` above: a provider call can succeed and
+/// still return text that fails `TemplateGeneratorError` validation.
+/// `UnknownCaptionStyle`/`UnknownExportPreset`/`UnknownAsset` deliberately
+/// mirror `templates::TemplateError`'s own variants of the same name (same
+/// underlying catalog checks, reused via `templates::validate_asset_references`
+/// and direct catalog lookups — see `ai::template_generator::parse_and_validate`)
+/// rather than nesting `TemplateError` itself here, which would collide with
+/// this enum's own `#[serde(tag = "variant")]` internal tagging.
+#[derive(Debug, Clone, Serialize, Type, Error)]
+#[serde(tag = "variant")]
+pub enum TemplateGeneratorError {
+    #[error("could not parse AI output as JSON: {details}")]
+    MalformedJson { details: String },
+
+    #[error("unsupported GeneratedTemplateSpec schema version: {version}")]
+    UnsupportedVersion { version: u32 },
+
+    #[error("field {field} is invalid: {details}")]
+    InvalidField { field: String, details: String },
+
+    #[error("unknown caption style id: {style_id}")]
+    UnknownCaptionStyle { style_id: String },
+
+    #[error("unknown export preset id: {preset_id}")]
+    UnknownExportPreset { preset_id: String },
+
+    #[error("unknown asset id: {asset_id}")]
+    UnknownAsset { asset_id: String },
+}
+
+impl From<&TemplateGeneratorError> for AppErrorPayload {
+    fn from(err: &TemplateGeneratorError) -> Self {
+        let message = err.to_string();
+        match err {
+            TemplateGeneratorError::MalformedJson { details } => AppErrorPayload::new(
+                "TEMPLATE_GENERATOR_MALFORMED_JSON",
+                message,
+            )
+            .with_details(details.clone())
+            .recoverable(true)
+            .with_suggestion(
+                "The AI response was not valid GeneratedTemplateSpec JSON; ask it to try again.",
+            ),
+            TemplateGeneratorError::UnsupportedVersion { version } => {
+                AppErrorPayload::new("TEMPLATE_GENERATOR_UNSUPPORTED_VERSION", message)
+                    .with_details(version.to_string())
+                    .recoverable(false)
+                    .with_suggestion("This app only understands GeneratedTemplateSpec version 1.")
+            }
+            TemplateGeneratorError::InvalidField { field, details } => {
+                AppErrorPayload::new("TEMPLATE_GENERATOR_INVALID_FIELD", message)
+                    .with_details(format!("{field}: {details}"))
+                    .recoverable(true)
+                    .with_suggestion(
+                        "Reject this generated template and ask the AI to produce a corrected one.",
+                    )
+            }
+            TemplateGeneratorError::UnknownCaptionStyle { style_id } => {
+                AppErrorPayload::new("TEMPLATE_GENERATOR_UNKNOWN_CAPTION_STYLE", message)
+                    .with_details(style_id.clone())
+                    .recoverable(true)
+                    .with_suggestion(
+                        "Choose a caption style id that exists in the built-in catalog.",
+                    )
+            }
+            TemplateGeneratorError::UnknownExportPreset { preset_id } => {
+                AppErrorPayload::new("TEMPLATE_GENERATOR_UNKNOWN_EXPORT_PRESET", message)
+                    .with_details(preset_id.clone())
+                    .recoverable(true)
+                    .with_suggestion("Choose one of render::presets::all_presets()'s ids.")
+            }
+            TemplateGeneratorError::UnknownAsset { asset_id } => {
+                AppErrorPayload::new("TEMPLATE_GENERATOR_UNKNOWN_ASSET", message)
+                    .with_details(asset_id.clone())
+                    .recoverable(true)
+                    .with_suggestion(
+                        "Add this asset to the Asset Library first, or ask the AI to omit it.",
+                    )
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,6 +511,83 @@ mod tests {
                     details: "d".into(),
                 },
                 "MEDIA_TAG_INVALID_TAG",
+            ),
+        ];
+        for (err, code) in cases {
+            let payload = AppErrorPayload::from(&err);
+            assert_eq!(payload.code, code);
+            assert!(!payload.message.is_empty());
+        }
+    }
+
+    #[test]
+    fn every_auto_template_error_variant_maps_to_a_stable_code() {
+        let cases: Vec<(AutoTemplateError, &str)> = vec![
+            (
+                AutoTemplateError::MalformedJson {
+                    details: "d".into(),
+                },
+                "AUTO_TEMPLATE_MALFORMED_JSON",
+            ),
+            (
+                AutoTemplateError::UnsupportedVersion { version: 2 },
+                "AUTO_TEMPLATE_UNSUPPORTED_VERSION",
+            ),
+            (
+                AutoTemplateError::InvalidConfidence { confidence: 1.5 },
+                "AUTO_TEMPLATE_INVALID_CONFIDENCE",
+            ),
+            (
+                AutoTemplateError::UnknownTemplateId {
+                    template_id: "x".into(),
+                },
+                "AUTO_TEMPLATE_UNKNOWN_TEMPLATE_ID",
+            ),
+        ];
+        for (err, code) in cases {
+            let payload = AppErrorPayload::from(&err);
+            assert_eq!(payload.code, code);
+            assert!(!payload.message.is_empty());
+        }
+    }
+
+    #[test]
+    fn every_template_generator_error_variant_maps_to_a_stable_code() {
+        let cases: Vec<(TemplateGeneratorError, &str)> = vec![
+            (
+                TemplateGeneratorError::MalformedJson {
+                    details: "d".into(),
+                },
+                "TEMPLATE_GENERATOR_MALFORMED_JSON",
+            ),
+            (
+                TemplateGeneratorError::UnsupportedVersion { version: 2 },
+                "TEMPLATE_GENERATOR_UNSUPPORTED_VERSION",
+            ),
+            (
+                TemplateGeneratorError::InvalidField {
+                    field: "f".into(),
+                    details: "d".into(),
+                },
+                "TEMPLATE_GENERATOR_INVALID_FIELD",
+            ),
+            (
+                TemplateGeneratorError::UnknownCaptionStyle {
+                    style_id: "x".into(),
+                },
+                "TEMPLATE_GENERATOR_UNKNOWN_CAPTION_STYLE",
+            ),
+            (
+                TemplateGeneratorError::UnknownExportPreset {
+                    preset_id: "x".into(),
+                },
+                "TEMPLATE_GENERATOR_UNKNOWN_EXPORT_PRESET",
+            ),
+            (
+                TemplateGeneratorError::UnknownAsset {
+                    asset_id: "x".into(),
+                },
+                "TEMPLATE_GENERATOR_UNKNOWN_ASSET",
             ),
         ];
         for (err, code) in cases {

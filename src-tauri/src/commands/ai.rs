@@ -26,15 +26,22 @@
 //! machinery VAD and filler-word cuts already use) — never a second,
 //! parallel mutation path.
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::ai::error::AiProviderError;
 use crate::ai::provider::{AIProvider, AiRequest};
-use crate::ai::{anthropic, credentials, edit_plan, gemini, openai_compat, smart_edit};
+use crate::ai::{
+    anthropic, credentials, edit_plan, gemini, openai_compat, smart_edit, template_generator,
+};
+use crate::assets::io as asset_io;
+use crate::captions::styles;
 use crate::error::AppErrorPayload;
 use crate::project::{Cut, ProjectV1, TranscriptEntry};
+use crate::templates::Template;
 use crate::timeline::session::TimelineState;
 
 /// Which wire protocol a configured provider profile speaks. `OpenAi`,
@@ -385,6 +392,83 @@ pub fn apply_smart_edit_recommendations_to_track(
     crate::commands::timeline::apply_silence_cuts_to_track(state, track_id, cuts)
 }
 
+// ---------------------------------------------------------------------------
+// AI Template Generator (upgrade spec §8)
+// ---------------------------------------------------------------------------
+
+/// The real pipeline, parameterized over plain, already-loaded catalog data
+/// rather than an `AppHandle` — the same "the Tauri command is a one-line
+/// resolve + delegate to a plain function" split `commands::auto_template::
+/// run_suggestion` already establishes, so this pass's tests can exercise
+/// the full real pipeline (a real HTTP round trip against a mock AI server)
+/// without needing a Tauri `AppHandle` at all. `known_asset_ids` is derived
+/// from `assets` internally (never a second, separately-fetched snapshot).
+pub(crate) fn run_generation(
+    nl_prompt: &str,
+    ai_settings: AiProviderSettings,
+    caption_styles: &[crate::project::CaptionStyle],
+    export_presets: &[crate::render::RenderPreset],
+    assets: &[crate::assets::Asset],
+) -> Result<Template, AppErrorPayload> {
+    let api_key = resolve_api_key(&ai_settings).map_err(|e| AppErrorPayload::from(&e))?;
+    let provider = build_provider(&ai_settings, api_key).map_err(|e| AppErrorPayload::from(&e))?;
+
+    let prompt = template_generator::build_generate_template_prompt(
+        nl_prompt,
+        caption_styles,
+        export_presets,
+        assets,
+    );
+    let request = prompt.into_request(ai_settings.temperature, ai_settings.timeout_ms, Some(2048));
+    let response = provider
+        .complete(&request)
+        .map_err(|e| AppErrorPayload::from(&e))?;
+
+    let known_asset_ids: HashSet<String> = assets.iter().map(|a| a.id.clone()).collect();
+    template_generator::parse_and_validate(&response.text, &known_asset_ids)
+        .map_err(|e| AppErrorPayload::from(&e))
+}
+
+/// **Generate -> Validate** (upgrade spec §8's pipeline, up through
+/// validation — Preview/Save are separate, later, human-gated steps: see
+/// `ai::template_generator` module doc comment for exactly why the existing
+/// `commands::templates::save_as_template` command is not a clean fit for
+/// the final Save step, and what the honest gap is instead): resolves the
+/// real, current catalogs of caption styles
+/// (`captions::styles::all_caption_templates`), export presets
+/// (`render::all_presets`), and registered assets (`assets::io::list_assets`)
+/// — so the model can reference real ids rather than guessing at ones that
+/// don't exist — then delegates to [`run_generation`], which builds the
+/// grounding prompt, calls the configured provider, and validates the
+/// response through `ai::template_generator::parse_and_validate` (which
+/// resolves every referenced id against those exact same catalogs before
+/// ever producing a `Template`). Never a partially-populated result: any
+/// malformed/invalid response is a clear `AppErrorPayload`, not a
+/// best-effort guess. Returns a real, ready-to-preview `Template`
+/// (`is_built_in: false`, a fresh `custom_<uuid>` id, `version: 1`) — this
+/// command does NOT save it to disk itself.
+#[tauri::command]
+#[specta::specta]
+pub fn generate_template_from_prompt(
+    app: AppHandle,
+    nl_prompt: String,
+    ai_settings: AiProviderSettings,
+) -> Result<Template, AppErrorPayload> {
+    let caption_styles = styles::all_caption_templates();
+    let export_presets = crate::render::all_presets();
+    let assets_dir =
+        crate::commands::assets::assets_dir(&app).map_err(|e| AppErrorPayload::from(&e))?;
+    let assets = asset_io::list_assets(&assets_dir, None).map_err(|e| AppErrorPayload::from(&e))?;
+
+    run_generation(
+        &nl_prompt,
+        ai_settings,
+        &caption_styles,
+        &export_presets,
+        &assets,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -628,6 +712,125 @@ mod tests {
             "Remove filler words.".to_string(),
             vec![],
             10_000_000,
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "AI_PROVIDER_REQUEST_FAILED");
+    }
+
+    // -- AI Template Generator (upgrade spec §8) -----------------------------
+
+    fn generated_template_spec_json() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "name": "Football TikTok",
+            "description": "Fast-paced 9:16 football highlight template for TikTok.",
+            "canvas_aspect": "9:16",
+            "caption_style_id": "template_tiktok",
+            "zoom_intensity": "high",
+            "silence_settings": {
+                "padding_before_us": 50_000,
+                "padding_after_us": 50_000,
+                "merge_gap_us": 100_000
+            },
+            "transition_settings": {
+                "transition_type": "cross_fade",
+                "duration_us": 100_000
+            },
+            "export_preset_id": "tiktok_1080x1920",
+            "emphasized_categories": ["boring_section"],
+            "system_prompt_prefix": null,
+            "sports_overlay": null,
+            "intro": null,
+            "outro": null,
+            "watermark": null,
+            "background_music": null
+        })
+    }
+
+    #[test]
+    fn run_generation_round_trips_a_well_formed_mock_response_via_real_http() {
+        let (base_url, rx) = spawn_one_shot(
+            "HTTP/1.1 200 OK",
+            chat_completion_body(&generated_template_spec_json().to_string()),
+        );
+
+        let caption_styles = styles::all_caption_templates();
+        let export_presets = crate::render::all_presets();
+        let template = run_generation(
+            "Video bóng đá TikTok 30-45s, 9:16, subtitle lớn, highlight tên cầu thủ.",
+            settings(AiProviderKind::OpenAi, base_url),
+            &caption_styles,
+            &export_presets,
+            &[],
+        )
+        .expect("well-formed response should parse and validate");
+
+        assert!(!template.is_built_in);
+        assert!(template.id.starts_with("custom_"));
+        assert_eq!(template.name, "Football TikTok");
+        assert_eq!(template.caption_style.id, "template_tiktok");
+        assert_eq!(template.export_preset_id, "tiktok_1080x1920");
+        assert_eq!(template.version, 1);
+
+        // The mock server actually received a real HTTP request carrying the
+        // constructed prompt (real catalog ids + the verbatim NL request) —
+        // not a stubbed call.
+        let captured = rx.recv().expect("mock server captured a request");
+        assert_eq!(captured.method, "POST");
+        assert!(captured.body.contains("bóng đá"));
+        assert!(captured.body.contains("template_tiktok"));
+        assert!(captured.body.contains("tiktok_1080x1920"));
+    }
+
+    #[test]
+    fn run_generation_surfaces_a_clear_error_for_a_malformed_mock_response() {
+        let (base_url, _rx) =
+            spawn_one_shot("HTTP/1.1 200 OK", chat_completion_body("not json at all"));
+
+        let caption_styles = styles::all_caption_templates();
+        let export_presets = crate::render::all_presets();
+        let err = run_generation(
+            "A template.",
+            settings(AiProviderKind::OpenAi, base_url),
+            &caption_styles,
+            &export_presets,
+            &[],
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "TEMPLATE_GENERATOR_MALFORMED_JSON");
+    }
+
+    #[test]
+    fn run_generation_surfaces_a_clear_error_for_an_unknown_caption_style_id() {
+        let mut spec = generated_template_spec_json();
+        spec["caption_style_id"] = serde_json::json!("does_not_exist");
+        let (base_url, _rx) =
+            spawn_one_shot("HTTP/1.1 200 OK", chat_completion_body(&spec.to_string()));
+
+        let caption_styles = styles::all_caption_templates();
+        let export_presets = crate::render::all_presets();
+        let err = run_generation(
+            "A template.",
+            settings(AiProviderKind::OpenAi, base_url),
+            &caption_styles,
+            &export_presets,
+            &[],
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "TEMPLATE_GENERATOR_UNKNOWN_CAPTION_STYLE");
+    }
+
+    #[test]
+    fn run_generation_surfaces_a_clear_error_when_unreachable() {
+        let dead_url = crate::ai::test_http::spawn_connection_refused();
+        let caption_styles = styles::all_caption_templates();
+        let export_presets = crate::render::all_presets();
+        let err = run_generation(
+            "A template.",
+            settings(AiProviderKind::OpenAi, dead_url),
+            &caption_styles,
+            &export_presets,
+            &[],
         )
         .unwrap_err();
         assert_eq!(err.code, "AI_PROVIDER_REQUEST_FAILED");

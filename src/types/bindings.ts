@@ -798,6 +798,34 @@ async applySmartEditRecommendationsToTrack(trackId: string, sourceMediaId: strin
 }
 },
 /**
+ * **Generate -> Validate** (upgrade spec §8's pipeline, up through
+ * validation — Preview/Save are separate, later, human-gated steps: see
+ * `ai::template_generator` module doc comment for exactly why the existing
+ * `commands::templates::save_as_template` command is not a clean fit for
+ * the final Save step, and what the honest gap is instead): resolves the
+ * real, current catalogs of caption styles
+ * (`captions::styles::all_caption_templates`), export presets
+ * (`render::all_presets`), and registered assets (`assets::io::list_assets`)
+ * — so the model can reference real ids rather than guessing at ones that
+ * don't exist — then delegates to [`run_generation`], which builds the
+ * grounding prompt, calls the configured provider, and validates the
+ * response through `ai::template_generator::parse_and_validate` (which
+ * resolves every referenced id against those exact same catalogs before
+ * ever producing a `Template`). Never a partially-populated result: any
+ * malformed/invalid response is a clear `AppErrorPayload`, not a
+ * best-effort guess. Returns a real, ready-to-preview `Template`
+ * (`is_built_in: false`, a fresh `custom_<uuid>` id, `version: 1`) — this
+ * command does NOT save it to disk itself.
+ */
+async generateTemplateFromPrompt(nlPrompt: string, aiSettings: AiProviderSettings) : Promise<Result<Template, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("generate_template_from_prompt", { nlPrompt, aiSettings }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Real, non-AI scene-change detection on its own (`media::scene`,
  * master prompt §21's "scene changes" signal) — exposed as its own command
  * so a caller can use it independently of the full highlight pipeline
@@ -822,6 +850,20 @@ async detectMediaSceneChanges(mediaPath: string, threshold: number | null) : Pro
 async detectHighlights(mediaPath: string, transcript: TranscriptEntry[], totalDurationUs: number, aiSettings: AiProviderSettings | null, maxHighlights: number | null) : Promise<Result<HighlightDetectionResult, AppErrorPayload>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("detect_highlights", { mediaPath, transcript, totalDurationUs, aiSettings, maxHighlights }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * AI Auto Template (upgrade spec §7): user selects one video, this command
+ * analyzes its real signals and returns one recommended template from the
+ * real catalog (built-in + custom), with a reason and confidence — never
+ * applied to anything by this command itself (module doc comment).
+ */
+async suggestTemplateForMedia(mediaPath: string, transcript: TranscriptEntry[], aiSettings: AiProviderSettings) : Promise<Result<AiTemplateRecommendation, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("suggest_template_for_media", { mediaPath, transcript, aiSettings }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1058,6 +1100,26 @@ async listTemplates() : Promise<Result<TemplateCatalog, AppErrorPayload>> {
 async saveAsTemplate(project: ProjectV1, input: SaveAsTemplateInput) : Promise<Result<Template, AppErrorPayload>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("save_as_template", { project, input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Persists an already-fully-built `Template` as-is (upgrade spec §8's
+ * `Generate → Validate → Preview → Save Template` pipeline): unlike
+ * [`save_as_template`], there is no `ProjectV1` to derive fields from here —
+ * `ai::template_generator::run_generation`'s own `parse_and_validate` has
+ * already produced a complete, valid `Template` (fresh `custom_<uuid>` id,
+ * `is_built_in: false`, `version: 1`). This command's own job is just the
+ * real disk write, plus a fresh re-check of asset references (the Asset
+ * Library may have changed in the time between generation and this explicit
+ * Save click) and a refusal to ever save over a built-in id, mirroring
+ * [`update_custom_template`]'s own guard.
+ */
+async saveGeneratedTemplate(template: Template) : Promise<Result<Template, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_generated_template", { template }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1416,6 +1478,36 @@ last_edit_plan: EditPlan | null;
  * detection has been run at least once for this project.
  */
 highlights: Highlight[] }
+/**
+ * One AI-recommended template (upgrade spec §7's own worked example:
+ * "Detected: Football Highlight. Recommended: Football Short V3."). Closed,
+ * strictly typed, specta-typed for eventual frontend consumption — a
+ * *proposal* the user Accepts/Changes/Customizes (module doc comment),
+ * never applied by this module itself.
+ */
+export type AiTemplateRecommendation = { 
+/**
+ * Always a real id from the catalog passed to [`parse_and_validate`] —
+ * never an unvalidated string straight from the model.
+ */
+template_id: string; 
+/**
+ * Always the resolved catalog entry's own real name (module doc
+ * comment) — never re-derived from the model's own response text.
+ */
+template_name: string; reason: string; confidence: number; 
+/**
+ * Upgrade spec §7's own example output includes an aspect
+ * ("Output: 9:16") that may differ from the recommended template's own
+ * default `canvas` (e.g. the Football Highlight built-in defaults to
+ * 16:9 but is "also usable at 9:16", per that template's own doc
+ * comment) — `None` when the model has no opinion beyond the
+ * template's own default canvas. Reuses `shorts::settings::ShortsAspect`
+ * (the one real aspect-ratio enum this codebase already has for
+ * exactly this "which of a small closed set of aspects" question)
+ * rather than inventing a second one.
+ */
+suggested_aspect: ShortsAspect | null }
 export type Animation = { id: string; clip_id: string; kind: AnimationKind; name: string; duration_us: number }
 export type AnimationKind = "in" | "out" | "loop" | "group"
 export type AppErrorPayload = { code: string; message: string; details: string | null; recoverable: boolean; suggested_action: string | null }

@@ -79,6 +79,45 @@ pub fn save_as_template(
     Ok(template)
 }
 
+/// Persists an already-fully-built `Template` as-is (upgrade spec §8's
+/// `Generate → Validate → Preview → Save Template` pipeline): unlike
+/// [`save_as_template`], there is no `ProjectV1` to derive fields from here —
+/// `ai::template_generator::run_generation`'s own `parse_and_validate` has
+/// already produced a complete, valid `Template` (fresh `custom_<uuid>` id,
+/// `is_built_in: false`, `version: 1`). This command's own job is just the
+/// real disk write, plus a fresh re-check of asset references (the Asset
+/// Library may have changed in the time between generation and this explicit
+/// Save click) and a refusal to ever save over a built-in id, mirroring
+/// [`update_custom_template`]'s own guard.
+#[tauri::command]
+#[specta::specta]
+pub fn save_generated_template(
+    app: AppHandle,
+    template: Template,
+) -> Result<Template, AppErrorPayload> {
+    if template.is_built_in
+        || templates::all_templates()
+            .iter()
+            .any(|t| t.id == template.id)
+    {
+        return Err(AppErrorPayload::from(&TemplateError::CannotEditBuiltIn {
+            template_id: template.id.clone(),
+        }));
+    }
+    let known_ids = known_asset_ids(&app)?;
+    templates::validate_asset_references(
+        template.intro.as_ref(),
+        template.outro.as_ref(),
+        template.watermark.as_ref(),
+        template.background_music.as_ref(),
+        &known_ids,
+    )
+    .map_err(|e| AppErrorPayload::from(&e))?;
+    let dir = templates_dir(&app).map_err(|e| AppErrorPayload::from(&e))?;
+    template_io::save_custom_template(&dir, &template).map_err(|e| AppErrorPayload::from(&e))?;
+    Ok(template)
+}
+
 /// Update an existing custom template in place (upgrade spec §20): bumps
 /// `version`, and preserves the pre-update content in that template's
 /// version-history file (`template_io::append_template_history`) *before*
