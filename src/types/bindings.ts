@@ -989,6 +989,59 @@ async suggestAndSearchBroll(settings: AiProviderSettings, entries: TranscriptEnt
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Lists every registered asset, optionally filtered to one `AssetKind`.
+ */
+async listAssets(kind: AssetKind | null) : Promise<Result<Asset[], AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_assets", { kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Registers a new asset. Validates `file_path` really exists on disk
+ * before ever persisting the reference (`assets::new_asset`).
+ */
+async addAsset(kind: AssetKind, name: string, filePath: string) : Promise<Result<Asset, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("add_asset", { kind, name, filePath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Removes an asset from the library. Does NOT check whether any saved
+ * `Template` still references this id — a `Template`'s own
+ * `intro`/`outro`/`watermark`/`background_music` reference is only
+ * re-validated the next time that template is saved/updated
+ * (`templates::validate_asset_references`), matching how a caption
+ * style/export preset id can already go stale between a template's save
+ * and a later re-save.
+ */
+async removeAsset(assetId: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_asset", { assetId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Updates an existing asset's `name`/`file_path`/`tags` in place (`None` =
+ * leave that field unchanged). A new `file_path` is re-validated the same
+ * way `add_asset` validates one — never silently accepted.
+ */
+async updateAsset(assetId: string, name: string | null, filePath: string | null, tags: string[] | null) : Promise<Result<Asset, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_asset", { assetId, name, filePath, tags }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async listTemplates() : Promise<Result<TemplateCatalog, AppErrorPayload>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_templates") };
@@ -1005,6 +1058,39 @@ async listTemplates() : Promise<Result<TemplateCatalog, AppErrorPayload>> {
 async saveAsTemplate(project: ProjectV1, input: SaveAsTemplateInput) : Promise<Result<Template, AppErrorPayload>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("save_as_template", { project, input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Update an existing custom template in place (upgrade spec §20): bumps
+ * `version`, and preserves the pre-update content in that template's
+ * version-history file (`template_io::append_template_history`) *before*
+ * overwriting `<id>.json`, so a job that recorded the old
+ * `template_id`+`template_version` can still resolve exactly what it ran
+ * with via [`get_template_version`]. Refuses to edit a built-in template
+ * (`TemplateError::CannotEditBuiltIn`), same guard `delete_custom_template`
+ * already applies for deletion.
+ */
+async updateCustomTemplate(templateId: string, project: ProjectV1, input: SaveAsTemplateInput) : Promise<Result<Template, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_custom_template", { templateId, project, input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Resolves the exact `Template` content for `template_id`+`version`
+ * (upgrade spec §20 — a batch job pins both so it stays reproducible even
+ * after the template is edited further). Checks, in order: the built-in
+ * catalog (always exactly version 1); the current on-disk custom template
+ * (if its `version` matches); then that template's version-history file.
+ */
+async getTemplateVersion(templateId: string, version: number) : Promise<Result<Template, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_template_version", { templateId, version }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1073,6 +1159,38 @@ async generateShorts(mediaPath: string, transcript: TranscriptEntry[], settings:
  */
 async startBatch(mediaPaths: string[], config: BatchPipelineConfig) : Promise<string> {
     return await TAURI_INVOKE("start_batch", { mediaPaths, config });
+},
+/**
+ * Starts a **multi-template** batch (upgrade-plan §11 — master prompt's
+ * own §11 worked example: one video through TikTok/YouTube Shorts/Facebook
+ * Reel/Original produces 4 distinctly-named outputs; this command
+ * generalizes that to N `media_paths` x M `template_ids`, producing N x M
+ * `BatchJob`s in one batch). A sibling of [`start_batch`] rather than an
+ * extension of its own signature — `start_batch`'s existing single-
+ * `template_id`-in-`config` shape is left completely undisturbed for every
+ * existing caller, and this command's own `config.template_id` (if the
+ * caller sets one anyway) is ignored: each fanned-out job gets its own
+ * `template_id` from `template_ids`, one job per `(media_paths[i],
+ * template_ids[j])` pair — see `batch::manager::start_multi_template_batch`'s
+ * doc comment for the full fan-out/naming/failure-isolation writeup.
+ * 
+ * Every `template_ids` entry is resolved (built-in or custom) **before**
+ * any job is created — an unknown id fails this whole call up front with a
+ * clear error, rather than leaving some jobs pre-doomed to fail
+ * individually. Concurrency is unchanged from every other batch: one
+ * dedicated worker thread processes this batch's N x M jobs strictly
+ * sequentially (`batch::manager` module doc comment's concurrency model —
+ * this pass does not relax it), and one job's failure never aborts the
+ * others (each job's own `Failed` status/error is independent, exactly
+ * like `start_batch`'s jobs).
+ */
+async startMultiTemplateBatch(mediaPaths: string[], templateIds: string[], config: BatchPipelineConfig) : Promise<Result<string, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_multi_template_batch", { mediaPaths, templateIds, config }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 async listBatchJobs(batchId: string) : Promise<Result<BatchJob[], AppErrorPayload>> {
     try {
@@ -1302,6 +1420,34 @@ export type Animation = { id: string; clip_id: string; kind: AnimationKind; name
 export type AnimationKind = "in" | "out" | "loop" | "group"
 export type AppErrorPayload = { code: string; message: string; details: string | null; recoverable: boolean; suggested_action: string | null }
 /**
+ * One Asset Library entry (module doc comment). `file_path` is an absolute
+ * path to the real underlying file — referenced, never copied.
+ */
+export type Asset = { id: string; kind: AssetKind; name: string; file_path: string; 
+/**
+ * RFC3339, when this asset was registered.
+ */
+created_at: string; 
+/**
+ * Optional, lightly mirroring `db::MediaLibraryEntry::tags`'s own
+ * convention — free-form labels a user can filter/search by later.
+ */
+tags: string[] }
+/**
+ * Upgrade spec §17's exact catalog (closed enum, in the order §17 lists
+ * it).
+ */
+export type AssetKind = "intro" | "outro" | "logo" | "watermark" | "music" | "sound_effect" | "overlay" | "font" | "subtitle_style" | "transition_preset" | "background"
+/**
+ * A `Template`'s reference to one [`crate::assets::Asset`] by id (upgrade
+ * spec §17's "template reference asset bằng ID thay vì hard-code path"
+ * requirement) — used as-is for `Template::intro`/`outro`, which need no
+ * per-use override; [`WatermarkReference`]/[`BackgroundMusicReference`]
+ * below wrap the same `asset_id` with the one or two overrides §3's own
+ * example (`position`/`volume`) calls for.
+ */
+export type AssetReference = { asset_id: string }
+/**
  * Per-clip audio feature settings (master prompt §38: volume, mute, fade
  * in/out, normalize, noise reduction), keyed by clip id in
  * `ProjectV1::audio_clip_settings` rather than embedded directly in `Clip`/
@@ -1392,6 +1538,14 @@ export type BRollSuggestion = { id: string; insertion_time_us: number; duration_
  */
 keyword: string; reason: string }
 export type BRollSuggestionWithCandidatesPayload = { suggestion: BRollSuggestion; candidates: BRollCandidate[] }
+export type BackgroundMusicReference = { asset_id: string; 
+/**
+ * Linear gain multiplier, same convention as
+ * `project::AudioClipSettings::volume` (upgrade spec §3's own example
+ * literally writes `volume: 0.2`, matching this linear-gain
+ * convention) — NOT a 0-100 percentage and NOT decibels.
+ */
+volume: number }
 /**
  * One item in a batch (master prompt §42's Jobs UI row: Name/Status/
  * Progress/Stage/Elapsed/ETA/Output). `elapsed_us`/`eta_us` are computed
@@ -1518,7 +1672,23 @@ template_id: string | null;
  * `export_preset_id` is used as the fallback (same precedence rule as
  * `remove_silence` above: an explicit value here always wins).
  */
-export_preset_id: string | null }
+export_preset_id: string | null; 
+/**
+ * Overrides the `<stem>_<suffix>.<ext>` suffix `batch::pipeline`'s own
+ * `default_output_path` uses when naming this job's rendered output.
+ * `None` keeps this pipeline's original, single-template default —
+ * `"edited"` (`video01_edited.mp4`) — unchanged for every existing
+ * caller. Multi-template batches (`batch::manager::start_multi_template_batch`,
+ * upgrade-plan §11) set this to the target template's own
+ * filesystem-safe slug (`batch::pipeline::slugify_template_name`,
+ * e.g. `"TikTok"` -> `"tiktok"`) so N videos x M templates land as N x M
+ * distinctly-named files (`video01_tiktok.mp4`, `video01_youtube.mp4`,
+ * ...) instead of colliding on one shared `video01_edited.mp4` per
+ * video. Not template-derived automatically even when `template_id` is
+ * set — an explicit, caller-chosen value, exactly like every other
+ * field in this struct.
+ */
+output_suffix: string | null }
 export type CanvasRatioPreset = "16:9" | "9:16" | "1:1" | "4:5" | "custom"
 export type CanvasV1 = { width: number; height: number; fps: Rational; ratio_preset: CanvasRatioPreset }
 /**
@@ -2079,7 +2249,7 @@ export type SaveAsTemplateInput = { name: string; description: string;
  * current caption style is one of its own custom styles or a built-in
  * one it never copied into `caption_styles`.
  */
-caption_style_id: string; zoom_intensity: ZoomIntensity; silence_settings: CutParams; transition_settings: TransitionSettings; export_preset_id: string; ai_prompt_config: AiPromptConfig; sports_overlay: SportsOverlaySettings | null }
+caption_style_id: string; zoom_intensity: ZoomIntensity; silence_settings: CutParams; transition_settings: TransitionSettings; export_preset_id: string; ai_prompt_config: AiPromptConfig; sports_overlay: SportsOverlaySettings | null; intro?: AssetReference | null; outro?: AssetReference | null; watermark?: WatermarkReference | null; background_music?: BackgroundMusicReference | null }
 /**
  * One detected scene: `{id, start_us, end_us, thumbnail_path, score}`
  * (master prompt §25's exact `Scene{start, end, thumbnail, score}` return
@@ -2391,7 +2561,26 @@ export_preset_id: string; ai_prompt_config: AiPromptConfig;
  * attaches an existing `MediaItem::id` from their own project's media
  * library at build/apply time, by convention, not through this schema.
  */
-sports_overlay: SportsOverlaySettings | null }
+sports_overlay: SportsOverlaySettings | null; 
+/**
+ * `#[serde(default)]` so every custom template saved before this field
+ * existed still deserializes, as `None` — upgrade spec §17's own
+ * asset-by-id requirement, validated against the Asset Library at
+ * save/update time (see [`validate_asset_references`]), never a raw
+ * path.
+ */
+intro?: AssetReference | null; outro?: AssetReference | null; watermark?: WatermarkReference | null; background_music?: BackgroundMusicReference | null; 
+/**
+ * Starts at `1` for every built-in (immutable — never bumped, see
+ * [`TemplateError::CannotEditBuiltIn`]) and for a brand-new custom
+ * template; increments by 1 on every subsequent
+ * `commands::templates::update_custom_template` call that saves over
+ * this same custom template id. `#[serde(default = "default_template_version")]`
+ * so a template JSON saved before versioning existed deserializes as
+ * version `1` — the sensible "this is the only version that ever
+ * existed" reading, not a made-up placeholder.
+ */
+version?: number }
 /**
  * The combined template catalog a "browse templates" UI needs: the 8
  * built-ins (`templates::all_templates`, always present, never edited on
@@ -2530,6 +2719,18 @@ export type VadParams = { threshold: number; min_silence_us: number; min_speech_
  */
 export type VadScoreSummary = { media_id: string; chunk_count: number; chunk_duration_us: number; sample_count: number }
 export type VideoCodec = "h264" | "h265" | "vp_9"
+/**
+ * Corner/center placement for a watermark or logo overlay (upgrade spec
+ * §3's own `position: top-right` example). Deliberately a new, small enum
+ * rather than reusing `project::CaptionAnchor` (vertical-only:
+ * top/center/bottom, no left/right) or `project::CaptionAlignment`
+ * (horizontal-only, meant for multi-line text alignment) — neither already
+ * expresses a 2D corner, and no overlay-rendering engine exists yet to
+ * consume a richer offset-based placement (see `assets::mod`'s own
+ * `Watermark`-is-structural-until-an-overlay-engine-exists note).
+ */
+export type WatermarkPosition = "top_left" | "top_right" | "bottom_left" | "bottom_right" | "center"
+export type WatermarkReference = { asset_id: string; position: WatermarkPosition }
 export type WaveformResult = { 
 /**
  * Peak `|sample|` per bin, normalized to `[0, 1]`.

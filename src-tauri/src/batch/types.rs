@@ -148,4 +148,18 @@ pub struct BatchPipelineConfig {
     /// `export_preset_id` is used as the fallback (same precedence rule as
     /// `remove_silence` above: an explicit value here always wins).
     pub export_preset_id: Option<String>,
+    /// Overrides the `<stem>_<suffix>.<ext>` suffix `batch::pipeline`'s own
+    /// `default_output_path` uses when naming this job's rendered output.
+    /// `None` keeps this pipeline's original, single-template default —
+    /// `"edited"` (`video01_edited.mp4`) — unchanged for every existing
+    /// caller. Multi-template batches (`batch::manager::start_multi_template_batch`,
+    /// upgrade-plan §11) set this to the target template's own
+    /// filesystem-safe slug (`batch::pipeline::slugify_template_name`,
+    /// e.g. `"TikTok"` -> `"tiktok"`) so N videos x M templates land as N x M
+    /// distinctly-named files (`video01_tiktok.mp4`, `video01_youtube.mp4`,
+    /// ...) instead of colliding on one shared `video01_edited.mp4` per
+    /// video. Not template-derived automatically even when `template_id` is
+    /// set — an explicit, caller-chosen value, exactly like every other
+    /// field in this struct.
+    pub output_suffix: Option<String>,
 }

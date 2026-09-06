@@ -133,6 +133,89 @@ pub fn export_template_to_path(template: &Template, path: &Path) -> Result<(), T
     write_atomic(path, template)
 }
 
+// -- Upgrade spec §20: version history --------------------------------------
+//
+// A single `<id>.history.json` file per custom template, holding every
+// *previous* full `Template` snapshot as a JSON array (the current version
+// itself always lives at `<id>.json`, never duplicated into its own
+// history). Chosen over a `templates_dir/<id>/v<N>.json` subdirectory
+// scheme for the same reason `templates_dir` itself is one flat directory
+// of `<id>.json` files rather than nested per-template folders: fewer
+// directories to create/list/clean up, and a template's entire past is one
+// read away rather than a directory listing plus N reads. A custom
+// template that has never been updated has no history file at all — same
+// "absence means empty" convention `list_custom_templates` already uses for
+// a missing `templates_dir` itself.
+
+fn history_file_path(dir: &Path, template_id: &str) -> Result<PathBuf, TemplateError> {
+    if !crate::fs_safety::is_safe_path_component(template_id) {
+        return Err(TemplateError::UnsafeTemplateId {
+            template_id: template_id.to_string(),
+        });
+    }
+    Ok(dir.join(format!("{template_id}.history.json")))
+}
+
+fn write_history_atomic(path: &Path, history: &[Template]) -> Result<(), TemplateError> {
+    let json = serde_json::to_vec_pretty(history).map_err(|e| TemplateError::IoFailed {
+        details: format!("serialize history failed: {e}"),
+    })?;
+    let tmp_path = path.with_extension("json.tmp");
+    {
+        let mut file = File::create(&tmp_path).map_err(|e| TemplateError::IoFailed {
+            details: format!("could not create {}: {e}", tmp_path.display()),
+        })?;
+        file.write_all(&json).map_err(|e| TemplateError::IoFailed {
+            details: format!("write failed: {e}"),
+        })?;
+        file.sync_all().map_err(|e| TemplateError::IoFailed {
+            details: format!("fsync failed: {e}"),
+        })?;
+    }
+    fs::rename(&tmp_path, path).map_err(|e| TemplateError::IoFailed {
+        details: format!(
+            "rename {} -> {} failed: {e}",
+            tmp_path.display(),
+            path.display()
+        ),
+    })
+}
+
+/// Every previous version of `template_id` recorded so far, oldest first.
+/// An empty `Vec`, not an error, if no history file exists yet (a custom
+/// template that's never been updated, or a built-in — which never has
+/// one).
+pub fn list_template_history(
+    dir: &Path,
+    template_id: &str,
+) -> Result<Vec<Template>, TemplateError> {
+    let path = history_file_path(dir, template_id)?;
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let bytes = fs::read(&path).map_err(|e| TemplateError::IoFailed {
+        details: format!("could not read {}: {e}", path.display()),
+    })?;
+    serde_json::from_slice(&bytes).map_err(|e| TemplateError::CorruptJson {
+        details: format!("{}: {e}", path.display()),
+    })
+}
+
+/// Appends `previous` (the full pre-update snapshot) onto `template_id`'s
+/// history file, creating it if this is the first update ever recorded for
+/// this template. Called by `commands::templates::update_custom_template`
+/// *before* the new version overwrites `<id>.json`, so the old content is
+/// never lost even for a single instant.
+pub fn append_template_history(dir: &Path, previous: &Template) -> Result<(), TemplateError> {
+    fs::create_dir_all(dir).map_err(|e| TemplateError::IoFailed {
+        details: format!("could not create {}: {e}", dir.display()),
+    })?;
+    let path = history_file_path(dir, &previous.id)?;
+    let mut history = list_template_history(dir, &previous.id)?;
+    history.push(previous.clone());
+    write_history_atomic(&path, &history)
+}
+
 /// Import Template (§36): read a `Template` back from an arbitrary
 /// caller-chosen file path.
 pub fn import_template_from_path(path: &Path) -> Result<Template, TemplateError> {
@@ -284,5 +367,53 @@ mod tests {
         let dir = temp_dir("traversal-delete-backslash");
         let err = delete_custom_template(&dir, "..\\..\\Users\\victim\\secret").unwrap_err();
         assert!(matches!(err, TemplateError::UnsafeTemplateId { .. }));
+    }
+
+    // -- version history (upgrade spec §20) ----------------------------------
+
+    #[test]
+    fn a_template_that_has_never_been_updated_has_no_history() {
+        let dir = temp_dir("history-none-yet");
+        let history = list_template_history(&dir, "custom_never_updated").expect("list history");
+        assert!(history.is_empty());
+    }
+
+    #[test]
+    fn appending_history_then_listing_it_round_trips() {
+        let dir = temp_dir("history-round-trip");
+        let mut v1 = all_templates().remove(2); // tiktok
+        v1.id = "custom_history_test".to_string();
+        v1.is_built_in = false;
+        v1.version = 1;
+        v1.name = "v1 name".to_string();
+
+        append_template_history(&dir, &v1).expect("append v1 to history");
+
+        let mut v2 = v1.clone();
+        v2.version = 2;
+        v2.name = "v2 name".to_string();
+        append_template_history(&dir, &v2).expect("append v2 to history");
+
+        let history = list_template_history(&dir, "custom_history_test").expect("list history");
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].version, 1);
+        assert_eq!(history[0].name, "v1 name");
+        assert_eq!(history[1].version, 2);
+        assert_eq!(history[1].name, "v2 name");
+    }
+
+    #[test]
+    fn history_is_independent_per_template_id() {
+        let dir = temp_dir("history-independent");
+        let mut a = all_templates().remove(0);
+        a.id = "custom_a".to_string();
+        a.is_built_in = false;
+        append_template_history(&dir, &a).expect("append a");
+
+        let history_b = list_template_history(&dir, "custom_b").expect("list history for b");
+        assert!(
+            history_b.is_empty(),
+            "template b's history must be unaffected by template a's"
+        );
     }
 }

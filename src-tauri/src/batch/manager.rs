@@ -314,6 +314,78 @@ impl BatchJobManager {
         (batch_id, job_ids)
     }
 
+    /// Fans `media_paths` x `templates` out into one `BatchJob` per
+    /// `(video, template)` pair — the multi-template batch's own job
+    /// enumeration (upgrade-plan §11), reusing every other piece of
+    /// `create_batch`'s own machinery (`JobState`/`JobHandle` construction,
+    /// `batch_order`/`job_batch` bookkeeping) unchanged; only *how many* jobs
+    /// get created, and what each one's `config`/display `name` looks like,
+    /// differs from `create_batch`'s one-job-per-path loop.
+    ///
+    /// `templates` is `(template_id, template_name)` pairs, already resolved
+    /// by the caller (`start_multi_template_batch`, which has the
+    /// `AppHandle` this pure function deliberately does not need — same
+    /// "resolve real IO paths at the `AppHandle`-dependent layer, keep the
+    /// state-mutating core testable without one" split `create_batch`'s own
+    /// doc comment already established) — this function never itself needs
+    /// to look up a template. `pub(crate)` for the same reason
+    /// `create_batch` is: `commands::batch`'s real command wrapper calls it
+    /// through `start_multi_template_batch` below, and this crate's own
+    /// tests exercise it directly with hand-built `(id, name)` pairs, no
+    /// running `AppHandle` required.
+    ///
+    /// Every job's `config.template_id` is overridden to that job's own
+    /// template (whatever `base_config.template_id` carried, if anything, is
+    /// discarded — a multi-template batch's whole point is one template per
+    /// job, not one shared template plus N more), and `config.output_suffix`
+    /// is set to that template's `slugify_template_name` slug, so
+    /// `batch::pipeline::run_pipeline`'s existing, unchanged output-naming
+    /// logic (`BatchPipelineConfig::output_suffix` doc comment) lands each
+    /// job at `<video_stem>_<template_slug>.<ext>` (§11's exact convention)
+    /// without needing its own naming special-case.
+    pub(crate) fn create_multi_template_batch(
+        &self,
+        media_paths: Vec<String>,
+        templates: Vec<(String, String)>,
+        base_config: BatchPipelineConfig,
+    ) -> (String, Vec<String>) {
+        let batch_id = Uuid::new_v4().to_string();
+        let mut job_ids = Vec::with_capacity(media_paths.len() * templates.len());
+        {
+            let mut jobs = self.jobs.lock().expect("batch jobs mutex poisoned");
+            let mut job_batch = self.job_batch.lock().expect("job batch mutex poisoned");
+            for path in &media_paths {
+                let filename = Path::new(path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| path.clone());
+                for (template_id, template_name) in &templates {
+                    let job_id = Uuid::new_v4().to_string();
+                    let name = format!("{filename} \u{2192} {template_name}");
+                    let mut config = base_config.clone();
+                    config.template_id = Some(template_id.clone());
+                    config.output_suffix = Some(pipeline::slugify_template_name(template_name));
+                    let handle = JobHandle {
+                        state: Arc::new(Mutex::new(JobState::new(job_id.clone(), name))),
+                        cancel: Arc::new(AtomicBool::new(false)),
+                        pause: Arc::new(AtomicBool::new(false)),
+                        media_path: path.clone(),
+                        config,
+                    };
+                    jobs.insert(job_id.clone(), handle);
+                    job_batch.insert(job_id.clone(), batch_id.clone());
+                    job_ids.push(job_id);
+                }
+            }
+        }
+        self.batch_order
+            .lock()
+            .expect("batch order mutex poisoned")
+            .insert(batch_id.clone(), job_ids.clone());
+        (batch_id, job_ids)
+    }
+
     fn handle_for(&self, job_id: &str) -> Option<JobHandle> {
         self.jobs
             .lock()
@@ -560,6 +632,48 @@ pub fn start_batch(
     batch_id
 }
 
+/// `commands::batch::start_multi_template_batch`'s real logic (upgrade-plan
+/// §11): resolves every `template_ids` entry's real display name up front —
+/// **before** creating or spawning a single job — so an unknown template id
+/// fails the whole call immediately with a clear `BatchError::UnknownTemplate`
+/// rather than silently producing a batch with some jobs pre-doomed to fail
+/// individually deep into a possibly-long run. `template_ids` may repeat (a
+/// caller asking for the same template twice just gets two jobs per video
+/// for it — not rejected as a caller error, since there's nothing actually
+/// unsafe about it and no real reason to police it here) and resolves each
+/// occurrence independently (a handful of catalog/`list_custom_templates`
+/// lookups — templates are not large, and this only runs once per batch
+/// creation, not per job).
+///
+/// Once every id resolves, fans out via `BatchJobManager::create_multi_template_batch`
+/// and spawns the exact same single sequential worker thread `start_batch`
+/// does (`spawn_batch_worker`) — a multi-template batch is still one batch,
+/// processed one job at a time, just with more jobs enumerated up front
+/// (module doc comment's concurrency-model section: this pass does not
+/// relax "one worker thread per batch, sequential within a batch").
+pub fn start_multi_template_batch(
+    app: AppHandle,
+    manager: &BatchJobManager,
+    media_paths: Vec<String>,
+    template_ids: Vec<String>,
+    config: BatchPipelineConfig,
+) -> Result<String, BatchError> {
+    let templates_dir =
+        crate::commands::templates::templates_dir(&app).map_err(|e| BatchError::StageFailed {
+            stage: "Analyzing".to_string(),
+            details: e.to_string(),
+        })?;
+    let mut templates = Vec::with_capacity(template_ids.len());
+    for template_id in &template_ids {
+        let name = pipeline::resolve_template_name(&templates_dir, template_id)?;
+        templates.push((template_id.clone(), name));
+    }
+
+    let (batch_id, job_ids) = manager.create_multi_template_batch(media_paths, templates, config);
+    spawn_batch_worker(app, job_ids);
+    Ok(batch_id)
+}
+
 /// `commands::batch::retry_batch_job`'s real logic: validate + reset the
 /// job's state (`BatchJobManager::prepare_retry`), then spawn a fresh
 /// single-job worker thread for it.
@@ -590,6 +704,7 @@ mod tests {
             transcription_language: None,
             template_id: None,
             export_preset_id: Some(export_preset_id.to_string()),
+            output_suffix: None,
         }
     }
 
@@ -963,6 +1078,312 @@ mod tests {
         // semantics (module doc comment).
         assert_eq!(second.status, BatchJobStatus::Failed);
         assert_eq!(second.error, first.error);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // -- multi-template batch fan-out (upgrade-plan §11) ---------------------
+
+    /// Synthesizes a real, named test source whose audio track the real
+    /// Silero VAD reliably classifies as containing speech throughout —
+    /// unlike this module's other tests' plain `sine=frequency=440` tone
+    /// (deliberately *not* reused here: that tone is reliably classified as
+    /// *non*-speech by the real model in this environment, which is exactly
+    /// right for those tests' own `remove_silence: None` + `template_id:
+    /// None` config, where silence removal never runs at all — but every
+    /// job in a multi-template batch carries a real `template_id`, and
+    /// `BatchPipelineConfig::template_id`'s own doc comment is explicit that
+    /// a selected template's `silence_settings` becomes the *default*
+    /// `remove_silence` value whenever the caller leaves that field `None` —
+    /// so silence removal for these tests' jobs is not optional, and a
+    /// no-speech-detected source would deterministically empty the whole
+    /// timeline, correctly failing the render with `EmptyTimeline`, not
+    /// completing it). A pure 220Hz tone (near real speech's fundamental-
+    /// frequency range) amplitude-modulated at 4Hz (`tremolo`, mimicking a
+    /// real syllable rate) empirically produces one confident speech segment
+    /// spanning the whole clip against this project's real Silero model —
+    /// verified directly against `vad::SileroVadProvider`/`segments_from_scores`
+    /// before writing the tests below, not guessed.
+    fn synth_named_source(ffmpeg: &Path, dir: &Path, filename: &str) -> PathBuf {
+        use crate::ffmpeg::command::{run_checked, FfmpegArgs};
+        let source = dir.join(filename);
+        let args = FfmpegArgs::new()
+            .args([
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=3:size=320x240:rate=10",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=220:duration=3,tremolo=f=4:d=0.9",
+                "-shortest",
+            ])
+            .path(&source);
+        run_checked(ffmpeg, &args).expect("synthesizing test source");
+        source
+    }
+
+    #[test]
+    fn create_multi_template_batch_produces_n_times_m_jobs_correctly_paired_and_named() {
+        let manager = BatchJobManager::default();
+        let templates = vec![
+            ("tmpl_tiktok".to_string(), "TikTok".to_string()),
+            (
+                "tmpl_youtube_shorts".to_string(),
+                "YouTube Shorts".to_string(),
+            ),
+            ("tmpl_news".to_string(), "News".to_string()),
+        ];
+        let (batch_id, job_ids) = manager.create_multi_template_batch(
+            vec!["video01.mp4".to_string(), "video02.mp4".to_string()],
+            templates,
+            minimal_config("fast_preview"),
+        );
+
+        // 2 videos x 3 templates = 6 jobs, not 2+3 or some other miscount.
+        assert_eq!(job_ids.len(), 6);
+        let jobs = manager.list_jobs(&batch_id).unwrap();
+        assert_eq!(jobs.len(), 6);
+        assert!(jobs.iter().all(|j| j.status == BatchJobStatus::Queued));
+
+        let names: Vec<String> = jobs.iter().map(|j| j.name.clone()).collect();
+        for video in ["video01.mp4", "video02.mp4"] {
+            for template_name in ["TikTok", "YouTube Shorts", "News"] {
+                let expected = format!("{video} \u{2192} {template_name}");
+                assert!(
+                    names.contains(&expected),
+                    "expected a job named {expected:?}, got {names:?}"
+                );
+            }
+        }
+
+        // Each job's own config carries exactly its (template_id, slug) pair
+        // — not the batch's shared `base_config.template_id` (which was
+        // `None`) and not some other job's template.
+        let expected_pairs = [
+            ("tmpl_tiktok", "tiktok"),
+            ("tmpl_youtube_shorts", "youtube_shorts"),
+            ("tmpl_news", "news"),
+        ];
+        for job_id in &job_ids {
+            let handle = manager.handle_for(job_id).unwrap();
+            let template_id = handle
+                .config
+                .template_id
+                .as_deref()
+                .expect("multi-template batch always sets template_id per job");
+            let suffix = handle
+                .config
+                .output_suffix
+                .as_deref()
+                .expect("multi-template batch always sets output_suffix per job");
+            assert!(
+                expected_pairs
+                    .iter()
+                    .any(|(id, slug)| *id == template_id && *slug == suffix),
+                "unexpected (template_id, output_suffix) pair: ({template_id}, {suffix})"
+            );
+        }
+    }
+
+    #[test]
+    fn create_multi_template_batch_with_an_empty_template_list_produces_no_jobs() {
+        let manager = BatchJobManager::default();
+        let (batch_id, job_ids) = manager.create_multi_template_batch(
+            vec!["a.mp4".to_string(), "b.mp4".to_string()],
+            Vec::new(),
+            minimal_config("fast_preview"),
+        );
+        assert!(job_ids.is_empty());
+        assert!(manager.list_jobs(&batch_id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_real_multi_template_batch_of_2_videos_by_2_templates_produces_4_correctly_named_outputs() {
+        // Real, smaller-scale end-to-end: 2 synthesized videos x 2 real
+        // built-in templates = 4 jobs, each run through the real
+        // `process_job` -> `run_pipeline` chain, producing 4 real,
+        // distinctly-named output files (§11's exact convention).
+        //
+        // Both `tmpl_tiktok`/`tmpl_youtube_shorts` carry real, non-trivial
+        // `silence_settings` (Phase 11), which this test deliberately DOES
+        // exercise for real (unlike `batch::pipeline`'s own end-to-end test,
+        // which omits silence removal entirely) — so `synth_named_source`'s
+        // own tremolo-modulated tone (see its doc comment) matters here: a
+        // plain sine tone has none of speech's spectral characteristics, so
+        // real Silero VAD would find zero speech segments across the whole
+        // clip and `vad::cutlist::build_cuts_from_speech_segments` would
+        // then have nothing to protect and propose removing the entire
+        // media — this test needs a source VAD actually detects as speech.
+        let ffmpeg =
+            crate::ffmpeg::binaries::ffmpeg_path(None).expect("ffmpeg resolvable in test env");
+        let ffprobe =
+            crate::ffmpeg::binaries::ffprobe_path(None).expect("ffprobe resolvable in test env");
+        let dir = std::env::temp_dir().join(format!("ave-batch-mgr-multitmpl-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let video01 = synth_named_source(&ffmpeg, &dir, "video01.mp4");
+        let video02 = synth_named_source(&ffmpeg, &dir, "video02.mp4");
+        let models_dir = dir.join("models");
+        let templates_dir = dir.join("templates");
+        let io = PipelineIo {
+            ffmpeg: &ffmpeg,
+            ffprobe: &ffprobe,
+            models_dir: &models_dir,
+            templates_dir: &templates_dir,
+        };
+
+        let manager = BatchJobManager::default();
+        let templates = vec![
+            ("tmpl_tiktok".to_string(), "TikTok".to_string()),
+            (
+                "tmpl_youtube_shorts".to_string(),
+                "YouTube Shorts".to_string(),
+            ),
+        ];
+        let (batch_id, job_ids) = manager.create_multi_template_batch(
+            vec![
+                video01.to_str().unwrap().to_string(),
+                video02.to_str().unwrap().to_string(),
+            ],
+            templates,
+            minimal_config("fast_preview"),
+        );
+        assert_eq!(job_ids.len(), 4);
+
+        // Mirrors `spawn_batch_worker`'s own sequential loop, minus the
+        // `AppHandle`/event-emitting glue this pure test doesn't need.
+        for job_id in &job_ids {
+            let handle = manager.handle_for(job_id).unwrap();
+            process_job(&io, &handle, |_| {});
+        }
+
+        let jobs = manager.list_jobs(&batch_id).unwrap();
+        assert_eq!(jobs.len(), 4);
+        assert!(
+            jobs.iter().all(|j| j.status == BatchJobStatus::Completed),
+            "expected every job to complete: {jobs:?}"
+        );
+
+        let mut output_names: Vec<String> = jobs
+            .iter()
+            .map(|j| {
+                let path = j
+                    .output_path
+                    .as_ref()
+                    .expect("a completed job has an output path");
+                assert!(Path::new(path).exists(), "missing real output file: {path}");
+                Path::new(path)
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        output_names.sort();
+        assert_eq!(
+            output_names,
+            vec![
+                "video01_tiktok.mp4",
+                "video01_youtube_shorts.mp4",
+                "video02_tiktok.mp4",
+                "video02_youtube_shorts.mp4",
+            ]
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn one_failing_video_template_pair_in_a_multi_template_batch_does_not_abort_the_others() {
+        // Partial failure isolation: one (video, template) pair is
+        // deliberately made to fail (a nonexistent source path) while the
+        // other pairs use a real, valid source — every OTHER job in the
+        // same batch must still reach `Completed`, not be aborted or left
+        // `Queued` by the one failure (mirroring this codebase's existing
+        // per-item failure isolation precedent, e.g. `media::import`).
+        //
+        // Both real templates used here carry real `silence_settings` —
+        // see the sibling test above's own doc comment for why
+        // `synth_named_source`'s tremolo-modulated tone (not a plain sine
+        // tone) matters for a source that's meant to actually complete.
+        let ffmpeg =
+            crate::ffmpeg::binaries::ffmpeg_path(None).expect("ffmpeg resolvable in test env");
+        let ffprobe =
+            crate::ffmpeg::binaries::ffprobe_path(None).expect("ffprobe resolvable in test env");
+        let dir =
+            std::env::temp_dir().join(format!("ave-batch-mgr-partialfail-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let good_video = synth_named_source(&ffmpeg, &dir, "good.mp4");
+        let missing_video = dir.join("does-not-exist.mp4");
+        let models_dir = dir.join("models");
+        let templates_dir = dir.join("templates");
+        let io = PipelineIo {
+            ffmpeg: &ffmpeg,
+            ffprobe: &ffprobe,
+            models_dir: &models_dir,
+            templates_dir: &templates_dir,
+        };
+
+        let manager = BatchJobManager::default();
+        let templates = vec![
+            ("tmpl_tiktok".to_string(), "TikTok".to_string()),
+            (
+                "tmpl_youtube_shorts".to_string(),
+                "YouTube Shorts".to_string(),
+            ),
+        ];
+        // Media order matters here: the missing file is deliberately placed
+        // FIRST so its 2 failing jobs run before the good file's 2 jobs in
+        // this batch's own strictly-sequential single-worker processing
+        // order — proving a failure doesn't abort jobs still queued behind
+        // it, not just that independent/already-started jobs survive.
+        let (batch_id, job_ids) = manager.create_multi_template_batch(
+            vec![
+                missing_video.to_str().unwrap().to_string(),
+                good_video.to_str().unwrap().to_string(),
+            ],
+            templates,
+            minimal_config("fast_preview"),
+        );
+        assert_eq!(job_ids.len(), 4);
+
+        for job_id in &job_ids {
+            let handle = manager.handle_for(job_id).unwrap();
+            process_job(&io, &handle, |_| {});
+        }
+
+        let jobs = manager.list_jobs(&batch_id).unwrap();
+        let failed: Vec<_> = jobs
+            .iter()
+            .filter(|j| j.name.starts_with("does-not-exist.mp4"))
+            .collect();
+        let completed: Vec<_> = jobs
+            .iter()
+            .filter(|j| j.name.starts_with("good.mp4"))
+            .collect();
+        assert_eq!(failed.len(), 2);
+        assert_eq!(completed.len(), 2);
+        assert!(
+            failed
+                .iter()
+                .all(|j| j.status == BatchJobStatus::Failed && j.error.is_some()),
+            "expected both missing-file jobs to fail with a real error: {failed:?}"
+        );
+        assert!(
+            completed
+                .iter()
+                .all(|j| j.status == BatchJobStatus::Completed
+                    && j.output_path
+                        .as_deref()
+                        .is_some_and(|p| Path::new(p).exists())),
+            "expected both good-file jobs to complete with a real output file, unaffected by the \
+             other pair's failure: {completed:?}"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }

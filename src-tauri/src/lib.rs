@@ -18,6 +18,7 @@
 #![recursion_limit = "256"]
 
 pub mod ai;
+pub mod assets;
 pub mod audio;
 pub mod batch;
 pub mod broll;
@@ -139,13 +140,20 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::broll::search_local_broll,
         commands::broll::suggest_broll_from_transcript,
         commands::broll::suggest_and_search_broll,
+        commands::assets::list_assets,
+        commands::assets::add_asset,
+        commands::assets::remove_asset,
+        commands::assets::update_asset,
         commands::templates::list_templates,
         commands::templates::save_as_template,
+        commands::templates::update_custom_template,
+        commands::templates::get_template_version,
         commands::templates::import_template,
         commands::templates::export_template,
         commands::templates::delete_custom_template,
         commands::shorts::generate_shorts,
         commands::batch::start_batch,
+        commands::batch::start_multi_template_batch,
         commands::batch::list_batch_jobs,
         commands::batch::pause_batch_job,
         commands::batch::resume_batch_job,

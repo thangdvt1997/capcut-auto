@@ -183,6 +183,7 @@ fn bounded_concurrency_batch_pipeline_never_runs_more_than_one_ffmpeg_process_at
         transcription_language: None,
         template_id: None,
         export_preset_id: Some("fast_preview".to_string()),
+        output_suffix: None,
     };
 
     for source in &sources {

@@ -142,6 +142,12 @@
       transcription_language: captionsEnabled && transcriptionLanguage.trim() ? transcriptionLanguage.trim() : null,
       template_id: templateId,
       export_preset_id: exportPresetId,
+      // `output_suffix` only matters for a multi-template batch (each
+      // (video, template) pair gets its own file-name suffix — see
+      // `batch::pipeline::slugify_template_name`); a single-template batch
+      // started from this dialog has no per-job suffix to pick, so this
+      // stays `null` and the backend's own "edited" default naming applies.
+      output_suffix: null,
     };
   }
 

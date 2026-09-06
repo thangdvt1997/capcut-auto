@@ -21,6 +21,41 @@ pub fn start_batch(
     batch::manager::start_batch(app, &manager, media_paths, config)
 }
 
+/// Starts a **multi-template** batch (upgrade-plan §11 — master prompt's
+/// own §11 worked example: one video through TikTok/YouTube Shorts/Facebook
+/// Reel/Original produces 4 distinctly-named outputs; this command
+/// generalizes that to N `media_paths` x M `template_ids`, producing N x M
+/// `BatchJob`s in one batch). A sibling of [`start_batch`] rather than an
+/// extension of its own signature — `start_batch`'s existing single-
+/// `template_id`-in-`config` shape is left completely undisturbed for every
+/// existing caller, and this command's own `config.template_id` (if the
+/// caller sets one anyway) is ignored: each fanned-out job gets its own
+/// `template_id` from `template_ids`, one job per `(media_paths[i],
+/// template_ids[j])` pair — see `batch::manager::start_multi_template_batch`'s
+/// doc comment for the full fan-out/naming/failure-isolation writeup.
+///
+/// Every `template_ids` entry is resolved (built-in or custom) **before**
+/// any job is created — an unknown id fails this whole call up front with a
+/// clear error, rather than leaving some jobs pre-doomed to fail
+/// individually. Concurrency is unchanged from every other batch: one
+/// dedicated worker thread processes this batch's N x M jobs strictly
+/// sequentially (`batch::manager` module doc comment's concurrency model —
+/// this pass does not relax it), and one job's failure never aborts the
+/// others (each job's own `Failed` status/error is independent, exactly
+/// like `start_batch`'s jobs).
+#[tauri::command]
+#[specta::specta]
+pub fn start_multi_template_batch(
+    app: AppHandle,
+    manager: State<'_, BatchJobManager>,
+    media_paths: Vec<String>,
+    template_ids: Vec<String>,
+    config: BatchPipelineConfig,
+) -> Result<String, AppErrorPayload> {
+    batch::manager::start_multi_template_batch(app, &manager, media_paths, template_ids, config)
+        .map_err(|e| AppErrorPayload::from(&e))
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn list_batch_jobs(

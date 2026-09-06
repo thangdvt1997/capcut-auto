@@ -180,6 +180,7 @@ mod tests {
             transcription_language: None,
             template_id: None,
             export_preset_id: Some("p1080".to_string()),
+            output_suffix: None,
         }
     }
 

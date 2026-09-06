@@ -5,6 +5,7 @@
 //! `crate::project`, etc.
 
 pub mod ai;
+pub mod assets;
 pub mod batch;
 pub mod broll;
 pub mod capcut;

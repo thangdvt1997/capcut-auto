@@ -195,6 +195,51 @@ fn resolve_template(templates_dir: &Path, template_id: &str) -> Result<Template,
         })
 }
 
+/// Narrow, `pub(crate)` sliver of [`resolve_template`] for
+/// `batch::manager::start_multi_template_batch` (upgrade-plan §11): resolves
+/// just the real, human-readable `name` a template id maps to (built-in or
+/// custom, same two-tier lookup), reusing this module's one real lookup
+/// rather than a second one living in `manager`. Used both to label each
+/// fanned-out job (`"video01.mp4 -> TikTok"`) and, via
+/// [`slugify_template_name`], to derive its output filename suffix.
+pub(crate) fn resolve_template_name(
+    templates_dir: &Path,
+    template_id: &str,
+) -> Result<String, BatchError> {
+    resolve_template(templates_dir, template_id).map(|t| t.name)
+}
+
+/// Turns a template's real display `name` (e.g. `"YouTube Shorts"`, or a
+/// user-authored custom template's name — arbitrary text, spaces/punctuation
+/// included) into the exact filesystem-safe slug §11's own worked example
+/// uses for output naming (`video01_tiktok.mp4`): lowercased, every non-
+/// ASCII-alphanumeric character collapsed to a single `_` (consecutive
+/// separators never produce a run of underscores), with leading/trailing
+/// underscores trimmed. Falls back to `"template"` for the degenerate case
+/// of a name with no alphanumeric characters at all, so a job's output path
+/// is never left with an empty suffix (`<stem>_.<ext>`).
+pub(crate) fn slugify_template_name(name: &str) -> String {
+    let mut slug = String::with_capacity(name.len());
+    let mut last_was_sep = false;
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+            last_was_sep = false;
+        } else if !last_was_sep && !slug.is_empty() {
+            slug.push('_');
+            last_was_sep = true;
+        }
+    }
+    while slug.ends_with('_') {
+        slug.pop();
+    }
+    if slug.is_empty() {
+        "template".to_string()
+    } else {
+        slug
+    }
+}
+
 /// A real, single-clip-per-media-kind `ProjectV1` spanning the whole source
 /// file — the batch equivalent of `shorts::build::build_short_project`'s "one
 /// real project per candidate" convention, generalized to the whole media
@@ -389,9 +434,15 @@ fn remap_transcript_across_fragments(
     out
 }
 
+/// `suffix` is the `<stem>_<suffix>.<ext>` naming convention's own suffix —
+/// `"edited"` for this pipeline's original single-template default, or a
+/// per-template slug (`slugify_template_name`) for a multi-template batch's
+/// job (`BatchPipelineConfig::output_suffix` doc comment covers the full
+/// precedence/rationale).
 fn default_output_path(
     source: &Path,
     settings: &render::RenderSettings,
+    suffix: &str,
 ) -> Result<PathBuf, BatchError> {
     let parent = source.parent().unwrap_or_else(|| Path::new("."));
     let out_dir = parent.join("batch_output");
@@ -405,7 +456,10 @@ fn default_output_path(
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("output");
-    Ok(out_dir.join(format!("{stem}_edited.{}", settings.container.extension())))
+    Ok(out_dir.join(format!(
+        "{stem}_{suffix}.{}",
+        settings.container.extension()
+    )))
 }
 
 /// Runs the full per-file pipeline against `media_path`, honoring `config`.
@@ -700,7 +754,8 @@ pub fn run_pipeline(
 
     let graph =
         render::build_render_graph(&built.project).map_err(|e| stage_failed("Rendering", e))?;
-    let output_path = default_output_path(media_path, &settings)?;
+    let output_suffix = config.output_suffix.as_deref().unwrap_or("edited");
+    let output_path = default_output_path(media_path, &settings, output_suffix)?;
     // No voice-ducking segments for batch scope (module doc comment in
     // `batch::types::BatchPipelineConfig::template_id` — batch-built
     // projects never assign an `AudioRole::Voice` track, so this would
@@ -954,6 +1009,78 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    // -- resolve_template_name -----------------------------------------------
+
+    #[test]
+    fn resolve_template_name_returns_the_real_display_name_for_a_built_in() {
+        let dir = std::env::temp_dir().join(format!("ave-batch-tmplname-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let name = resolve_template_name(&dir, "tmpl_youtube_shorts")
+            .expect("built-in should resolve a name");
+        assert_eq!(name, "YouTube Shorts");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_template_name_errors_on_an_unknown_id() {
+        let dir = std::env::temp_dir().join(format!("ave-batch-tmplname-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let err = resolve_template_name(&dir, "does_not_exist").unwrap_err();
+        assert!(matches!(err, BatchError::UnknownTemplate { .. }));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // -- slugify_template_name (§11's exact <stem>_<slug> naming convention) --
+
+    #[test]
+    fn slugify_template_name_lowercases_a_simple_name() {
+        assert_eq!(slugify_template_name("TikTok"), "tiktok");
+    }
+
+    #[test]
+    fn slugify_template_name_replaces_spaces_with_a_single_underscore() {
+        assert_eq!(slugify_template_name("YouTube Shorts"), "youtube_shorts");
+    }
+
+    #[test]
+    fn slugify_template_name_collapses_runs_of_special_characters() {
+        // Punctuation/whitespace runs collapse to exactly one `_`, never a
+        // run of them — "Facebook Reel!!  (v2)" must not produce
+        // "facebook_reel____v2_".
+        assert_eq!(
+            slugify_template_name("Facebook Reel!!  (v2)"),
+            "facebook_reel_v2"
+        );
+    }
+
+    #[test]
+    fn slugify_template_name_trims_leading_and_trailing_separators() {
+        assert_eq!(slugify_template_name("  My Template!!  "), "my_template");
+    }
+
+    #[test]
+    fn slugify_template_name_handles_unicode_letters_by_dropping_them_as_separators() {
+        // This slug function only special-cases ASCII alphanumerics (§11's
+        // own worked examples are all plain ASCII); non-ASCII letters (e.g.
+        // Vietnamese diacritics) collapse to underscores like any other
+        // non-alphanumeric character rather than producing a non-filesystem
+        // -safe raw Unicode slug.
+        assert_eq!(slugify_template_name("Việt Nam"), "vi_t_nam");
+    }
+
+    #[test]
+    fn slugify_template_name_falls_back_to_a_default_for_an_all_punctuation_name() {
+        assert_eq!(slugify_template_name("!!!"), "template");
+        assert_eq!(slugify_template_name(""), "template");
+    }
+
+    #[test]
+    fn slugify_template_name_is_stable_and_idempotent() {
+        let slug = slugify_template_name("Original");
+        assert_eq!(slug, "original");
+        assert_eq!(slugify_template_name(&slug), slug);
+    }
+
     // -- default_output_path -------------------------------------------------
 
     #[test]
@@ -962,13 +1089,31 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let source = dir.join("my clip.mp4");
         let settings = render::find_preset("p1080").unwrap().settings;
-        let out = default_output_path(&source, &settings).expect("builds a path");
+        let out = default_output_path(&source, &settings, "edited").expect("builds a path");
         assert_eq!(out.parent().unwrap(), dir.join("batch_output"));
         assert_eq!(
             out.file_name().unwrap().to_str().unwrap(),
             "my clip_edited.mp4"
         );
         assert!(dir.join("batch_output").is_dir());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn default_output_path_with_a_template_slug_suffix_matches_11s_naming_convention() {
+        // §11's own worked example: video01.mp4 through the TikTok template
+        // -> video01_tiktok.mp4.
+        let dir =
+            std::env::temp_dir().join(format!("ave-batch-outpath-slug-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("video01.mp4");
+        let settings = render::find_preset("p1080").unwrap().settings;
+        let slug = slugify_template_name("TikTok");
+        let out = default_output_path(&source, &settings, &slug).expect("builds a path");
+        assert_eq!(
+            out.file_name().unwrap().to_str().unwrap(),
+            "video01_tiktok.mp4"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -981,7 +1126,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let source = dir.join("Việt Nam - Xin chào 🎬.mp4");
         let settings = render::find_preset("p1080").unwrap().settings;
-        let out = default_output_path(&source, &settings).expect("builds a path");
+        let out = default_output_path(&source, &settings, "edited").expect("builds a path");
         assert_eq!(out.parent().unwrap(), dir.join("batch_output"));
         assert_eq!(
             out.file_name().unwrap().to_str().unwrap(),
@@ -1010,7 +1155,7 @@ mod tests {
         assert!(source.to_string_lossy().len() > 260);
 
         let settings = render::find_preset("p1080").unwrap().settings;
-        let out = default_output_path(&source, &settings)
+        let out = default_output_path(&source, &settings, "edited")
             .expect("builds a path even for a long source path");
         assert_eq!(out.parent().unwrap(), nested.join("batch_output"));
         assert_eq!(
@@ -1041,8 +1186,8 @@ mod tests {
         // actually wants to exercise.
         let source = PathBuf::from(format!("{}/{}", dir.display(), r"\\server\share\clip.mp4"));
         let settings = render::find_preset("p1080").unwrap().settings;
-        let out =
-            default_output_path(&source, &settings).expect("builds a path for a UNC-shaped name");
+        let out = default_output_path(&source, &settings, "edited")
+            .expect("builds a path for a UNC-shaped name");
         assert_eq!(out.parent().unwrap(), dir.join("batch_output"));
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1108,6 +1253,7 @@ mod tests {
             transcription_language: None,
             template_id: None,
             export_preset_id: Some("fast_preview".to_string()),
+            output_suffix: None,
         }
     }
 
@@ -1177,7 +1323,7 @@ mod tests {
         assert!(matches!(result, Err(BatchError::Cancelled)));
 
         let settings = render::find_preset("fast_preview").unwrap().settings;
-        let expected_output = default_output_path(&source, &settings).unwrap();
+        let expected_output = default_output_path(&source, &settings, "edited").unwrap();
         assert!(
             !expected_output.exists(),
             "a cancelled job must never leave a partial output file behind"

@@ -39,6 +39,8 @@
 //! [`SportsOverlaySettings`]'s doc comment for exactly which existing type
 //! each one reuses.
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -55,6 +57,58 @@ pub mod error;
 pub mod io;
 
 pub use error::TemplateError;
+
+/// Every template ever produced by [`all_templates`] starts at this version
+/// (upgrade spec §20) — see [`Template::version`] doc comment.
+fn default_template_version() -> u32 {
+    1
+}
+
+/// A `Template`'s reference to one [`crate::assets::Asset`] by id (upgrade
+/// spec §17's "template reference asset bằng ID thay vì hard-code path"
+/// requirement) — used as-is for `Template::intro`/`outro`, which need no
+/// per-use override; [`WatermarkReference`]/[`BackgroundMusicReference`]
+/// below wrap the same `asset_id` with the one or two overrides §3's own
+/// example (`position`/`volume`) calls for.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct AssetReference {
+    pub asset_id: String,
+}
+
+/// Corner/center placement for a watermark or logo overlay (upgrade spec
+/// §3's own `position: top-right` example). Deliberately a new, small enum
+/// rather than reusing `project::CaptionAnchor` (vertical-only:
+/// top/center/bottom, no left/right) or `project::CaptionAlignment`
+/// (horizontal-only, meant for multi-line text alignment) — neither already
+/// expresses a 2D corner, and no overlay-rendering engine exists yet to
+/// consume a richer offset-based placement (see `assets::mod`'s own
+/// `Watermark`-is-structural-until-an-overlay-engine-exists note).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WatermarkPosition {
+    TopLeft,
+    #[default]
+    TopRight,
+    BottomLeft,
+    BottomRight,
+    Center,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct WatermarkReference {
+    pub asset_id: String,
+    pub position: WatermarkPosition,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct BackgroundMusicReference {
+    pub asset_id: String,
+    /// Linear gain multiplier, same convention as
+    /// `project::AudioClipSettings::volume` (upgrade spec §3's own example
+    /// literally writes `volume: 0.2`, matching this linear-gain
+    /// convention) — NOT a 0-100 percentage and NOT decibels.
+    pub volume: f64,
+}
 
 /// Structural-only placeholder for a render-time cross-clip transition (see
 /// module doc comment) — `Cut` is the only one every render actually
@@ -169,6 +223,33 @@ pub struct Template {
     /// attaches an existing `MediaItem::id` from their own project's media
     /// library at build/apply time, by convention, not through this schema.
     pub sports_overlay: Option<SportsOverlaySettings>,
+
+    // -- Upgrade spec §3/§17: asset-by-id references ------------------------
+    /// `#[serde(default)]` so every custom template saved before this field
+    /// existed still deserializes, as `None` — upgrade spec §17's own
+    /// asset-by-id requirement, validated against the Asset Library at
+    /// save/update time (see [`validate_asset_references`]), never a raw
+    /// path.
+    #[serde(default)]
+    pub intro: Option<AssetReference>,
+    #[serde(default)]
+    pub outro: Option<AssetReference>,
+    #[serde(default)]
+    pub watermark: Option<WatermarkReference>,
+    #[serde(default)]
+    pub background_music: Option<BackgroundMusicReference>,
+
+    // -- Upgrade spec §20: versioning ----------------------------------------
+    /// Starts at `1` for every built-in (immutable — never bumped, see
+    /// [`TemplateError::CannotEditBuiltIn`]) and for a brand-new custom
+    /// template; increments by 1 on every subsequent
+    /// `commands::templates::update_custom_template` call that saves over
+    /// this same custom template id. `#[serde(default = "default_template_version")]`
+    /// so a template JSON saved before versioning existed deserializes as
+    /// version `1` — the sensible "this is the only version that ever
+    /// existed" reading, not a made-up placeholder.
+    #[serde(default = "default_template_version")]
+    pub version: u32,
 }
 
 fn canvas_16x9() -> CanvasV1 {
@@ -226,6 +307,11 @@ fn talking_head() -> Template {
             system_prompt_prefix: None,
         },
         sports_overlay: None,
+        intro: None,
+        outro: None,
+        watermark: None,
+        background_music: None,
+        version: default_template_version(),
     }
 }
 
@@ -256,6 +342,11 @@ fn podcast() -> Template {
             system_prompt_prefix: None,
         },
         sports_overlay: None,
+        intro: None,
+        outro: None,
+        watermark: None,
+        background_music: None,
+        version: default_template_version(),
     }
 }
 
@@ -286,6 +377,11 @@ fn tiktok() -> Template {
             system_prompt_prefix: None,
         },
         sports_overlay: None,
+        intro: None,
+        outro: None,
+        watermark: None,
+        background_music: None,
+        version: default_template_version(),
     }
 }
 
@@ -324,6 +420,11 @@ fn youtube_shorts() -> Template {
             system_prompt_prefix: None,
         },
         sports_overlay: None,
+        intro: None,
+        outro: None,
+        watermark: None,
+        background_music: None,
+        version: default_template_version(),
     }
 }
 
@@ -353,6 +454,11 @@ fn news() -> Template {
             system_prompt_prefix: None,
         },
         sports_overlay: None,
+        intro: None,
+        outro: None,
+        watermark: None,
+        background_music: None,
+        version: default_template_version(),
     }
 }
 
@@ -384,6 +490,11 @@ fn tutorial() -> Template {
             system_prompt_prefix: None,
         },
         sports_overlay: None,
+        intro: None,
+        outro: None,
+        watermark: None,
+        background_music: None,
+        version: default_template_version(),
     }
 }
 
@@ -418,6 +529,11 @@ fn gaming() -> Template {
             system_prompt_prefix: None,
         },
         sports_overlay: None,
+        intro: None,
+        outro: None,
+        watermark: None,
+        background_music: None,
+        version: default_template_version(),
     }
 }
 
@@ -470,6 +586,11 @@ fn football_highlight() -> Template {
                 release_us: 400_000,
             },
         }),
+        intro: None,
+        outro: None,
+        watermark: None,
+        background_music: None,
+        version: default_template_version(),
     }
 }
 
@@ -518,16 +639,71 @@ pub struct SaveAsTemplateInput {
     pub export_preset_id: String,
     pub ai_prompt_config: AiPromptConfig,
     pub sports_overlay: Option<SportsOverlaySettings>,
+
+    // -- Upgrade spec §3/§17: asset-by-id references, validated against the
+    //    caller's Asset Library before ever landing on the produced
+    //    `Template` (see `validate_asset_references`). `#[serde(default)]`
+    //    so a frontend/older caller that doesn't send these yet still
+    //    deserializes cleanly as "none set".
+    #[serde(default)]
+    pub intro: Option<AssetReference>,
+    #[serde(default)]
+    pub outro: Option<AssetReference>,
+    #[serde(default)]
+    pub watermark: Option<WatermarkReference>,
+    #[serde(default)]
+    pub background_music: Option<BackgroundMusicReference>,
 }
 
-/// Save as Template (master prompt §36): snapshots the given project's
-/// `canvas` plus the caller-supplied "current" settings bundle into a new
-/// custom `Template`. Validates `caption_style_id`/`export_preset_id`
-/// against real catalogs (never silently produces a `Template` with a
-/// broken cross-reference).
-pub fn save_as_template_from_project(
+/// Upgrade spec §17: validates that every asset id a `Template` would
+/// reference (`intro`/`outro`/`watermark`/`background_music`) actually
+/// exists in the caller's Asset Library — `known_asset_ids` is the set of
+/// ids `commands::templates` reads from `assets::io::list_assets` at
+/// save/update time. A pure function (no filesystem access itself) so it's
+/// directly unit-testable against a synthetic `HashSet`, same separation of
+/// concerns `save_as_template_from_project` already keeps between "pure
+/// validation" and "the command layer's own I/O".
+fn validate_asset_references(
+    intro: Option<&AssetReference>,
+    outro: Option<&AssetReference>,
+    watermark: Option<&WatermarkReference>,
+    background_music: Option<&BackgroundMusicReference>,
+    known_asset_ids: &HashSet<String>,
+) -> Result<(), TemplateError> {
+    let check = |asset_id: &str| -> Result<(), TemplateError> {
+        if known_asset_ids.contains(asset_id) {
+            Ok(())
+        } else {
+            Err(TemplateError::UnknownAsset {
+                asset_id: asset_id.to_string(),
+            })
+        }
+    };
+    if let Some(r) = intro {
+        check(&r.asset_id)?;
+    }
+    if let Some(r) = outro {
+        check(&r.asset_id)?;
+    }
+    if let Some(r) = watermark {
+        check(&r.asset_id)?;
+    }
+    if let Some(r) = background_music {
+        check(&r.asset_id)?;
+    }
+    Ok(())
+}
+
+/// Shared builder behind both [`save_as_template_from_project`] (a brand
+/// new custom template) and [`update_custom_template`] (overwriting an
+/// existing one) — same caption-style/export-preset/asset-reference
+/// validation either way, differing only in `id`/`version`.
+fn build_custom_template(
+    id: String,
+    version: u32,
     project: &ProjectV1,
     input: SaveAsTemplateInput,
+    known_asset_ids: &HashSet<String>,
 ) -> Result<Template, TemplateError> {
     let caption_style = project
         .caption_styles
@@ -547,8 +723,16 @@ pub fn save_as_template_from_project(
         preset_id: input.export_preset_id.clone(),
     })?;
 
+    validate_asset_references(
+        input.intro.as_ref(),
+        input.outro.as_ref(),
+        input.watermark.as_ref(),
+        input.background_music.as_ref(),
+        known_asset_ids,
+    )?;
+
     Ok(Template {
-        id: format!("custom_{}", uuid::Uuid::new_v4()),
+        id,
         name: input.name,
         description: input.description,
         is_built_in: false,
@@ -560,14 +744,65 @@ pub fn save_as_template_from_project(
         export_preset_id: input.export_preset_id,
         ai_prompt_config: input.ai_prompt_config,
         sports_overlay: input.sports_overlay,
+        intro: input.intro,
+        outro: input.outro,
+        watermark: input.watermark,
+        background_music: input.background_music,
+        version,
     })
+}
+
+/// Save as Template (master prompt §36): snapshots the given project's
+/// `canvas` plus the caller-supplied "current" settings bundle into a new
+/// custom `Template` at version 1. Validates `caption_style_id`/
+/// `export_preset_id` against real catalogs and any `intro`/`outro`/
+/// `watermark`/`background_music` asset id against `known_asset_ids`
+/// (never silently produces a `Template` with a broken cross-reference).
+pub fn save_as_template_from_project(
+    project: &ProjectV1,
+    input: SaveAsTemplateInput,
+    known_asset_ids: &HashSet<String>,
+) -> Result<Template, TemplateError> {
+    build_custom_template(
+        format!("custom_{}", uuid::Uuid::new_v4()),
+        default_template_version(),
+        project,
+        input,
+        known_asset_ids,
+    )
+}
+
+/// Update an existing custom template in place (upgrade spec §20): same id,
+/// version bumped to `existing.version + 1`. Refuses to edit a built-in
+/// (`TemplateError::CannotEditBuiltIn`) — the caller
+/// (`commands::templates::update_custom_template`) is responsible for
+/// persisting `existing`'s pre-update content to the version-history store
+/// before ever calling this, so an older `template_id` + `template_version`
+/// pin (§20's own requirement) stays resolvable afterwards.
+pub fn update_custom_template(
+    existing: &Template,
+    project: &ProjectV1,
+    input: SaveAsTemplateInput,
+    known_asset_ids: &HashSet<String>,
+) -> Result<Template, TemplateError> {
+    if existing.is_built_in {
+        return Err(TemplateError::CannotEditBuiltIn {
+            template_id: existing.id.clone(),
+        });
+    }
+    build_custom_template(
+        existing.id.clone(),
+        existing.version + 1,
+        project,
+        input,
+        known_asset_ids,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::render::all_presets;
-    use std::collections::HashSet;
 
     #[test]
     fn all_eight_built_in_templates_are_present_exactly_once() {
@@ -798,6 +1033,10 @@ mod tests {
                 system_prompt_prefix: Some("Be extra aggressive.".to_string()),
             },
             sports_overlay: None,
+            intro: None,
+            outro: None,
+            watermark: None,
+            background_music: None,
         }
     }
 
@@ -805,7 +1044,8 @@ mod tests {
     fn save_as_template_captures_the_projects_canvas_and_the_callers_current_settings() {
         let project = sample_project();
         let input = sample_input("template_karaoke", "p1080");
-        let template = save_as_template_from_project(&project, input).expect("save_as_template");
+        let template = save_as_template_from_project(&project, input, &HashSet::new())
+            .expect("save_as_template");
 
         assert!(!template.is_built_in);
         assert!(template.id.starts_with("custom_"));
@@ -820,6 +1060,9 @@ mod tests {
             template.ai_prompt_config.emphasized_categories,
             vec![SmartEditCategory::Repetition]
         );
+        assert_eq!(template.version, 1);
+        assert!(template.intro.is_none());
+        assert!(template.watermark.is_none());
     }
 
     #[test]
@@ -829,7 +1072,8 @@ mod tests {
         // id must still resolve via the fallback catalog lookup.
         let project = sample_project();
         let input = sample_input("template_news", "p1080");
-        let template = save_as_template_from_project(&project, input).expect("save_as_template");
+        let template = save_as_template_from_project(&project, input, &HashSet::new())
+            .expect("save_as_template");
         assert_eq!(template.caption_style.id, "template_news");
     }
 
@@ -837,7 +1081,7 @@ mod tests {
     fn save_as_template_errors_on_an_unknown_caption_style_id() {
         let project = sample_project();
         let input = sample_input("does_not_exist", "p1080");
-        let err = save_as_template_from_project(&project, input).unwrap_err();
+        let err = save_as_template_from_project(&project, input, &HashSet::new()).unwrap_err();
         assert!(matches!(err, TemplateError::UnknownCaptionStyle { .. }));
     }
 
@@ -845,7 +1089,173 @@ mod tests {
     fn save_as_template_errors_on_an_unknown_export_preset_id() {
         let project = sample_project();
         let input = sample_input("template_karaoke", "does_not_exist");
-        let err = save_as_template_from_project(&project, input).unwrap_err();
+        let err = save_as_template_from_project(&project, input, &HashSet::new()).unwrap_err();
         assert!(matches!(err, TemplateError::UnknownExportPreset { .. }));
+    }
+
+    // -- asset-by-id references (upgrade spec §17) ---------------------------
+
+    #[test]
+    fn save_as_template_accepts_asset_references_that_exist_in_the_library() {
+        let project = sample_project();
+        let mut input = sample_input("template_karaoke", "p1080");
+        input.intro = Some(AssetReference {
+            asset_id: "asset_intro_1".to_string(),
+        });
+        input.watermark = Some(WatermarkReference {
+            asset_id: "asset_logo_1".to_string(),
+            position: WatermarkPosition::BottomRight,
+        });
+        input.background_music = Some(BackgroundMusicReference {
+            asset_id: "asset_music_1".to_string(),
+            volume: 0.2,
+        });
+        let known: HashSet<String> = ["asset_intro_1", "asset_logo_1", "asset_music_1"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        let template =
+            save_as_template_from_project(&project, input, &known).expect("save_as_template");
+        assert_eq!(
+            template.intro.unwrap().asset_id,
+            "asset_intro_1".to_string()
+        );
+        assert_eq!(
+            template.watermark.as_ref().unwrap().position,
+            WatermarkPosition::BottomRight
+        );
+        assert_eq!(template.background_music.unwrap().volume, 0.2);
+    }
+
+    #[test]
+    fn save_as_template_errors_on_an_unknown_asset_id() {
+        let project = sample_project();
+        let mut input = sample_input("template_karaoke", "p1080");
+        input.intro = Some(AssetReference {
+            asset_id: "does_not_exist".to_string(),
+        });
+        let err = save_as_template_from_project(&project, input, &HashSet::new()).unwrap_err();
+        assert!(matches!(
+            err,
+            TemplateError::UnknownAsset { asset_id } if asset_id == "does_not_exist"
+        ));
+    }
+
+    // -- versioning (upgrade spec §20) ----------------------------------------
+
+    #[test]
+    fn every_built_in_template_starts_at_version_1() {
+        for t in all_templates() {
+            assert_eq!(t.version, 1, "{} should start at version 1", t.id);
+        }
+    }
+
+    #[test]
+    fn update_custom_template_increments_the_version_on_each_call() {
+        let project = sample_project();
+        let v1 = save_as_template_from_project(
+            &project,
+            sample_input("template_karaoke", "p1080"),
+            &HashSet::new(),
+        )
+        .expect("v1");
+        assert_eq!(v1.version, 1);
+
+        let v2 = update_custom_template(
+            &v1,
+            &project,
+            sample_input("template_karaoke", "p1080"),
+            &HashSet::new(),
+        )
+        .expect("v2");
+        assert_eq!(v2.version, 2);
+        assert_eq!(v2.id, v1.id, "the id must stay stable across an update");
+
+        let v3 = update_custom_template(
+            &v2,
+            &project,
+            sample_input("template_karaoke", "p1080"),
+            &HashSet::new(),
+        )
+        .expect("v3");
+        assert_eq!(v3.version, 3);
+        assert_eq!(v3.id, v1.id);
+    }
+
+    #[test]
+    fn update_custom_template_refuses_to_edit_a_built_in() {
+        let project = sample_project();
+        let built_in = all_templates()
+            .into_iter()
+            .find(|t| t.id == "tmpl_tiktok")
+            .unwrap();
+        let err = update_custom_template(
+            &built_in,
+            &project,
+            sample_input("template_karaoke", "p1080"),
+            &HashSet::new(),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            TemplateError::CannotEditBuiltIn { template_id } if template_id == "tmpl_tiktok"
+        ));
+    }
+
+    #[test]
+    fn update_custom_template_also_validates_asset_references() {
+        let project = sample_project();
+        let v1 = save_as_template_from_project(
+            &project,
+            sample_input("template_karaoke", "p1080"),
+            &HashSet::new(),
+        )
+        .expect("v1");
+
+        let mut bad_input = sample_input("template_karaoke", "p1080");
+        bad_input.outro = Some(AssetReference {
+            asset_id: "does_not_exist".to_string(),
+        });
+        let err = update_custom_template(&v1, &project, bad_input, &HashSet::new()).unwrap_err();
+        assert!(matches!(err, TemplateError::UnknownAsset { .. }));
+    }
+
+    // -- backward-compatible deserialization ----------------------------------
+
+    /// An OLD-shaped custom template JSON, saved before this upgrade added
+    /// `intro`/`outro`/`watermark`/`background_music`/`version` — must still
+    /// deserialize, with the new fields defaulting sensibly (`None` for the
+    /// references, `1` for `version`, per each field's own
+    /// `#[serde(default...)]` attribute), not fail or silently drop data.
+    #[test]
+    fn an_old_template_json_without_the_new_fields_deserializes_with_sensible_defaults() {
+        let old_json = serde_json::json!({
+            "id": "custom_old_one",
+            "name": "Old Template",
+            "description": "Saved before versioning/asset-references existed",
+            "is_built_in": false,
+            "canvas": canvas_9x16(),
+            "caption_style": caption_style("template_karaoke"),
+            "zoom_intensity": "high",
+            "silence_settings": {
+                "padding_before_us": 1,
+                "padding_after_us": 2,
+                "merge_gap_us": 3
+            },
+            "transition_settings": { "transition_type": "cut", "duration_us": 0 },
+            "export_preset_id": "p1080",
+            "ai_prompt_config": { "emphasized_categories": [], "system_prompt_prefix": null },
+            "sports_overlay": null
+            // Deliberately no "intro"/"outro"/"watermark"/"background_music"/"version".
+        });
+
+        let template: Template =
+            serde_json::from_value(old_json).expect("old-shaped template JSON must still parse");
+        assert_eq!(template.version, 1);
+        assert!(template.intro.is_none());
+        assert!(template.outro.is_none());
+        assert!(template.watermark.is_none());
+        assert!(template.background_music.is_none());
     }
 }
