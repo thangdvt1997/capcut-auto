@@ -66,6 +66,8 @@ use specta::Type;
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
+use crate::history;
+
 use super::error::BatchError;
 use super::pipeline::{self, PipelineIo};
 use super::types::{BatchJob, BatchJobStatus, BatchPipelineConfig};
@@ -505,7 +507,11 @@ pub struct BatchProgressEvent {
     pub job: BatchJob,
 }
 
-struct PipelinePaths {
+/// `pub(crate)`, not private: `batch::dry_run` (upgrade-plan §18) resolves
+/// the exact same real ffmpeg/ffprobe/models/templates paths a real batch
+/// job would use, through this exact struct — never a second, parallel
+/// resolution.
+pub(crate) struct PipelinePaths {
     ffmpeg: PathBuf,
     ffprobe: PathBuf,
     models_dir: PathBuf,
@@ -513,7 +519,7 @@ struct PipelinePaths {
 }
 
 impl PipelinePaths {
-    fn as_io(&self) -> PipelineIo<'_> {
+    pub(crate) fn as_io(&self) -> PipelineIo<'_> {
         PipelineIo {
             ffmpeg: &self.ffmpeg,
             ffprobe: &self.ffprobe,
@@ -523,7 +529,7 @@ impl PipelinePaths {
     }
 }
 
-fn resolve_pipeline_paths(app: &AppHandle) -> Result<PipelinePaths, BatchError> {
+pub(crate) fn resolve_pipeline_paths(app: &AppHandle) -> Result<PipelinePaths, BatchError> {
     let ffmpeg =
         crate::commands::media::resolve_ffmpeg(app).map_err(|e| BatchError::StageFailed {
             stage: "Analyzing".to_string(),
@@ -554,10 +560,103 @@ fn resolve_pipeline_paths(app: &AppHandle) -> Result<PipelinePaths, BatchError> 
     })
 }
 
+/// Pure (no `AppHandle`) core of [`record_history_for_job`]: builds the
+/// `history::HistoryEntry` a just-finished job should be recorded as, or
+/// `None` if it isn't actually terminal yet (defensive — `run_job_with_events`
+/// only ever calls this once a job really has reached
+/// `Completed`/`Failed`/`Cancelled`). Split out specifically so this pass's
+/// own tests can exercise the *real* field-building logic (including a real
+/// end-to-end `process_job` run) without needing a running Tauri app — the
+/// same "AppHandle-free core, thin AppHandle-dependent wrapper" split this
+/// module already uses everywhere else (`create_batch` vs. `start_batch`,
+/// `prepare_retry` vs. `retry_batch_job`).
+///
+/// `template_version` is resolved fresh against `templates_dir` (`None` in
+/// the caller's early-failure case, where paths were never resolved) — see
+/// `history::HistoryEntry::template_version`'s own doc comment for the
+/// narrow race this implies.
+fn build_history_entry(
+    batch_id: &str,
+    handle: &JobHandle,
+    templates_dir: Option<&Path>,
+) -> Option<history::HistoryEntry> {
+    let snapshot = handle
+        .state
+        .lock()
+        .expect("batch job state mutex poisoned")
+        .snapshot();
+    if !snapshot.status.is_terminal() {
+        return None;
+    }
+    let template_version = handle.config.template_id.as_deref().and_then(|id| {
+        templates_dir.and_then(|dir| pipeline::resolve_template_version(dir, id).ok())
+    });
+    Some(history::HistoryEntry {
+        id: snapshot.id.clone(),
+        batch_id: batch_id.to_string(),
+        job_name: snapshot.name.clone(),
+        input_path: handle.media_path.clone(),
+        output_path: snapshot.output_path.clone(),
+        template_id: handle.config.template_id.clone(),
+        template_version,
+        ai_prompt: None,
+        ai_result: None,
+        execution_plan: handle.config.clone(),
+        capcut_draft_path: None,
+        started_at: snapshot.started_at.clone(),
+        ended_at: Some(crate::project::now_rfc3339()),
+        duration_us: Some(snapshot.elapsed_us),
+        status: snapshot.status,
+        error: snapshot.error.clone(),
+        // Never trusted here — `history::io::record_terminal`'s own upsert
+        // computes the real, database-backed count.
+        retry_count: 0,
+    })
+}
+
+/// Persists a real `history::HistoryEntry` row for `handle`'s job (upgrade-
+/// plan §21) once it has reached a terminal state — the only place
+/// `run_job_with_events` calls this from (both its early-failure branch,
+/// where `templates_dir` is `None` because paths were never resolved, and
+/// its normal post-`process_job` path). Reuses the *same* `MediaLibrary`
+/// Tauri-managed `Mutex<Connection>`/database file `commands::media`
+/// already opens — see `history` module doc comment for why this table
+/// doesn't get its own connection/file. The connection is locked only
+/// briefly, for this one write, never held across `process_job`'s own
+/// (potentially long) pipeline run.
+///
+/// Best-effort by design: a real database write failure here is logged
+/// (`tracing::warn!`), never propagated or allowed to affect the job's own
+/// already-decided terminal status — recording history must never be *why*
+/// a batch job that otherwise completed successfully appears to have
+/// failed.
+fn record_history_for_job(
+    app: &AppHandle,
+    batch_id: &str,
+    handle: &JobHandle,
+    templates_dir: Option<&Path>,
+) {
+    let Some(entry) = build_history_entry(batch_id, handle, templates_dir) else {
+        return;
+    };
+    let Some(library) = app.try_state::<crate::db::MediaLibrary>() else {
+        return;
+    };
+    let conn = library.0.lock().expect("media library mutex poisoned");
+    if let Err(e) = history::io::record_terminal(&conn, &entry) {
+        tracing::warn!(
+            "failed to record batch job history for job {}: {e}",
+            entry.id
+        );
+    }
+}
+
 /// Runs one job to completion, resolving real IO paths first and emitting
 /// `batch:progress` on every meaningful step (including the final terminal
 /// snapshot) — the real, `AppHandle`-dependent counterpart to `process_job`
-/// above.
+/// above. Also the one place a finished job's real `history::HistoryEntry`
+/// row gets written (`record_history_for_job`), on every path that ends in a
+/// terminal status.
 fn run_job_with_events(app: &AppHandle, job_id: &str) {
     let manager = app.state::<BatchJobManager>();
     let Some(handle) = manager.handle_for(job_id) else {
@@ -577,6 +676,7 @@ fn run_job_with_events(app: &AppHandle, job_id: &str) {
                 state.error = Some(e.to_string());
                 state.snapshot()
             };
+            record_history_for_job(app, &batch_id, &handle, None);
             let _ = app.emit(
                 BATCH_PROGRESS_EVENT,
                 BatchProgressEvent {
@@ -600,6 +700,7 @@ fn run_job_with_events(app: &AppHandle, job_id: &str) {
             },
         );
     });
+    record_history_for_job(app, &batch_id, &handle, Some(&paths.templates_dir));
 }
 
 /// Spawns the one dedicated worker thread for a freshly-created batch
@@ -1384,6 +1485,249 @@ mod tests {
             "expected both good-file jobs to complete with a real output file, unaffected by the \
              other pair's failure: {completed:?}"
         );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // -- history wiring (upgrade-plan §21 / `UPGRADE_PLAN.md` Phase U3) ------
+
+    #[test]
+    fn build_history_entry_returns_none_for_a_non_terminal_job() {
+        let handle = handle_for_path("a.mp4", minimal_config("p1080"));
+        assert!(build_history_entry("batch1", &handle, None).is_none());
+    }
+
+    #[test]
+    fn build_history_entry_and_record_terminal_round_trip_a_real_completed_job() {
+        let ffmpeg =
+            crate::ffmpeg::binaries::ffmpeg_path(None).expect("ffmpeg resolvable in test env");
+        let ffprobe =
+            crate::ffmpeg::binaries::ffprobe_path(None).expect("ffprobe resolvable in test env");
+        let dir = std::env::temp_dir().join(format!("ave-batch-mgr-history-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = synth_source(&ffmpeg, &dir);
+        let models_dir = dir.join("models");
+        let templates_dir = dir.join("templates");
+        let io = PipelineIo {
+            ffmpeg: &ffmpeg,
+            ffprobe: &ffprobe,
+            models_dir: &models_dir,
+            templates_dir: &templates_dir,
+        };
+
+        let handle = handle_for_path(source.to_str().unwrap(), minimal_config("fast_preview"));
+        process_job(&io, &handle, |_| {});
+
+        let entry = build_history_entry("batch1", &handle, Some(&templates_dir))
+            .expect("a completed job builds a real history entry");
+        assert_eq!(entry.status, BatchJobStatus::Completed);
+        assert_eq!(entry.batch_id, "batch1");
+        assert_eq!(entry.input_path, source.to_str().unwrap());
+        assert!(entry
+            .output_path
+            .as_deref()
+            .is_some_and(|p| Path::new(p).exists()));
+        assert_eq!(entry.execution_plan, handle.config);
+        assert!(entry.template_id.is_none());
+        assert!(entry.template_version.is_none());
+        assert!(
+            entry.ai_prompt.is_none(),
+            "not wired up yet — see module doc comment"
+        );
+        assert!(entry.ai_result.is_none());
+        assert!(entry.capcut_draft_path.is_none());
+        assert_eq!(entry.retry_count, 0);
+
+        // And the real SQLite round trip.
+        let conn = history::io::open_in_memory().unwrap();
+        let persisted = history::io::record_terminal(&conn, &entry).unwrap();
+        assert_eq!(persisted.id, entry.id);
+        assert_eq!(persisted.retry_count, 0);
+        assert_eq!(persisted.output_path, entry.output_path);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn build_history_entry_resolves_a_real_template_version_when_configured() {
+        let dir =
+            std::env::temp_dir().join(format!("ave-batch-mgr-history-tmplver-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut config = minimal_config("p1080");
+        config.template_id = Some("tmpl_tiktok".to_string());
+        let handle = handle_for_path("clip.mp4", config);
+        {
+            let mut state = handle.state.lock().unwrap();
+            state.mark_started();
+            state.status = BatchJobStatus::Completed;
+            state.finished_instant = Some(Instant::now());
+        }
+
+        let entry = build_history_entry("batch1", &handle, Some(&dir))
+            .expect("a completed job builds a real history entry");
+        assert_eq!(entry.template_id.as_deref(), Some("tmpl_tiktok"));
+        assert_eq!(
+            entry.template_version,
+            Some(1),
+            "tmpl_tiktok is a built-in, always version 1"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn build_history_entry_template_version_is_none_without_a_templates_dir() {
+        // Mirrors `run_job_with_events`'s own early-failure branch, where
+        // paths (including `templates_dir`) were never resolved.
+        let mut config = minimal_config("p1080");
+        config.template_id = Some("tmpl_tiktok".to_string());
+        let handle = handle_for_path("clip.mp4", config);
+        {
+            let mut state = handle.state.lock().unwrap();
+            state.mark_started();
+            state.status = BatchJobStatus::Failed;
+            state.error = Some("ffmpeg not found".to_string());
+            state.finished_instant = Some(Instant::now());
+        }
+
+        let entry = build_history_entry("batch1", &handle, None).unwrap();
+        assert_eq!(entry.template_id.as_deref(), Some("tmpl_tiktok"));
+        assert!(entry.template_version.is_none());
+    }
+
+    #[test]
+    fn retrying_a_failed_job_then_recording_again_bumps_retry_count_on_the_same_row() {
+        let ffmpeg =
+            crate::ffmpeg::binaries::ffmpeg_path(None).expect("ffmpeg resolvable in test env");
+        let ffprobe =
+            crate::ffmpeg::binaries::ffprobe_path(None).expect("ffprobe resolvable in test env");
+        let dir =
+            std::env::temp_dir().join(format!("ave-batch-mgr-history-retry-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let models_dir = dir.join("models");
+        let templates_dir = dir.join("templates");
+        let io = PipelineIo {
+            ffmpeg: &ffmpeg,
+            ffprobe: &ffprobe,
+            models_dir: &models_dir,
+            templates_dir: &templates_dir,
+        };
+
+        let missing = dir.join("does-not-exist.mp4");
+        let handle = handle_for_path(missing.to_str().unwrap(), minimal_config("fast_preview"));
+
+        process_job(&io, &handle, |_| {});
+        let entry1 = build_history_entry("batch1", &handle, Some(&templates_dir))
+            .expect("a failed job still builds a real history entry");
+        assert_eq!(entry1.status, BatchJobStatus::Failed);
+        assert!(entry1.error.is_some());
+
+        let conn = history::io::open_in_memory().unwrap();
+        let persisted1 = history::io::record_terminal(&conn, &entry1).unwrap();
+        assert_eq!(persisted1.retry_count, 0);
+
+        // Same reset `BatchJobManager::prepare_retry` performs — same
+        // `job_id`, not a fresh one.
+        {
+            let mut state = handle.state.lock().unwrap();
+            assert_eq!(state.status, BatchJobStatus::Failed);
+            state.reset_for_retry();
+        }
+        handle.cancel.store(false, Ordering::SeqCst);
+        handle.pause.store(false, Ordering::SeqCst);
+
+        process_job(&io, &handle, |_| {});
+        let entry2 = build_history_entry("batch1", &handle, Some(&templates_dir))
+            .expect("the retried job also builds a real history entry");
+        assert_eq!(entry2.id, entry1.id, "same logical job -> same history row");
+
+        let persisted2 = history::io::record_terminal(&conn, &entry2).unwrap();
+        assert_eq!(persisted2.retry_count, 1, "exactly one retry recorded");
+        assert_eq!(
+            history::io::list_history(&conn, 100, 0).unwrap().len(),
+            1,
+            "still exactly one row, not a duplicate"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // -- history-backed re-run (§21's "Re-run" / "Run with another template") --
+
+    #[test]
+    fn a_history_backed_rerun_and_rerun_with_template_both_really_complete() {
+        // Real, full-stack proof that `history::build_rerun_config`/
+        // `build_rerun_with_template_config` produce configs
+        // `BatchJobManager::create_batch` can actually run to completion —
+        // not just a config-equality assertion.
+        let ffmpeg =
+            crate::ffmpeg::binaries::ffmpeg_path(None).expect("ffmpeg resolvable in test env");
+        let ffprobe =
+            crate::ffmpeg::binaries::ffprobe_path(None).expect("ffprobe resolvable in test env");
+        let dir = std::env::temp_dir().join(format!("ave-batch-mgr-rerun-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Real `silence_settings` templates need real VAD-detectable speech
+        // — see `synth_named_source`'s own doc comment above for why a
+        // plain sine tone isn't used for these.
+        let source = synth_named_source(&ffmpeg, &dir, "video01.mp4");
+        let models_dir = dir.join("models");
+        let templates_dir = dir.join("templates");
+        let io = PipelineIo {
+            ffmpeg: &ffmpeg,
+            ffprobe: &ffprobe,
+            models_dir: &models_dir,
+            templates_dir: &templates_dir,
+        };
+
+        let manager = BatchJobManager::default();
+        let mut original_config = minimal_config("fast_preview");
+        original_config.template_id = Some("tmpl_tiktok".to_string());
+        let (orig_batch_id, orig_job_ids) =
+            manager.create_batch(vec![source.to_str().unwrap().to_string()], original_config);
+        let orig_handle = manager.handle_for(&orig_job_ids[0]).unwrap();
+        process_job(&io, &orig_handle, |_| {});
+        let entry = build_history_entry(&orig_batch_id, &orig_handle, Some(&templates_dir))
+            .expect("the original job builds a real history entry");
+        assert_eq!(entry.status, BatchJobStatus::Completed);
+
+        // Re-run: a brand-new batch/job, same input + execution_plan.
+        let rerun_config = history::build_rerun_config(&entry);
+        assert_eq!(rerun_config, entry.execution_plan);
+        let (rerun_batch_id, rerun_job_ids) =
+            manager.create_batch(vec![entry.input_path.clone()], rerun_config);
+        assert_ne!(
+            rerun_batch_id, orig_batch_id,
+            "a re-run is a brand-new batch"
+        );
+        assert_ne!(
+            rerun_job_ids[0], entry.id,
+            "a re-run job gets its own fresh job id"
+        );
+        let rerun_handle = manager.handle_for(&rerun_job_ids[0]).unwrap();
+        process_job(&io, &rerun_handle, |_| {});
+        let rerun_jobs = manager.list_jobs(&rerun_batch_id).unwrap();
+        assert_eq!(rerun_jobs[0].status, BatchJobStatus::Completed);
+        assert!(rerun_jobs[0]
+            .output_path
+            .as_deref()
+            .is_some_and(|p| Path::new(p).exists()));
+
+        // Run with another template: same input, template_id swapped.
+        let with_other_template =
+            history::build_rerun_with_template_config(&entry, "tmpl_youtube_shorts".to_string());
+        assert_eq!(
+            with_other_template.template_id.as_deref(),
+            Some("tmpl_youtube_shorts")
+        );
+        let (other_batch_id, other_job_ids) =
+            manager.create_batch(vec![entry.input_path.clone()], with_other_template);
+        let other_handle = manager.handle_for(&other_job_ids[0]).unwrap();
+        process_job(&io, &other_handle, |_| {});
+        let other_jobs = manager.list_jobs(&other_batch_id).unwrap();
+        assert_eq!(other_jobs[0].status, BatchJobStatus::Completed);
+        assert!(other_jobs[0]
+            .output_path
+            .as_deref()
+            .is_some_and(|p| Path::new(p).exists()));
 
         std::fs::remove_dir_all(&dir).ok();
     }

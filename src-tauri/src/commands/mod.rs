@@ -13,6 +13,7 @@ pub mod capcut;
 pub mod captions;
 pub mod diagnostics;
 pub mod highlights;
+pub mod history;
 pub mod media;
 pub mod project;
 pub mod reframe;

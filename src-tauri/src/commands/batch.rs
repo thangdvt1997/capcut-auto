@@ -4,7 +4,8 @@
 
 use tauri::{AppHandle, State};
 
-use crate::batch::{self, BatchJob, BatchJobManager, BatchPipelineConfig};
+use crate::batch::{self, BatchJob, BatchJobManager, BatchPipelineConfig, DryRunResult};
+use crate::commands::ai::AiProviderSettings;
 use crate::error::AppErrorPayload;
 
 /// Starts a new batch: one `BatchJob` per `media_paths` entry, all `config`.
@@ -108,4 +109,23 @@ pub fn retry_batch_job(
     job_id: String,
 ) -> Result<(), AppErrorPayload> {
     batch::manager::retry_batch_job(app, &manager, &job_id).map_err(|e| AppErrorPayload::from(&e))
+}
+
+/// Preview / Dry Run (upgrade spec §18, `UPGRADE_PLAN.md` Phase U3): runs the
+/// real resolution/decision logic one batch job for `media_path` would run —
+/// real probing, real template/export-preset resolution, real (cheap) VAD
+/// analysis when silence removal would apply, and (optionally, when no
+/// template was chosen and real `ai_settings` are given) a real AI Auto
+/// Template recommendation — without ever rendering or actually
+/// transcribing. See `batch::dry_run` module doc comment for the full
+/// writeup of which analysis steps are real vs. estimated.
+#[tauri::command]
+#[specta::specta]
+pub fn dry_run_batch_job(
+    app: AppHandle,
+    media_path: String,
+    config: BatchPipelineConfig,
+    ai_settings: Option<AiProviderSettings>,
+) -> Result<DryRunResult, AppErrorPayload> {
+    batch::dry_run::run_dry_run_for_media(&app, media_path, config, ai_settings)
 }

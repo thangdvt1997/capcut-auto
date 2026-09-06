@@ -1295,6 +1295,103 @@ async retryBatchJob(jobId: string) : Promise<Result<null, AppErrorPayload>> {
 }
 },
 /**
+ * Preview / Dry Run (upgrade spec §18, `UPGRADE_PLAN.md` Phase U3): runs the
+ * real resolution/decision logic one batch job for `media_path` would run —
+ * real probing, real template/export-preset resolution, real (cheap) VAD
+ * analysis when silence removal would apply, and (optionally, when no
+ * template was chosen and real `ai_settings` are given) a real AI Auto
+ * Template recommendation — without ever rendering or actually
+ * transcribing. See `batch::dry_run` module doc comment for the full
+ * writeup of which analysis steps are real vs. estimated.
+ */
+async dryRunBatchJob(mediaPath: string, config: BatchPipelineConfig, aiSettings: AiProviderSettings | null) : Promise<Result<DryRunResult, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dry_run_batch_job", { mediaPath, config, aiSettings }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Newest-first, real `LIMIT`/`OFFSET` pagination (`history::io::list_history`'s
+ * own doc comment). `limit`/`offset` default to `50`/`0` when omitted —
+ * same "a bounded default, never an unbounded query" posture
+ * `commands::media::search_media_library` already established.
+ */
+async listHistory(limit: number | null, offset: number | null) : Promise<Result<HistoryEntry[], AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_history", { limit, offset }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getHistoryEntry(id: string) : Promise<Result<HistoryEntry, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_history_entry", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * §21's "Clone settings": returns the exact `BatchPipelineConfig` that
+ * shaped this history entry's own job — a caller can start a brand-new
+ * batch with it (e.g. after tweaking a couple of fields), but this command
+ * itself starts nothing.
+ */
+async cloneHistoryEntrySettings(id: string) : Promise<Result<BatchPipelineConfig, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("clone_history_entry_settings", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * §21's "Re-run": re-queues the entry's original input through its own
+ * `execution_plan` as a brand-new batch (`history::build_rerun_config` +
+ * `BatchJobManager::create_batch`, Phase 11's real batch creation, reused
+ * unchanged) — never a parallel "resume the old job" mechanism. The
+ * original history entry is left completely untouched; the new job earns
+ * its own fresh row once it finishes.
+ */
+async rerunFromHistory(id: string) : Promise<Result<RerunResult, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("rerun_from_history", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * §21's "Run with another template": same as [`rerun_from_history`], but
+ * `execution_plan.template_id` is swapped for `new_template_id` first
+ * (`history::build_rerun_with_template_config`) — every other setting from
+ * the original run (silence removal, captions, export preset) is kept.
+ */
+async rerunFromHistoryWithTemplate(id: string, newTemplateId: string) : Promise<Result<RerunResult, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("rerun_from_history_with_template", { id, newTemplateId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Not one of §21's own listed actions, but a real primitive worth exposing
+ * alongside the rest of this CRUD surface (a "delete this run" row action)
+ * — see `history::io::delete_history_entry`'s own doc comment.
+ */
+async deleteHistoryEntry(id: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_history_entry", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Runs a real update check against the configured manifest endpoint(s),
  * then — only if a newer version was actually found — checks whether a
  * render/batch job is in flight before ever reporting the update as safe
@@ -1909,6 +2006,13 @@ export type CaptionStyle = { id: string; name: string; font_family: string; font
  * is `Some`; documented here so that gap isn't rediscovered then).
  */
 background: CaptionBackground | null; outline: CaptionOutline | null; shadow: CaptionShadow | null; opacity: number; safe_margins: SafeMargins }
+export type CaptionsPlan = { enabled: boolean; reason: string; 
+/**
+ * Only meaningful when `enabled` — the real, already-resolved
+ * transcription model id a real batch job would use. Transcription
+ * itself never actually runs during a dry run (module doc comment).
+ */
+transcription_model_id: string | null }
 export type Clip = { id: string; track_id: string; 
 /**
  * `None` for e.g. a pure-effect or generated-caption clip.
@@ -2011,6 +2115,32 @@ working: boolean }
  * needs to know about.
  */
 export type DiskSpaceInfo = { path: string; total_bytes: number; available_bytes: number }
+export type DryRunEditingPlan = { silence_removal: SilenceRemovalPlan; captions: CaptionsPlan }
+export type DryRunExpectedOutput = { 
+/**
+ * The exact real path `run_pipeline` would render to
+ * (`pipeline::default_output_path`'s own naming logic) — no render
+ * ever happens, so this path never actually gets written by a dry run.
+ */
+output_path: string; 
+/**
+ * Real prediction: probed duration minus the real VAD-computed
+ * silence-removal total, only when that total was actually computed
+ * (`SilenceRemovalPlan::predicted_removed_us`). `None` when silence
+ * removal is disabled, or wasn't computed (module doc comment) — never
+ * a fabricated number.
+ */
+predicted_duration_us: number | null; width: number; height: number; container: Container; video_codec: VideoCodec }
+/**
+ * Real, probed facts about the source media (upgrade spec §18's "Input").
+ */
+export type DryRunInput = { path: string; duration_us: number; width: number; height: number; has_audio: boolean; has_video: boolean }
+/**
+ * Upgrade spec §18's exact field list (minus "CapCut Execution Plan" — see
+ * module doc comment) — everything grounded in a real resolution/computation
+ * this codebase already has, never a fabricated number.
+ */
+export type DryRunResult = { input: DryRunInput; resolved_template: Template | null; ai_decision: AiTemplateRecommendation | null; editing_plan: DryRunEditingPlan; expected_output: DryRunExpectedOutput }
 /**
  * Auto-ducking parameters (master prompt §38's exact field list) for one
  * `Music`-role track, keyed by track id in `ProjectV1::track_ducking`.
@@ -2144,6 +2274,87 @@ export type HighlightDetectionResult = { highlights: Highlight[];
  * fallback the caller can't distinguish from "the AI path worked".
  */
 used_ai_semantic_signal: boolean }
+/**
+ * One durable row: everything §21 asks a Video Processing History to keep
+ * about one batch job. See this module's own doc comment for the full
+ * storage-location/field-honesty writeup.
+ */
+export type HistoryEntry = { 
+/**
+ * Exactly the originating `BatchJob::id` — see module doc comment's
+ * "Retry / re-run semantics" section for why this, not a separate uuid.
+ */
+id: string; 
+/**
+ * The batch this job was created as part of (`batch::manager`'s own
+ * `batch_order`/`job_batch` bookkeeping) — not one of §21's own listed
+ * fields, but free to record (the manager already tracks it) and useful
+ * for a frontend that wants to group history rows by the batch run they
+ * came from.
+ */
+batch_id: string; job_name: string; input_path: string; output_path: string | null; template_id: string | null; 
+/**
+ * Resolved fresh (built-in-then-custom two-tier lookup,
+ * `batch::pipeline::resolve_template_version`) at the moment this job's
+ * history row is written — i.e. right after it reaches a terminal
+ * state, using the same `templates_dir` the pipeline itself just ran
+ * against. Honest narrow gap: `batch::pipeline::run_pipeline`'s own
+ * template resolution happens once, right at the *start* of the job
+ * (its "upfront validation" section), and its resolved `Template` value
+ * is not itself threaded back out through `run_pipeline`'s return type
+ * (which would be a wider, more invasive change than this pass's scope
+ * — several existing tests destructure `run_pipeline`'s `Ok` value as a
+ * bare `PathBuf`). So if a custom template is edited *while* one of its
+ * own jobs is still mid-render, this field reflects the version current
+ * at job-*completion* time, not necessarily the exact version the
+ * render itself used moments earlier. A narrow, documented race, not a
+ * silently wrong answer — built-ins never have this problem (always
+ * version 1, per `templates` module's own versioning design).
+ */
+template_version: number | null; 
+/**
+ * Always `None` from this pipeline today — see module doc comment.
+ */
+ai_prompt: string | null; 
+/**
+ * Always `None` from this pipeline today — see module doc comment.
+ */
+ai_result: string | null; 
+/**
+ * The real `BatchPipelineConfig` this job ran with — §21's "Editing
+ * plan" and "Execution plan" rows collapsed into this one real,
+ * already-serializable type, since this pipeline has no separate
+ * AI-authored `EditPlan`-shaped object per job (`ai::edit_plan::EditPlan`
+ * exists elsewhere in this codebase, but `batch::pipeline::run_pipeline`
+ * never constructs or consumes one) — `BatchPipelineConfig` genuinely
+ * *is* both concepts here: it's what shaped both the editing
+ * (silence-removal/caption settings) and the execution/render
+ * (export preset, template, output naming) for this exact job. Stored
+ * as a JSON TEXT column (`history::io`), not a second bespoke plan
+ * type.
+ */
+execution_plan: BatchPipelineConfig; 
+/**
+ * Always `None` — see module doc comment's "CapCut worker" writeup.
+ */
+capcut_draft_path: string | null; 
+/**
+ * RFC3339.
+ */
+started_at: string; 
+/**
+ * RFC3339, `None` only if a row were ever read before its job finished
+ * (never actually happens — `record_terminal` is only ever called once
+ * a job is already terminal).
+ */
+ended_at: string | null; duration_us: number | null; status: BatchJobStatus; error: string | null; 
+/**
+ * `0` the first time this job reaches a terminal state; incremented by
+ * `history::io::record_terminal`'s own upsert every subsequent time
+ * (i.e. once per retry that reaches a terminal state again) — never
+ * set directly by a caller (see that function's doc comment).
+ */
+retry_count: number }
 export type ImportResult = { source_path: string; media: MediaItem | null; error: AppErrorPayload | null }
 /**
  * A model found actually installed on disk (master prompt §60 "Installed
@@ -2313,6 +2524,13 @@ export type RenderSettingsInput = { preset_id: string | null; width: number | nu
  */
 hardware_encoder: EncoderBackend | null }
 /**
+ * A real, named specta-typed struct — not a bare tuple — for the same
+ * reason every other multi-field command return in this codebase
+ * (`BatchProgressEvent`) is a struct: a tuple loses its field names
+ * crossing the Tauri IPC boundary into TypeScript, a struct doesn't.
+ */
+export type RerunResult = { batch_id: string; job_ids: string[] }
+/**
  * Fractional (`0.0..=1.0`) inset from each canvas edge that caption
  * placement should stay clear of (master prompt §26 "safe margins") —
  * e.g. to avoid a platform's own UI chrome (TikTok's caption/like/share
@@ -2420,6 +2638,27 @@ export type ShortsSettings = { duration: DurationSetting; aspect: ShortsAspect;
  * to only ever expose the four named buttons.
  */
 clip_count: number }
+export type SilenceRemovalPlan = { enabled: boolean; params: CutParams | null; source: SilenceSettingsSource | null; 
+/**
+ * Real, VAD-computed total microseconds that would be cut — `Some`
+ * only when `enabled` and the source has a real audio track to score
+ * (module doc comment). Never a fabricated estimate.
+ */
+predicted_removed_us: number | null }
+/**
+ * Which real config value a resolved [`CutParams`] came from — mirrors the
+ * exact precedence `run_pipeline`'s own `effective_cut_params` uses.
+ */
+export type SilenceSettingsSource = 
+/**
+ * `BatchPipelineConfig::remove_silence` was set explicitly.
+ */
+"explicit" | 
+/**
+ * No explicit override; the resolved template's own `silence_settings`
+ * applied instead.
+ */
+"template"
 /**
  * Master prompt §19's exact action list. Closed enum, `#[serde(tag =
  * "type")]` — same "no free-form string ever gets pattern-matched or

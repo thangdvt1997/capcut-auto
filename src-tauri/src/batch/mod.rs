@@ -33,12 +33,18 @@
 //!   worker-thread spawning, and the real `AppHandle`-dependent glue
 //!   (resolving ffmpeg/models/templates directories, emitting
 //!   `batch:progress` events).
+//! - `dry_run`: Preview / Dry Run (upgrade spec §18, `UPGRADE_PLAN.md` Phase
+//!   U3) — runs `pipeline`'s own real resolution/decision logic for one
+//!   media file without ever rendering, returning a structured
+//!   [`dry_run::DryRunResult`].
 
+pub mod dry_run;
 pub mod error;
 pub mod manager;
 pub mod pipeline;
 pub mod types;
 
+pub use dry_run::DryRunResult;
 pub use error::BatchError;
 pub use manager::{BatchJobManager, BatchProgressEvent};
 pub use types::{BatchJob, BatchJobStatus, BatchPipelineConfig};

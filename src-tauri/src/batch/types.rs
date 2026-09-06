@@ -103,7 +103,7 @@ pub struct BatchJob {
 /// export, which always runs (a batch item with no output isn't really a
 /// "batch job" in the master prompt's own Jobs-UI-with-an-Output-column
 /// sense).
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct BatchPipelineConfig {
     /// `None` skips the whole silence-removal stage. When both this and
     /// `template_id` are given, this explicit value always wins over the

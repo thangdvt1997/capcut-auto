@@ -31,6 +31,7 @@ pub mod fcpxml;
 pub mod ffmpeg;
 pub mod fs_safety;
 pub mod highlights;
+pub mod history;
 pub mod jobs;
 pub mod logging;
 pub mod media;
@@ -162,6 +163,13 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::batch::resume_batch_job,
         commands::batch::cancel_batch_job,
         commands::batch::retry_batch_job,
+        commands::batch::dry_run_batch_job,
+        commands::history::list_history,
+        commands::history::get_history_entry,
+        commands::history::clone_history_entry_settings,
+        commands::history::rerun_from_history,
+        commands::history::rerun_from_history_with_template,
+        commands::history::delete_history_entry,
         commands::update::check_for_update,
         commands::update::install_available_update,
         commands::diagnostics::get_system_information,
@@ -278,6 +286,17 @@ pub fn run() {
             // media library.
             commands::media::init_media_library(app.handle())
                 .expect("failed to initialize media library database");
+            // Video Processing History (upgrade spec §21, `UPGRADE_PLAN.md`
+            // Phase U3): a `history` table in that *same* database/connection
+            // (see `crate::history` module doc comment for why it's not a
+            // third persistence mechanism) — created right after the
+            // connection above is opened and managed.
+            {
+                let library = tauri::Manager::state::<crate::db::MediaLibrary>(app);
+                let conn = library.0.lock().expect("media library mutex poisoned");
+                crate::history::io::init_schema(&conn)
+                    .expect("failed to initialize history table schema");
+            }
             // The live timeline session (current project + undo history +
             // clipboard), managed the same way as `MediaLibrary` above.
             // Starts empty; `commands::timeline::load_timeline_project`

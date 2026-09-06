@@ -75,7 +75,12 @@ pub struct PipelineIo<'a> {
     pub templates_dir: &'a Path,
 }
 
-fn stage_failed(stage: &str, details: impl std::fmt::Display) -> BatchError {
+/// `pub(crate)`, not private: `batch::dry_run` (upgrade-plan §18) reuses this
+/// exact error-shaping helper rather than duplicating it — the same
+/// "reuse the shared sub-piece, don't reimplement it" discipline that
+/// module's own doc comment follows for `resolve_template`/
+/// `default_output_path` below.
+pub(crate) fn stage_failed(stage: &str, details: impl std::fmt::Display) -> BatchError {
     BatchError::StageFailed {
         stage: stage.to_string(),
         details: details.to_string(),
@@ -178,7 +183,14 @@ fn checkpoint(
 /// Looks up `template_id` first against the built-in catalog, then against
 /// `templates_dir`'s custom templates — the exact same two-tier lookup
 /// `commands::templates::export_template` already does.
-fn resolve_template(templates_dir: &Path, template_id: &str) -> Result<Template, BatchError> {
+///
+/// `pub(crate)`, not private: `batch::dry_run` (upgrade-plan §18) resolves
+/// the real template a dry run would apply through this exact function —
+/// never a second, parallel lookup.
+pub(crate) fn resolve_template(
+    templates_dir: &Path,
+    template_id: &str,
+) -> Result<Template, BatchError> {
     if let Some(t) = templates::all_templates()
         .into_iter()
         .find(|t| t.id == template_id)
@@ -207,6 +219,22 @@ pub(crate) fn resolve_template_name(
     template_id: &str,
 ) -> Result<String, BatchError> {
     resolve_template(templates_dir, template_id).map(|t| t.name)
+}
+
+/// Sibling of [`resolve_template_name`] for `history::HistoryEntry::template_version`
+/// (upgrade-plan §21): resolves just a template id's current real `version`
+/// (built-in-then-custom two-tier lookup, same one real lookup reused, not a
+/// second one). `batch::manager` calls this once a job reaches a terminal
+/// state, to record which version of its template was current at that
+/// moment — see `HistoryEntry::template_version`'s own doc comment for the
+/// narrow, honestly-documented race this implies (resolved at
+/// history-write time, not re-threaded out of this same `resolve_template`
+/// call already made once, earlier, inside `run_pipeline` itself).
+pub(crate) fn resolve_template_version(
+    templates_dir: &Path,
+    template_id: &str,
+) -> Result<u32, BatchError> {
+    resolve_template(templates_dir, template_id).map(|t| t.version)
 }
 
 /// Turns a template's real display `name` (e.g. `"YouTube Shorts"`, or a
@@ -439,7 +467,12 @@ fn remap_transcript_across_fragments(
 /// per-template slug (`slugify_template_name`) for a multi-template batch's
 /// job (`BatchPipelineConfig::output_suffix` doc comment covers the full
 /// precedence/rationale).
-fn default_output_path(
+///
+/// `pub(crate)`, not private: `batch::dry_run` (upgrade-plan §18) computes a
+/// dry run's real predicted output path through this exact function — the
+/// same real naming logic a real batch job would use, never a re-derived
+/// guess.
+pub(crate) fn default_output_path(
     source: &Path,
     settings: &render::RenderSettings,
     suffix: &str,
@@ -1027,6 +1060,43 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let err = resolve_template_name(&dir, "does_not_exist").unwrap_err();
         assert!(matches!(err, BatchError::UnknownTemplate { .. }));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // -- resolve_template_version (upgrade-plan §21's `HistoryEntry::template_version`) --
+
+    #[test]
+    fn resolve_template_version_is_1_for_a_built_in() {
+        let dir = std::env::temp_dir().join(format!("ave-batch-tmplver-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let version = resolve_template_version(&dir, "tmpl_tiktok")
+            .expect("built-in should resolve a version");
+        assert_eq!(version, 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_template_version_errors_on_an_unknown_id() {
+        let dir = std::env::temp_dir().join(format!("ave-batch-tmplver-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let err = resolve_template_version(&dir, "does_not_exist").unwrap_err();
+        assert!(matches!(err, BatchError::UnknownTemplate { .. }));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_template_version_reflects_a_saved_custom_templates_real_version() {
+        let dir = std::env::temp_dir().join(format!("ave-batch-tmplver-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut custom = templates::all_templates().remove(0);
+        custom.id = "custom_v3test".to_string();
+        custom.is_built_in = false;
+        custom.version = 3;
+        template_io::save_custom_template(&dir, &custom).expect("save custom template");
+
+        let version = resolve_template_version(&dir, "custom_v3test")
+            .expect("custom should resolve a version");
+        assert_eq!(version, 3);
         std::fs::remove_dir_all(&dir).ok();
     }
 
