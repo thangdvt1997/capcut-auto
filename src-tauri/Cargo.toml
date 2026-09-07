@@ -128,6 +128,13 @@ sysinfo = { version = "0.36.1", default-features = false, features = ["system", 
 # sufficient here than a whole extra debounce crate tied to a specific
 # `notify` minor version.
 notify = "6.1"
+# Base64 encode/decode for `voice::custom_api::CustomApiVoiceProvider`'s
+# documented synthesize-response contract (the `audio_base64` field —
+# CapCut Auto's own Custom API protocol, not any specific third-party
+# vendor's spec; see that module's doc comment). Already present
+# transitively (Cargo.lock, pulled in by `keyring` and others) at this same
+# 0.22 line, so this adds no new major version to the dependency graph.
+base64 = "0.22"
 
 [features]
 default = ["custom-protocol"]

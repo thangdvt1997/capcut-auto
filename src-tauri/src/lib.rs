@@ -46,6 +46,7 @@ pub mod timeline;
 pub mod transcription;
 pub mod update;
 pub mod vad;
+pub mod voice;
 pub mod zoom;
 
 /// Builds the shared `tauri-specta` command/type registry. Used both by the
@@ -176,6 +177,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::batch::resume_batch_job,
         commands::batch::cancel_batch_job,
         commands::batch::retry_batch_job,
+        commands::batch::get_worker_pool_status,
         commands::batch::dry_run_batch_job,
         commands::history::list_history,
         commands::history::get_history_entry,
@@ -189,6 +191,8 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::diagnostics::get_logs_folder_path,
         commands::diagnostics::open_logs_folder,
         commands::diagnostics::get_last_session_status,
+        commands::voice::test_voice_connection,
+        commands::voice::list_voices,
         fcpxml::export::export_fcpxml,
         capcut::export::export_project_to_capcut_draft,
     ])
@@ -341,6 +345,27 @@ pub fn run() {
             // `BatchJobManager` for the whole app, tracking every in-flight
             // batch job by id — see `batch::manager` module doc comment.
             tauri::Manager::manage(app, crate::batch::BatchJobManager::default());
+            // Phase D4a (`STUDIO_PLAN.md`): spawn the real, fixed-size
+            // worker-pool threads for the manager just managed above — must
+            // happen *after* `.manage()`, not before, since each worker
+            // thread's own loop re-fetches `app.state::<BatchJobManager>()`
+            // fresh every iteration (`batch::manager::spawn_worker_pool`'s
+            // own doc comment) and that call would panic if the state
+            // container didn't already hold this type. No settings-
+            // persistence UI exists yet for `max_concurrent_jobs`, so this
+            // pass's own real, honest default
+            // (`batch::manager::DEFAULT_MAX_CONCURRENT_JOBS`, matching
+            // `promt.md` §5's own "Max concurrent videos: 3" example) is
+            // used directly — a real, changeable constructor argument, not
+            // a value hidden away where nothing could ever override it.
+            {
+                let batch_manager = tauri::Manager::state::<crate::batch::BatchJobManager>(app);
+                crate::batch::manager::spawn_worker_pool(
+                    &batch_manager,
+                    app.handle().clone(),
+                    crate::batch::manager::DEFAULT_MAX_CONCURRENT_JOBS,
+                );
+            }
             // Smart Automation (upgrade spec §27, `UPGRADE_PLAN.md` Phase
             // U4): one `RuleWatcherManager` for the whole app, tracking a
             // real live `notify` watcher per currently-enabled `WatchFolder`

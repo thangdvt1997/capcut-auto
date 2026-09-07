@@ -1476,7 +1476,15 @@ async retryBatchJob(jobId: string) : Promise<Result<null, AppErrorPayload>> {
  * Template recommendation — without ever rendering or actually
  * transcribing. See `batch::dry_run` module doc comment for the full
  * writeup of which analysis steps are real vs. estimated.
+ * A real, live "Workers: N, Running: R, Queue: Q" snapshot (Phase D4a,
+ * `STUDIO_PLAN.md`'s own worker/slot rearchitecture) — the backend surface
+ * `promt.md`'s dashboard mock needs to honestly show real worker/queue
+ * numbers, rather than a per-batch approximation. See
+ * `batch::manager::WorkerPoolStatus` doc comment for what each field means.
  */
+async getWorkerPoolStatus() : Promise<WorkerPoolStatus> {
+    return await TAURI_INVOKE("get_worker_pool_status");
+},
 async dryRunBatchJob(mediaPath: string, config: BatchPipelineConfig, aiSettings: AiProviderSettings | null) : Promise<Result<DryRunResult, AppErrorPayload>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("dry_run_batch_job", { mediaPath, config, aiSettings }) };
@@ -1642,6 +1650,20 @@ async openLogsFolder() : Promise<Result<null, AppErrorPayload>> {
 },
 async getLastSessionStatus() : Promise<SessionStatus> {
     return await TAURI_INVOKE("get_last_session_status");
+},
+async testVoiceConnection(settings: VoiceProviderSettings) : Promise<VoiceConnectionTestResult> {
+    return await TAURI_INVOKE("test_voice_connection", { settings });
+},
+/**
+ * "Refresh Voices" (`promt.md` §9) backing call.
+ */
+async listVoices(settings: VoiceProviderSettings) : Promise<Result<VoiceInfo[], AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_voices", { settings }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 /**
  * Tauri command: export `project` as a FCPXML 1.11 file at `output_path`.
@@ -3477,6 +3499,58 @@ export type VadParams = { threshold: number; min_silence_us: number; min_speech_
  */
 export type VadScoreSummary = { media_id: string; chunk_count: number; chunk_duration_us: number; sample_count: number }
 export type VideoCodec = "h264" | "h265" | "vp_9"
+export type VoiceConnectionTestResult = { success: boolean; 
+/**
+ * Human-readable outcome — never a raw API key, on either path (same
+ * contract as `commands::ai::AiConnectionTestResult::message`).
+ */
+message: string }
+/**
+ * `promt.md` §9's Male/Female/Narrator voice-role concept, used by
+ * [`VoiceInfo::gender`] (for "Refresh Voices" listing).
+ */
+export type VoiceGender = "male" | "female" | 
+/**
+ * Neither strictly male nor female — a provider's own "narrator" voice
+ * preset, or one it does not categorize at all.
+ */
+"other"
+/**
+ * One selectable voice a provider can list ("Refresh Voices", `promt.md`
+ * §9).
+ */
+export type VoiceInfo = { voice_id: string; name: string; gender: VoiceGender | null; language: string | null; 
+/**
+ * A provider-hosted audio sample URL, if any — lets a future "Test
+ * Voice" (`promt.md` §9) preview without a real synthesis call. Not
+ * currently consumed anywhere (no command surface calls `list_voices`
+ * and plays a preview yet); present so a provider that has one doesn't
+ * need to drop it.
+ */
+preview_url: string | null }
+/**
+ * Which of `promt.md` §9's three named providers a configured profile
+ * speaks. Mirrors `commands::ai::AiProviderKind`'s own shape/rationale —
+ * the frontend needs to tell these apart (labeling, whether a key/URL is
+ * normally required) even though only `CustomApi` has a real backend.
+ */
+export type VoiceProviderKind = "nts_gen_ai" | "gpt_so_vits" | "custom_api"
+/**
+ * `promt.md` §9's Provider/Server-API-URL/API-Key settings — the
+ * per-request shape every command below takes, same "frontend owns storing
+ * this, backend never persists it" posture `commands::ai::AiProviderSettings`
+ * already documents.
+ */
+export type VoiceProviderSettings = { provider: VoiceProviderKind; 
+/**
+ * Server/API URL (`promt.md` §9). Ignored by the stub providers, which
+ * never make a network call at all.
+ */
+base_url: string; 
+/**
+ * `None` for a keyless server, or when a stub provider is selected.
+ */
+credential_ref: string | null }
 /**
  * Corner/center placement for a watermark or logo overlay (upgrade spec
  * §3's own `position: top-right` example). Deliberately a new, small enum
@@ -3503,6 +3577,26 @@ peaks: number[];
  */
 bin_duration_us: number }
 export type Word = { text: string; start_us: number; end_us: number; confidence: number }
+/**
+ * A real, live "Workers: N, Running: R, Queue: Q" snapshot
+ * (`commands::batch::get_worker_pool_status`) — module doc comment's
+ * "Concurrency model" section.
+ */
+export type WorkerPoolStatus = { 
+/**
+ * The configured pool size (0 if [`spawn_worker_pool`] was never
+ * called against this manager).
+ */
+workers: number; 
+/**
+ * How many workers currently hold a claimed job right now.
+ */
+running: number; 
+/**
+ * How many jobs are waiting in the shared queue, not yet claimed by
+ * any worker.
+ */
+queued: number }
 export type ZoomIntensity = "off" | "low" | "medium" | "high"
 /**
  * One detected/manual zoom trigger event: a time range worth punching in

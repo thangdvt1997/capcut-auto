@@ -27,4 +27,5 @@ pub mod timeline;
 pub mod transcription;
 pub mod update;
 pub mod vad;
+pub mod voice;
 pub mod zoom;
