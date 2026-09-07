@@ -4,7 +4,9 @@
 
 use tauri::{AppHandle, State};
 
-use crate::batch::{self, BatchJob, BatchJobManager, BatchPipelineConfig, DryRunResult};
+use crate::batch::{
+    self, BatchJob, BatchJobManager, BatchPipelineConfig, DryRunResult, WorkerPoolStatus,
+};
 use crate::commands::ai::AiProviderSettings;
 use crate::error::AppErrorPayload;
 
@@ -119,6 +121,17 @@ pub fn retry_batch_job(
 /// Template recommendation — without ever rendering or actually
 /// transcribing. See `batch::dry_run` module doc comment for the full
 /// writeup of which analysis steps are real vs. estimated.
+/// A real, live "Workers: N, Running: R, Queue: Q" snapshot (Phase D4a,
+/// `STUDIO_PLAN.md`'s own worker/slot rearchitecture) — the backend surface
+/// `promt.md`'s dashboard mock needs to honestly show real worker/queue
+/// numbers, rather than a per-batch approximation. See
+/// `batch::manager::WorkerPoolStatus` doc comment for what each field means.
+#[tauri::command]
+#[specta::specta]
+pub fn get_worker_pool_status(manager: State<'_, BatchJobManager>) -> WorkerPoolStatus {
+    manager.worker_pool_status()
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn dry_run_batch_job(

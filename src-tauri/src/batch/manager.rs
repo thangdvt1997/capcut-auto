@@ -5,29 +5,72 @@
 //! `Arc<AtomicBool>` per job for pause (cancel keeps the exact same
 //! `AtomicBool`-polling primitive those modules established).
 //!
-//! ## Concurrency model
+//! ## Concurrency model (Phase D4a — rearchitected from one-thread-per-batch)
 //!
-//! Each `start_batch` call spawns **one dedicated worker thread** that
-//! processes that batch's own files strictly **sequentially** (concurrency
-//! = 1 within a batch). This is a deliberate, documented choice over a
-//! multi-worker pool:
+//! **A fixed-size pool of `max_concurrent_jobs` real worker threads, pulling
+//! from one shared, cross-batch queue of individual `BatchJob`s.** This
+//! replaces this module's original design (one dedicated worker thread per
+//! `start_batch` call, sequential within that batch, unbounded across
+//! distinct batches) per an explicit product decision (`STUDIO_PLAN.md`
+//! "Phase D4a", resolving that plan's own §4 blocking question) — the
+//! original design satisfied master prompt §50/§85's "no 20 simultaneous
+//! ffmpeg processes" concern only *within* one batch; two distinct batches
+//! (or a large multi-template fan-out) could still run fully concurrently
+//! against each other, with no real cap on total ffmpeg processes across the
+//! whole app. `promt.md` §5's own worked example ("Workers: 3, Running:
+//! 3... Max concurrent videos: [3]... queue manager must automatically pull
+//! the next job when a worker finishes") needed a *real*, global cap — this
+//! is that cap.
 //!
-//! - Every pipeline stage this batch orchestrator runs (PCM extraction, VAD
-//!   scoring, whisper transcription, ffmpeg rendering) itself spawns or runs
-//!   a real ffmpeg/whisper subprocess-or-equivalent — master prompt §50/§85's
-//!   "no 20 simultaneous ffmpeg processes" concern is about exactly this
-//!   kind of unbounded fan-out, and one-worker-per-batch is the simplest
-//!   bound that can never violate it for a single batch.
-//! - It makes cancel/pause/retry trivial to reason about correctly: at any
-//!   moment there is at most one `JobHandle` actually "in flight" per batch,
-//!   so there's no cross-thread queue-ordering question to get wrong.
-//!
-//! A user starting *multiple* batches concurrently still gets one thread
-//! per batch (each batch is independent) — this pass does not add a global
-//! cap across batches, since nothing in this codebase's existing job
-//! managers (render/transcription/proxy) caps concurrent *distinct* jobs
-//! either; only within one batch's own file queue is concurrency bounded to
-//! 1. Documented here as this pass's honest scope, not an oversight.
+//! - **The queue**: `BatchJobManager::queue` (`Mutex<VecDeque<String>>` of
+//!   job ids) + `queue_cv` (`Condvar`) — plain `std::sync` primitives, no
+//!   channel/async-mpsc machinery, matching every other piece of shared
+//!   mutable state this module (and `RenderJobs`/`TranscriptionJobs`
+//!   alongside it) already uses. `create_batch`/`create_multi_template_batch`
+//!   are unchanged: they still build every `BatchJob` up front (unchanged
+//!   N×M fan-out/naming logic) and hand back the batch id + ordered job ids;
+//!   `enqueue_jobs` is the new, separate step that actually pushes those job
+//!   ids onto the shared queue and wakes any parked worker.
+//! - **The pool**: `spawn_worker_pool(app, max_concurrent_jobs)`, called
+//!   **once**, at app startup (`lib.rs`'s `setup`, on the already-`.manage()`d
+//!   instance) — not once per `start_batch` call, which is the core
+//!   structural change this pass makes. Each of the `max_concurrent_jobs`
+//!   threads (`tauri::async_runtime::spawn_blocking`, this codebase's own
+//!   established "never block Tauri's own command-dispatch thread"
+//!   convention) loops forever: block on the shared queue (`pop_blocking`),
+//!   run the claimed job to completion (`run_job_with_events`, entirely
+//!   unchanged — the same real path resolution/event-emitting/history-
+//!   recording as before), mark itself free, loop. `max_concurrent_jobs` has
+//!   a real, honest default (`DEFAULT_MAX_CONCURRENT_JOBS = 3`, matching
+//!   `promt.md` §5's own example) and is a real, changeable constructor
+//!   argument to `spawn_worker_pool` — no settings-persistence UI exists yet
+//!   for this value, so a parameter/default is this pass's honest scope, not
+//!   a hardcoded constant pretending to be configurable.
+//! - **`start_batch`/`start_multi_template_batch`/`retry_batch_job`'s own
+//!   real job** is now just: build the real `BatchJob` records (unchanged),
+//!   push their ids onto the shared queue (`spawn_batch_worker`, kept as the
+//!   exact same name/signature every existing caller — `commands::batch`,
+//!   `commands::history`'s two rerun commands, `automation::manager` —
+//!   already uses, now a thin `enqueue_jobs` wrapper instead of a
+//!   thread-spawner), and return immediately. The actual processing already
+//!   happens on the pool's own long-lived worker threads, never a thread
+//!   this call spawns itself.
+//! - **A real "Workers: N, Running: R, Queue: Q" snapshot**:
+//!   `worker_pool_status()` / `commands::batch::get_worker_pool_status` —
+//!   `workers` is the configured pool size, `running` is how many workers
+//!   currently hold a claimed job (`active_workers`, incremented by
+//!   `pop_blocking`, decremented by `mark_job_done`), `queued` is the real
+//!   live length of the shared queue.
+//! - **Jobs from every batch — single-template, multi-template fan-out, a
+//!   history re-run, a retry — all go through the same one shared queue.**
+//!   A consequence, deliberate and matching the product decision this
+//!   rearchitecture was asked for: jobs that used to be guaranteed strictly
+//!   sequential *within* one batch (including one multi-template batch's own
+//!   N×M jobs) can now genuinely run concurrently with each other, up to
+//!   `max_concurrent_jobs` at once, exactly like jobs from two different
+//!   batches always could. Nothing about a single job's own per-stage
+//!   pipeline logic (`batch::pipeline::run_pipeline`) changed to support
+//!   this — only how/when a job gets picked up did.
 //!
 //! ## Pause/resume semantics ("resume where technically possible")
 //!
@@ -40,11 +83,25 @@
 //! itself, without OS-level process suspension this project deliberately
 //! doesn't use) supports cleanly. Resuming is simply clearing the pause flag;
 //! the parked worker thread wakes up and starts the next stage normally.
+//! Nothing about this changed under the pool rearchitecture above: each
+//! job's own `cancel`/`pause` `Arc<AtomicBool>` pair is shared directly with
+//! whichever worker thread happens to have claimed that job (`JobHandle` is
+//! `Clone`, cheaply, and the flags themselves don't care which thread reads
+//! or writes them) — pausing/cancelling/resuming one job never affects any
+//! other job any other worker is concurrently processing, and one worker
+//! parked in a paused job's `checkpoint` loop never blocks any other
+//! worker's own `pop_blocking`/`process_job` loop.
 //!
 //! ## Retry semantics
 //!
 //! `retry` re-queues a `Failed` job **from the start** (`Queued`, `progress:
 //! 0.0`, `error: None`) rather than resuming from its last-completed stage.
+//! A retried job goes back onto the same shared cross-batch queue every
+//! other job comes from (`enqueue_jobs`) — not some batch-specific
+//! structure, since a "batch" is no longer a processing unit at all after
+//! the rearchitecture above, only a grouping label (`batch_order`/
+//! `job_batch`) for `list_jobs`/history. Whichever worker is next free picks
+//! it up.
 //! This is the simpler, safer, honestly-scoped default per this feature's
 //! own requirement: this pipeline has no per-stage checkpointing of
 //! intermediate artifacts (the in-progress `ProjectV1` being edited lives
@@ -55,10 +112,10 @@
 //! model that's still not installed), it fails again identically, which is
 //! itself the correct, honest outcome.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -266,6 +323,53 @@ pub struct BatchJobManager {
     jobs: Mutex<HashMap<String, JobHandle>>,
     batch_order: Mutex<HashMap<String, Vec<String>>>,
     job_batch: Mutex<HashMap<String, String>>,
+    /// The one shared, cross-batch queue of job ids every worker thread
+    /// pulls from (module doc comment's "Concurrency model" section). Plain
+    /// `Mutex<VecDeque<_>>` + `Condvar`, not a channel — matches every other
+    /// piece of shared mutable state in this module/`RenderJobs`/
+    /// `TranscriptionJobs`.
+    queue: Mutex<VecDeque<String>>,
+    queue_cv: Condvar,
+    /// How many workers currently hold a claimed job (incremented by
+    /// [`BatchJobManager::pop_blocking`], decremented by
+    /// [`BatchJobManager::mark_job_done`]) — the "Running" half of
+    /// [`WorkerPoolStatus`].
+    active_workers: AtomicUsize,
+    /// The configured pool size (set by [`BatchJobManager::set_worker_pool_size`],
+    /// itself called by [`spawn_worker_pool`]) — the "Workers" half of
+    /// [`WorkerPoolStatus`]. `0` for a manager that never had a pool spawned
+    /// (every pure-logic unit test in this module's own `tests` mod below,
+    /// which never runs against a real `AppHandle`) — an honest "no pool
+    /// configured" reading, not a fabricated default.
+    worker_pool_size: AtomicUsize,
+    /// Set only by [`BatchJobManager::shutdown_workers`] — used exclusively
+    /// by this module's own tests, to join their locally-spawned worker
+    /// threads cleanly at the end of a test. The real app's own pool never
+    /// shuts down mid-run (module doc comment: workers loop forever).
+    shutdown: AtomicBool,
+}
+
+/// `promt.md` §5's own "Max concurrent videos: 3" worked example — this
+/// pass's real, honest default for `max_concurrent_jobs` when nothing else
+/// configures it. No settings-persistence UI exists yet for this value
+/// (module doc comment), so this constant plus [`spawn_worker_pool`]'s own
+/// parameter is this pass's honest scope: a real, changeable value, just not
+/// yet backed by a persisted user setting.
+pub const DEFAULT_MAX_CONCURRENT_JOBS: usize = 3;
+
+/// A real, live "Workers: N, Running: R, Queue: Q" snapshot
+/// (`commands::batch::get_worker_pool_status`) — module doc comment's
+/// "Concurrency model" section.
+#[derive(Debug, Clone, Copy, Serialize, Type)]
+pub struct WorkerPoolStatus {
+    /// The configured pool size (0 if [`spawn_worker_pool`] was never
+    /// called against this manager).
+    pub workers: usize,
+    /// How many workers currently hold a claimed job right now.
+    pub running: usize,
+    /// How many jobs are waiting in the shared queue, not yet claimed by
+    /// any worker.
+    pub queued: usize,
 }
 
 impl BatchJobManager {
@@ -493,6 +597,93 @@ impl BatchJobManager {
         handle.pause.store(false, Ordering::SeqCst);
         Ok(())
     }
+
+    // -- Shared cross-batch worker-pool queue (Phase D4a) --------------------
+    // Pure/`AppHandle`-free by design (same split every other piece of real
+    // logic in this struct already uses) — directly unit-testable, and lets
+    // this pass's own tests spin up a real local pool of worker threads
+    // against a real `BatchJobManager` without needing a running Tauri app.
+
+    /// Pushes every `job_ids` entry onto the shared queue and wakes every
+    /// worker thread currently parked in [`BatchJobManager::pop_blocking`]
+    /// waiting for work. `pub(crate)`: `batch::manager`'s own real
+    /// `spawn_batch_worker`/`retry_batch_job` call this directly, and this
+    /// module's own tests exercise it against a real manager with no running
+    /// `AppHandle`.
+    pub(crate) fn enqueue_jobs(&self, job_ids: Vec<String>) {
+        {
+            let mut queue = self.queue.lock().expect("batch queue mutex poisoned");
+            queue.extend(job_ids);
+        }
+        self.queue_cv.notify_all();
+    }
+
+    /// Blocks the calling thread until a job is available, claims it
+    /// (recording one more worker as `active_workers`) and returns its id —
+    /// or `None` once [`BatchJobManager::shutdown_workers`] has been called
+    /// (only ever used by this module's own tests, to join their local
+    /// worker threads cleanly; the real app's own pool never calls
+    /// `shutdown_workers` and so never observes `None` here). Re-checks the
+    /// shutdown flag at least every 200ms even without an explicit
+    /// `notify_all`, so a shutdown request is never missed due to a
+    /// lost-wakeup race.
+    pub(crate) fn pop_blocking(&self) -> Option<String> {
+        let mut queue = self.queue.lock().expect("batch queue mutex poisoned");
+        loop {
+            if self.shutdown.load(Ordering::SeqCst) {
+                return None;
+            }
+            if let Some(job_id) = queue.pop_front() {
+                self.active_workers.fetch_add(1, Ordering::SeqCst);
+                return Some(job_id);
+            }
+            queue = self
+                .queue_cv
+                .wait_timeout(queue, Duration::from_millis(200))
+                .expect("batch queue condvar poisoned")
+                .0;
+        }
+    }
+
+    /// Marks one worker as finished processing its most recently claimed job
+    /// (the `active_workers` half of [`BatchJobManager::pop_blocking`]'s
+    /// claim) — called once per job, right after it reaches a terminal
+    /// state, before that worker loops back to `pop_blocking` for its next
+    /// one.
+    pub(crate) fn mark_job_done(&self) {
+        self.active_workers.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    /// Records the configured worker-pool size for [`WorkerPoolStatus`]
+    /// reporting — a plain bookkeeping call, deliberately independent of
+    /// whether any real worker threads actually exist (`spawn_worker_pool`
+    /// calls this before spawning; this module's own tests call it directly
+    /// to exercise `worker_pool_status()`'s `workers` field without needing
+    /// a real `AppHandle`-backed pool at all).
+    pub(crate) fn set_worker_pool_size(&self, max_concurrent_jobs: usize) {
+        self.worker_pool_size
+            .store(max_concurrent_jobs, Ordering::SeqCst);
+    }
+
+    /// Stops every worker currently (or later) parked in `pop_blocking` —
+    /// see that method's own doc comment. Test-only (`#[cfg(test)]`): the
+    /// real app's own pool never shuts down mid-run, so nothing in
+    /// production code ever calls this.
+    #[cfg(test)]
+    pub(crate) fn shutdown_workers(&self) {
+        self.shutdown.store(true, Ordering::SeqCst);
+        self.queue_cv.notify_all();
+    }
+
+    /// The real, live "Workers: N, Running: R, Queue: Q" snapshot
+    /// (`commands::batch::get_worker_pool_status`).
+    pub fn worker_pool_status(&self) -> WorkerPoolStatus {
+        WorkerPoolStatus {
+            workers: self.worker_pool_size.load(Ordering::SeqCst),
+            running: self.active_workers.load(Ordering::SeqCst),
+            queued: self.queue.lock().expect("batch queue mutex poisoned").len(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -716,25 +907,55 @@ fn run_job_with_events(app: &AppHandle, job_id: &str) {
     record_history_for_job(app, &batch_id, &handle, Some(&paths.templates_dir));
 }
 
-/// Spawns the one dedicated worker thread for a freshly-created batch
-/// (module doc comment: concurrency = 1 within a batch, processed strictly
-/// in the order `create_batch` returned).
-pub fn spawn_batch_worker(app: AppHandle, job_ids: Vec<String>) {
-    tauri::async_runtime::spawn_blocking(move || {
-        for job_id in job_ids {
+/// Spawns the real, fixed-size worker pool (module doc comment's
+/// "Concurrency model" section): `max_concurrent_jobs` real OS threads
+/// (`tauri::async_runtime::spawn_blocking`, matching every other long-
+/// running job manager in this codebase — see `RenderJobs`/
+/// `TranscriptionJobs` doc comments), each looping forever: block on the
+/// shared queue (`BatchJobManager::pop_blocking`), run whatever job it
+/// claims to completion (`run_job_with_events`, entirely unchanged), mark
+/// itself free (`mark_job_done`), loop.
+///
+/// Called **exactly once**, at app startup (`lib.rs`'s `setup`, on the
+/// already-`.manage()`d instance — see that call site's own comment for why
+/// that ordering matters), never per-`start_batch` call — that's the core
+/// structural change this pass makes relative to this module's original
+/// one-thread-per-batch design.
+pub fn spawn_worker_pool(manager: &BatchJobManager, app: AppHandle, max_concurrent_jobs: usize) {
+    manager.set_worker_pool_size(max_concurrent_jobs);
+    for _ in 0..max_concurrent_jobs {
+        let app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || loop {
+            let job_id = {
+                let manager = app.state::<BatchJobManager>();
+                manager.pop_blocking()
+            };
+            let Some(job_id) = job_id else {
+                return;
+            };
             run_job_with_events(&app, &job_id);
-        }
-    });
+            app.state::<BatchJobManager>().mark_job_done();
+        });
+    }
 }
 
-fn spawn_retry_worker(app: AppHandle, job_id: String) {
-    tauri::async_runtime::spawn_blocking(move || {
-        run_job_with_events(&app, &job_id);
-    });
+/// Pushes every one of `job_ids` onto the shared, cross-batch worker-pool
+/// queue (`BatchJobManager::enqueue_jobs`) and returns immediately — the
+/// pool's own fixed worker threads (spawned once, at app startup,
+/// [`spawn_worker_pool`]) pick these up as capacity allows. Kept as its own
+/// function, with this exact name/signature unchanged from this module's
+/// original one-thread-per-batch design, purely so every existing caller
+/// (`start_batch`/`start_multi_template_batch` below, plus
+/// `commands::history`'s two rerun commands and `automation::manager`, which
+/// all call this directly) keeps working with zero changes of their own —
+/// this pass's real structural change is entirely inside this function's own
+/// body.
+pub fn spawn_batch_worker(app: AppHandle, job_ids: Vec<String>) {
+    app.state::<BatchJobManager>().enqueue_jobs(job_ids);
 }
 
-/// `commands::batch::start_batch`'s real logic: create the batch, then spawn
-/// its worker thread.
+/// `commands::batch::start_batch`'s real logic: create the batch, then
+/// enqueue its jobs onto the shared worker-pool queue.
 pub fn start_batch(
     app: AppHandle,
     manager: &BatchJobManager,
@@ -760,11 +981,12 @@ pub fn start_batch(
 /// creation, not per job).
 ///
 /// Once every id resolves, fans out via `BatchJobManager::create_multi_template_batch`
-/// and spawns the exact same single sequential worker thread `start_batch`
-/// does (`spawn_batch_worker`) — a multi-template batch is still one batch,
-/// processed one job at a time, just with more jobs enumerated up front
-/// (module doc comment's concurrency-model section: this pass does not
-/// relax "one worker thread per batch, sequential within a batch").
+/// and enqueues every resulting job onto the exact same shared worker-pool
+/// queue `start_batch` uses (`spawn_batch_worker`) — its N×M jobs are
+/// genuinely eligible to run concurrently with each other (and with jobs
+/// from any other batch), up to the pool's own configured
+/// `max_concurrent_jobs`, per this pass's rearchitecture (module doc
+/// comment's "Concurrency model" section).
 pub fn start_multi_template_batch(
     app: AppHandle,
     manager: &BatchJobManager,
@@ -789,15 +1011,20 @@ pub fn start_multi_template_batch(
 }
 
 /// `commands::batch::retry_batch_job`'s real logic: validate + reset the
-/// job's state (`BatchJobManager::prepare_retry`), then spawn a fresh
-/// single-job worker thread for it.
+/// job's state (`BatchJobManager::prepare_retry`), then push it back onto
+/// the shared worker-pool queue — not some batch-specific structure, since a
+/// "batch" is no longer a processing unit after this pass's rearchitecture
+/// (module doc comment). `_app` is kept (rather than dropped from this
+/// function's signature) purely so `commands::batch::retry_batch_job`'s own
+/// call site needs no change; it's no longer needed to spawn a dedicated
+/// thread the way the original one-thread-per-retry design required.
 pub fn retry_batch_job(
-    app: AppHandle,
+    _app: AppHandle,
     manager: &BatchJobManager,
     job_id: &str,
 ) -> Result<(), BatchError> {
     manager.prepare_retry(job_id)?;
-    spawn_retry_worker(app, job_id.to_string());
+    manager.enqueue_jobs(vec![job_id.to_string()]);
     Ok(())
 }
 
@@ -1762,6 +1989,448 @@ mod tests {
             .output_path
             .as_deref()
             .is_some_and(|p| Path::new(p).exists()));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // -- Phase D4a: real worker-pool concurrency (shared cross-batch queue,
+    //    N real worker threads) -------------------------------------------
+    //
+    // These tests exercise `BatchJobManager`'s own real queue/pool
+    // primitives (`enqueue_jobs`/`pop_blocking`/`mark_job_done`/
+    // `shutdown_workers`/`worker_pool_status`) directly, spinning up local
+    // `std::thread`-based worker loops that mirror `spawn_worker_pool`'s own
+    // real loop body exactly (pop -> `process_job` -> mark done) minus the
+    // `AppHandle`-dependent path resolution/event-emitting/history-recording
+    // wrapper (`run_job_with_events`) — the same "test the AppHandle-free
+    // core directly" split this whole file already uses everywhere else, and
+    // the only way to exercise this pass's own new concurrency primitive at
+    // all without a running Tauri app (which no test in this crate has any
+    // way to construct).
+
+    #[test]
+    fn worker_pool_status_reports_pool_size_active_workers_and_queue_length() {
+        let manager = BatchJobManager::default();
+        let status = manager.worker_pool_status();
+        assert_eq!(
+            status.workers, 0,
+            "no pool was ever spawned against this pure-logic manager"
+        );
+        assert_eq!(status.running, 0);
+        assert_eq!(status.queued, 0);
+
+        manager.set_worker_pool_size(3);
+        assert_eq!(manager.worker_pool_status().workers, 3);
+
+        let (_batch_id, job_ids) = manager.create_batch(
+            vec!["a.mp4".to_string(), "b.mp4".to_string()],
+            minimal_config("p1080"),
+        );
+        manager.enqueue_jobs(job_ids.clone());
+        let status = manager.worker_pool_status();
+        assert_eq!(status.queued, 2, "both jobs are queued, none claimed yet");
+        assert_eq!(status.running, 0);
+
+        let claimed = manager.pop_blocking().expect("a job is queued");
+        assert!(job_ids.contains(&claimed));
+        let status = manager.worker_pool_status();
+        assert_eq!(status.queued, 1, "one job claimed, one still queued");
+        assert_eq!(status.running, 1, "one worker now holds a claimed job");
+
+        manager.mark_job_done();
+        assert_eq!(
+            manager.worker_pool_status().running,
+            0,
+            "the worker freed itself after finishing"
+        );
+    }
+
+    /// Real OS-level count of processes whose command line contains
+    /// `marker` — the exact same technique
+    /// `tests/performance_validation.rs`'s own
+    /// `count_processes_with_marker`/`bounded_concurrency_batch_pipeline_never_runs_more_than_one_ffmpeg_process_at_a_time`
+    /// use to prove the OLD (<=1) per-batch bound (see that file's module
+    /// doc comment for why a per-test-unique marker, not the crate-internal
+    /// registry, is the correct, non-flaky check under `cargo test`'s
+    /// default parallelism). Duplicated here rather than imported — that
+    /// helper is private to a separate integration-test binary, and this
+    /// module's own tests are unit tests inside the lib itself.
+    #[cfg(not(target_os = "windows"))]
+    fn count_processes_with_marker(marker: &str) -> usize {
+        let Ok(out) = std::process::Command::new("ps")
+            .args(["-eo", "pid,args"])
+            .output()
+        else {
+            return 0;
+        };
+        let text = String::from_utf8_lossy(&out.stdout);
+        text.lines().filter(|line| line.contains(marker)).count()
+    }
+
+    /// The real, mirror-image proof of this pass's own new bound: unlike
+    /// `tests/performance_validation.rs`'s own bounded-concurrency test
+    /// (which proves the OLD one-worker-per-batch design never exceeds 1
+    /// concurrent real ffmpeg process), this test proves the NEW worker-pool
+    /// design genuinely allows up to `MAX_CONCURRENT` real, concurrently-
+    /// running ffmpeg processes — not just "eventually every job completes,
+    /// one at a time" — while never exceeding that real cap. Gated the same
+    /// way that test is (`ps`-based sampling isn't meaningfully portable to
+    /// a genuine Windows process list from inside WSL — `HANDOFF.md`).
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn worker_pool_runs_up_to_max_concurrent_jobs_real_ffmpeg_processes_at_once_but_never_more() {
+        use crate::ffmpeg::command::{run_checked, FfmpegArgs};
+
+        const MAX_CONCURRENT: usize = 3;
+
+        let ffmpeg =
+            crate::ffmpeg::binaries::ffmpeg_path(None).expect("ffmpeg resolvable in test env");
+        let ffprobe =
+            crate::ffmpeg::binaries::ffprobe_path(None).expect("ffprobe resolvable in test env");
+        let dir =
+            std::env::temp_dir().join(format!("ave-batch-mgr-pool-concurrency-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // 2x MAX_CONCURRENT real, independent synthesized sources — enough
+        // that the pool genuinely has to reuse workers across more than one
+        // job each, not just "N jobs for N workers" (which wouldn't prove
+        // the queueing/re-pop half of this design at all).
+        let sources: Vec<PathBuf> = (0..MAX_CONCURRENT * 2)
+            .map(|i| {
+                let source = dir.join(format!("clip-{i}.mp4"));
+                let args = FfmpegArgs::new()
+                    .args([
+                        "-y",
+                        "-v",
+                        "error",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        "testsrc=duration=2:size=320x240:rate=10",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        "sine=frequency=440:duration=2",
+                        "-shortest",
+                    ])
+                    .path(&source);
+                run_checked(&ffmpeg, &args).expect("synthesizing a real batch source");
+                source
+            })
+            .collect();
+
+        let manager = Arc::new(BatchJobManager::default());
+        let (batch_id, job_ids) = manager.create_batch(
+            sources
+                .iter()
+                .map(|p| p.to_str().unwrap().to_string())
+                .collect(),
+            minimal_config("fast_preview"),
+        );
+        manager.set_worker_pool_size(MAX_CONCURRENT);
+        manager.enqueue_jobs(job_ids.clone());
+
+        // Background sampler, identical technique/timing to
+        // `tests/performance_validation.rs`'s own.
+        let marker = dir.to_string_lossy().into_owned();
+        let max_observed = Arc::new(AtomicUsize::new(0));
+        let saw_any = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(AtomicBool::new(false));
+        let poll_handle = {
+            let max_observed = Arc::clone(&max_observed);
+            let saw_any = Arc::clone(&saw_any);
+            let stop = Arc::clone(&stop);
+            let marker = marker.clone();
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::SeqCst) {
+                    let n = count_processes_with_marker(&marker);
+                    if n > 0 {
+                        saw_any.store(true, Ordering::SeqCst);
+                    }
+                    max_observed.fetch_max(n, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(15));
+                }
+            })
+        };
+
+        let models_dir = dir.join("models");
+        let templates_dir = dir.join("templates");
+        let assets_dir = dir.join("assets");
+        // A real local pool of MAX_CONCURRENT worker threads, mirroring
+        // `spawn_worker_pool`'s own real loop body exactly (module doc
+        // comment above).
+        let workers: Vec<_> = (0..MAX_CONCURRENT)
+            .map(|_| {
+                let manager = Arc::clone(&manager);
+                let ffmpeg = ffmpeg.clone();
+                let ffprobe = ffprobe.clone();
+                let models_dir = models_dir.clone();
+                let templates_dir = templates_dir.clone();
+                let assets_dir = assets_dir.clone();
+                std::thread::spawn(move || {
+                    let io = PipelineIo {
+                        ffmpeg: &ffmpeg,
+                        ffprobe: &ffprobe,
+                        models_dir: &models_dir,
+                        templates_dir: &templates_dir,
+                        assets_dir: &assets_dir,
+                    };
+                    loop {
+                        let Some(job_id) = manager.pop_blocking() else {
+                            return;
+                        };
+                        let handle = manager
+                            .handle_for(&job_id)
+                            .expect("a job popped off the queue always has a handle");
+                        process_job(&io, &handle, |_| {});
+                        manager.mark_job_done();
+                    }
+                })
+            })
+            .collect();
+
+        // Wait for every job to reach a terminal state. Deliberately generous
+        // (this is real ffmpeg work across a real thread pool under `cargo
+        // test`'s own default parallelism, competing with every other test
+        // in this suite for real CPU — not a tuned micro-benchmark that
+        // could flake on a slower/busier machine).
+        let deadline = Instant::now() + Duration::from_secs(180);
+        loop {
+            let jobs = manager.list_jobs(&batch_id).unwrap();
+            if jobs.iter().all(|j| j.status.is_terminal()) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "batch did not finish within the timeout"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        manager.shutdown_workers();
+        for w in workers {
+            w.join().expect("worker thread should not panic");
+        }
+        stop.store(true, Ordering::SeqCst);
+        poll_handle.join().expect("sampler thread should not panic");
+
+        let jobs = manager.list_jobs(&batch_id).unwrap();
+        assert!(
+            jobs.iter().all(|j| j.status == BatchJobStatus::Completed),
+            "expected every job to complete: {jobs:?}"
+        );
+
+        assert!(
+            saw_any.load(Ordering::SeqCst),
+            "the sampler never observed any real ffmpeg process for this batch — inconclusive, \
+             not proof of anything; treat this failure as \"loosen timing\", not as proof of a \
+             bound"
+        );
+        let observed_max = max_observed.load(Ordering::SeqCst);
+        assert!(
+            observed_max <= MAX_CONCURRENT,
+            "expected at most {MAX_CONCURRENT} concurrently-running real ffmpeg processes (this \
+             pass's own new worker-pool bound, module doc comment) — observed a real maximum of \
+             {observed_max} at some sampled instant"
+        );
+        assert!(
+            observed_max > 1,
+            "expected genuine overlap (more than 1 concurrent real ffmpeg process at some \
+             sampled instant) — the whole point of this pass's rearchitecture over the old \
+             one-worker-per-batch design was allowing real concurrency up to {MAX_CONCURRENT}, \
+             not merely completing every job eventually one at a time; observed max was only \
+             {observed_max}"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Real proof that pause/resume/cancel/retry all keep their exact
+    /// existing per-job semantics (module doc comments above) when multiple
+    /// workers are genuinely active at once — not just the single-worker
+    /// case every other test in this file already covers. Uses
+    /// `MAX_CONCURRENT = 2` real local worker threads (same pattern as the
+    /// concurrency test above) against 4 jobs: one paused from before it's
+    /// even claimed, one cancelled the same way, one that fails immediately
+    /// (a missing source), and one plain job that completes normally —
+    /// proving a paused job parking one worker forever (until resumed) never
+    /// blocks the OTHER worker from continuing to drain the shared queue,
+    /// and that a retried job re-enters that same shared queue and gets
+    /// picked up correctly under real concurrency.
+    #[test]
+    fn pause_resume_cancel_and_retry_all_work_correctly_with_multiple_workers_active_simultaneously(
+    ) {
+        const MAX_CONCURRENT: usize = 2;
+
+        let ffmpeg =
+            crate::ffmpeg::binaries::ffmpeg_path(None).expect("ffmpeg resolvable in test env");
+        let ffprobe =
+            crate::ffmpeg::binaries::ffprobe_path(None).expect("ffprobe resolvable in test env");
+        let dir = std::env::temp_dir().join(format!(
+            "ave-batch-mgr-pool-pause-cancel-retry-{}",
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Distinct subdirectories so each synthesized `in.mp4` (`synth_source`'s
+        // own fixed filename) doesn't collide with the other.
+        std::fs::create_dir_all(dir.join("pause_src")).unwrap();
+        std::fs::create_dir_all(dir.join("plain_src")).unwrap();
+        let source_pause = synth_source(&ffmpeg, &dir.join("pause_src"));
+        let source_plain = synth_source(&ffmpeg, &dir.join("plain_src"));
+        let missing = dir.join("does-not-exist.mp4");
+
+        let manager = Arc::new(BatchJobManager::default());
+        let (batch_id, job_ids) = manager.create_batch(
+            vec![
+                source_pause.to_str().unwrap().to_string(),
+                source_plain.to_str().unwrap().to_string(),
+                missing.to_str().unwrap().to_string(),
+            ],
+            minimal_config("fast_preview"),
+        );
+        let job_pause = job_ids[0].clone();
+        let job_plain = job_ids[1].clone();
+        let job_missing = job_ids[2].clone();
+
+        // Pause the first job *before* any worker ever claims it — the
+        // worker that pops it will hold at the very first stage checkpoint
+        // and park there until resumed, occupying one of the 2 workers for
+        // the whole time it takes the other worker to drain the rest of the
+        // queue.
+        manager.set_paused(&job_pause, true).unwrap();
+        manager.enqueue_jobs(job_ids.clone());
+
+        let models_dir = dir.join("models");
+        let templates_dir = dir.join("templates");
+        let assets_dir = dir.join("assets");
+        let workers: Vec<_> = (0..MAX_CONCURRENT)
+            .map(|_| {
+                let manager = Arc::clone(&manager);
+                let ffmpeg = ffmpeg.clone();
+                let ffprobe = ffprobe.clone();
+                let models_dir = models_dir.clone();
+                let templates_dir = templates_dir.clone();
+                let assets_dir = assets_dir.clone();
+                std::thread::spawn(move || {
+                    let io = PipelineIo {
+                        ffmpeg: &ffmpeg,
+                        ffprobe: &ffprobe,
+                        models_dir: &models_dir,
+                        templates_dir: &templates_dir,
+                        assets_dir: &assets_dir,
+                    };
+                    loop {
+                        let Some(job_id) = manager.pop_blocking() else {
+                            return;
+                        };
+                        let handle = manager
+                            .handle_for(&job_id)
+                            .expect("a job popped off the queue always has a handle");
+                        process_job(&io, &handle, |_| {});
+                        manager.mark_job_done();
+                    }
+                })
+            })
+            .collect();
+
+        // Wait until the OTHER two jobs (not the paused one) both reach a
+        // terminal state, while the paused job is still parked — real proof
+        // that pausing one job never blocks the other worker from draining
+        // the rest of the shared queue. Deliberately generous (real ffmpeg
+        // work under `cargo test`'s own default parallelism — see the
+        // sibling concurrency test's own identical reasoning).
+        let deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            let jobs: HashMap<String, BatchJob> = manager
+                .list_jobs(&batch_id)
+                .unwrap()
+                .into_iter()
+                .map(|j| (j.id.clone(), j))
+                .collect();
+            let plain_done = jobs[&job_plain].status.is_terminal();
+            let missing_done = jobs[&job_missing].status.is_terminal();
+            if plain_done && missing_done {
+                assert_eq!(
+                    jobs[&job_plain].status,
+                    BatchJobStatus::Completed,
+                    "the plain job should complete normally: {:?}",
+                    jobs[&job_plain]
+                );
+                assert_eq!(
+                    jobs[&job_missing].status,
+                    BatchJobStatus::Failed,
+                    "the missing-source job should fail: {:?}",
+                    jobs[&job_missing]
+                );
+                assert_eq!(
+                    jobs[&job_pause].status,
+                    BatchJobStatus::Paused,
+                    "the paused job must still be parked, unaffected by the other worker's own \
+                     progress: {:?}",
+                    jobs[&job_pause]
+                );
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the two non-paused jobs did not both finish within the timeout — the paused \
+                 job may be incorrectly blocking the other worker"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        // Resume the paused job — the worker parked on it should wake up
+        // and complete it normally.
+        manager.set_paused(&job_pause, false).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(90);
+        loop {
+            let jobs = manager.list_jobs(&batch_id).unwrap();
+            let pause_job = jobs.iter().find(|j| j.id == job_pause).unwrap();
+            if pause_job.status.is_terminal() {
+                assert_eq!(pause_job.status, BatchJobStatus::Completed);
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the resumed job did not complete within the timeout"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        // Retry the failed (missing-source) job — same real reset logic
+        // `retry_batch_job` uses (`prepare_retry`), then back onto the same
+        // shared queue every other job comes from (`enqueue_jobs`), with
+        // both workers still alive and one of them still free.
+        manager
+            .prepare_retry(&job_missing)
+            .expect("a Failed job should be retryable");
+        manager.enqueue_jobs(vec![job_missing.clone()]);
+        let deadline = Instant::now() + Duration::from_secs(90);
+        loop {
+            let jobs = manager.list_jobs(&batch_id).unwrap();
+            let retried = jobs.iter().find(|j| j.id == job_missing).unwrap();
+            if retried.status.is_terminal() {
+                assert_eq!(
+                    retried.status,
+                    BatchJobStatus::Failed,
+                    "the underlying cause (missing file) hasn't changed, so retry fails again \
+                     identically — this module's own documented retry semantics"
+                );
+                assert!(retried.error.is_some());
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the retried job was never picked back up off the shared queue within the \
+                 timeout"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        manager.shutdown_workers();
+        for w in workers {
+            w.join().expect("worker thread should not panic");
+        }
 
         std::fs::remove_dir_all(&dir).ok();
     }

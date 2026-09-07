@@ -46,5 +46,5 @@ pub mod types;
 
 pub use dry_run::DryRunResult;
 pub use error::BatchError;
-pub use manager::{BatchJobManager, BatchProgressEvent};
+pub use manager::{BatchJobManager, BatchProgressEvent, WorkerPoolStatus};
 pub use types::{BatchJob, BatchJobStatus, BatchPipelineConfig};
