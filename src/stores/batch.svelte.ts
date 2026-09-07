@@ -168,6 +168,54 @@ class BatchStore {
     }
   }
 
+  /** Starts a **multi-template** batch (upgrade-plan §11): N `mediaPaths` x
+   * M `templateIds` -> N x M jobs, one call. Mirrors `startBatch`'s own
+   * seed-then-select-then-open sequence exactly; the one real difference is
+   * `commands.startMultiTemplateBatch` returning a `Result` (an unknown
+   * `templateIds` entry fails the whole call up front — `commands::batch::
+   * start_multi_template_batch`'s own doc comment) rather than a bare batch
+   * id, so that error path is surfaced into `startError` exactly like every
+   * other failure this store already reports. */
+  async startMultiTemplateBatch(
+    mediaPaths: string[],
+    templateIds: string[],
+    config: BatchPipelineConfig,
+  ): Promise<boolean> {
+    if (this.starting || mediaPaths.length === 0 || templateIds.length === 0) return false;
+    this.starting = true;
+    this.startError = null;
+    try {
+      const result = await commands.startMultiTemplateBatch(mediaPaths, templateIds, config);
+      if (result.status === "error") {
+        this.startError = result.error.message;
+        return false;
+      }
+      const batchId = result.data;
+      const listResult = await commands.listBatchJobs(batchId);
+      if (listResult.status === "ok") {
+        for (const job of listResult.data) {
+          if (!this.jobsById[job.id]) this.jobsById[job.id] = job;
+        }
+        this.batchJobIds[batchId] = listResult.data.map((j) => j.id);
+      } else {
+        this.batchJobIds[batchId] = this.batchJobIds[batchId] ?? [];
+      }
+      this.batches = [
+        { id: batchId, createdAtMs: Date.now(), fileCount: mediaPaths.length * templateIds.length },
+        ...this.batches,
+      ];
+      this.selectedBatchId = batchId;
+      this.startDialogOpen = false;
+      this.jobsDialogOpen = true;
+      return true;
+    } catch (err) {
+      this.startError = String(err);
+      return false;
+    } finally {
+      this.starting = false;
+    }
+  }
+
   /** Adopts a batch this store did not itself start (Phase U3 History's
    * "Re-run"/"Re-run with another template" — `stores/history.svelte.ts`
    * calls this after `rerun_from_history`/`rerun_from_history_with_template`

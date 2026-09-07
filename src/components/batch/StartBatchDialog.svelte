@@ -67,6 +67,30 @@
   let templateId = $state<string | null>(null);
   let exportPresetId = $state<string | null>(null);
 
+  /** Multi-template batch (upgrade-plan §11): 1+ videos x 1+ templates ->
+   * N x M distinctly-named outputs. Off by default so every existing
+   * single-template flow/test is unaffected — this just adds a second path
+   * through `onStart`/`buildConfig`. */
+  let multiTemplateMode = $state(false);
+  let selectedTemplateIds = $state<string[]>([]);
+
+  function toggleTemplateSelection(id: string): void {
+    selectedTemplateIds = selectedTemplateIds.includes(id)
+      ? selectedTemplateIds.filter((t) => t !== id)
+      : [...selectedTemplateIds, id];
+    dryRunResult = null;
+    dryRunError = null;
+  }
+
+  /** The template a Dry Run preview should use: in multi-template mode,
+   * there is no single `templateId` (the effective per-job template comes
+   * from `selectedTemplateIds` instead) — previewing the first selected
+   * template is an honest stand-in for "one of the N x M jobs this batch
+   * would produce", not a fabricated result. */
+  function effectivePreviewTemplateId(): string | null {
+    return multiTemplateMode ? (selectedTemplateIds[0] ?? null) : templateId;
+  }
+
   let installedModels = $state<AvailableModel[]>([]);
   let templates = $state<Template[]>([]);
   let presets = $state<RenderPreset[]>([]);
@@ -134,6 +158,12 @@
     transcriptionLanguage = config.transcription_language ?? "";
     templateId = config.template_id;
     exportPresetId = config.export_preset_id;
+    // A cloned `HistoryEntry` always recorded a single-template job (Phase
+    // U3's History does not persist a multi-template fan-out as one entry
+    // per fanned-out job) — reset back to single-template mode so the
+    // cloned `templateId` above is what actually takes effect.
+    multiTemplateMode = false;
+    selectedTemplateIds = [];
     dryRunResult = null;
     dryRunError = null;
   }
@@ -177,7 +207,7 @@
   const canStart = $derived(
     selectedPaths.length > 0 &&
       !batchStore.starting &&
-      (templateId !== null || exportPresetId !== null) &&
+      (multiTemplateMode ? selectedTemplateIds.length > 0 : templateId !== null || exportPresetId !== null) &&
       (!captionsEnabled || transcriptionModelId !== null),
   );
 
@@ -195,7 +225,7 @@
   const canDryRun = $derived(
     selectedPaths.length > 0 &&
       !dryRunLoading &&
-      (templateId !== null || exportPresetId !== null) &&
+      (multiTemplateMode ? selectedTemplateIds.length > 0 : templateId !== null || exportPresetId !== null) &&
       (!captionsEnabled || transcriptionModelId !== null),
   );
 
@@ -203,9 +233,11 @@
    * `stores/smartEdit.svelte.ts`/`stores/broll.svelte.ts` already establish
    * — reused verbatim rather than re-deriving it a third way. Only relevant
    * when no template is chosen (`dry_run_batch_job`'s own doc comment: AI
-   * Auto Template is attempted only when `config.template_id` is `None`). */
+   * Auto Template is attempted only when `config.template_id` is `None`) —
+   * `effectivePreviewTemplateId()` rather than the raw `templateId` so this
+   * reads correctly in multi-template mode too. */
   const canUseAiForDryRun = $derived(
-    templateId === null &&
+    effectivePreviewTemplateId() === null &&
       aiSettingsStore.model.trim().length > 0 &&
       (keyRequirementFor(aiSettingsStore.provider) !== "required" || aiSettingsStore.hasKeyConfigured),
   );
@@ -217,9 +249,15 @@
     dryRunError = null;
     dryRunResult = null;
     try {
+      // In multi-template mode `buildConfig()`'s own `template_id` is `null`
+      // (the backend ignores it for a real multi-template batch anyway) —
+      // substitute the first selected template so this previews one real
+      // (video, template) pair from the N x M batch that would actually run,
+      // rather than an artificially template-less preview.
+      const previewConfig = { ...buildConfig(), template_id: effectivePreviewTemplateId() };
       const result = await commands.dryRunBatchJob(
         firstPath,
-        buildConfig(),
+        previewConfig,
         canUseAiForDryRun ? currentAiProviderSettings() : null,
       );
       if (result.status === "ok") {
@@ -252,7 +290,12 @@
         : null,
       transcription_model_id: captionsEnabled ? transcriptionModelId : null,
       transcription_language: captionsEnabled && transcriptionLanguage.trim() ? transcriptionLanguage.trim() : null,
-      template_id: templateId,
+      // `null` in multi-template mode: the backend fans each job's own
+      // `template_id` out from `selectedTemplateIds` instead and explicitly
+      // ignores this field (`commands::batch::start_multi_template_batch`'s
+      // own doc comment) — leaving it populated here would only misleadingly
+      // suggest a single template applies to the whole batch.
+      template_id: multiTemplateMode ? null : templateId,
       export_preset_id: exportPresetId,
       // `output_suffix` only matters for a multi-template batch (each
       // (video, template) pair gets its own file-name suffix — see
@@ -265,12 +308,17 @@
 
   async function onStart(): Promise<void> {
     if (!canStart) return;
-    await batchStore.startBatch(selectedPaths, buildConfig());
-    // Only clear the picked files on success — `startBatch` leaves
-    // `startDialogOpen` open (and its own `startError` set) on failure so
+    if (multiTemplateMode) {
+      await batchStore.startMultiTemplateBatch(selectedPaths, selectedTemplateIds, buildConfig());
+    } else {
+      await batchStore.startBatch(selectedPaths, buildConfig());
+    }
+    // Only clear the picked files on success — both start paths leave
+    // `startDialogOpen` open (and their own `startError` set) on failure so
     // the user doesn't have to re-pick everything after a transient error.
     if (!batchStore.startDialogOpen) {
       selectedPaths = [];
+      selectedTemplateIds = [];
     }
   }
 
@@ -395,20 +443,63 @@
 
         <section class="sb-section">
           <h3 class="sb-section-title">{t("startBatchDialog.templateSectionTitle")}</h3>
-          <div class="sb-row">
-            <label class="sb-label" for="sb-template">{t("startBatchDialog.template")}</label>
-            <select
-              id="sb-template"
-              class="sb-select"
-              value={templateId ?? ""}
-              onchange={(e) => (templateId = (e.target as HTMLSelectElement).value || null)}
-            >
-              <option value="">{t("startBatchDialog.noTemplate")}</option>
-              {#each templates as tpl (tpl.id)}
-                <option value={tpl.id}>{tpl.name}</option>
-              {/each}
-            </select>
-          </div>
+          <label class="sb-checkbox">
+            <input
+              type="checkbox"
+              checked={multiTemplateMode}
+              onchange={(e) => {
+                multiTemplateMode = (e.target as HTMLInputElement).checked;
+                dryRunResult = null;
+                dryRunError = null;
+              }}
+            />
+            {t("startBatchDialog.multiTemplateToggle")}
+          </label>
+          {#if multiTemplateMode}
+            <p class="sb-hint muted-2">{t("startBatchDialog.multiTemplateHint")}</p>
+            {#if templates.length > 0}
+              <ul class="sb-file-list">
+                {#each templates as tpl (tpl.id)}
+                  <li class="sb-file-item">
+                    <label class="sb-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={selectedTemplateIds.includes(tpl.id)}
+                        onchange={() => toggleTemplateSelection(tpl.id)}
+                      />
+                      {tpl.name}
+                    </label>
+                  </li>
+                {/each}
+              </ul>
+              {#if selectedTemplateIds.length > 0 && selectedPaths.length > 0}
+                <span class="muted-2">
+                  {t("startBatchDialog.multiTemplateSummary", {
+                    videos: selectedPaths.length,
+                    templates: selectedTemplateIds.length,
+                    total: selectedPaths.length * selectedTemplateIds.length,
+                  })}
+                </span>
+              {/if}
+            {:else}
+              <p class="sb-empty muted-2">{t("startBatchDialog.noTemplate")}</p>
+            {/if}
+          {:else}
+            <div class="sb-row">
+              <label class="sb-label" for="sb-template">{t("startBatchDialog.template")}</label>
+              <select
+                id="sb-template"
+                class="sb-select"
+                value={templateId ?? ""}
+                onchange={(e) => (templateId = (e.target as HTMLSelectElement).value || null)}
+              >
+                <option value="">{t("startBatchDialog.noTemplate")}</option>
+                {#each templates as tpl (tpl.id)}
+                  <option value={tpl.id}>{tpl.name}</option>
+                {/each}
+              </select>
+            </div>
+          {/if}
         </section>
 
         <section class="sb-section">
@@ -421,7 +512,7 @@
               value={exportPresetId ?? ""}
               onchange={(e) => (exportPresetId = (e.target as HTMLSelectElement).value || null)}
             >
-              {#if templateId !== null}
+              {#if multiTemplateMode ? selectedTemplateIds.length > 0 : templateId !== null}
                 <option value="">{t("startBatchDialog.useTemplateDefaultPreset")}</option>
               {/if}
               {#each presets as p (p.id)}
