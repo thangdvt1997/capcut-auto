@@ -1319,5 +1319,17 @@
     "workers": "Workers: {{count}}",
     "running": "Running: {{count}}",
     "queued": "Queued: {{count}}"
+  },
+  "activityLog": {
+    "title": "Activity / Log",
+    "expand": "Expand activity log",
+    "collapse": "Collapse activity log",
+    "filterAll": "All",
+    "filterInfo": "Info",
+    "filterWarning": "Warning",
+    "filterError": "Error",
+    "clear": "Clear",
+    "empty": "No activity yet — entries appear here as batch jobs run.",
+    "emptyFiltered": "No entries match this filter."
   }
 }

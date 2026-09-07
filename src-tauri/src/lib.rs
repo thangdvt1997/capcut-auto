@@ -313,6 +313,35 @@ pub fn run() {
                 let conn = library.0.lock().expect("media library mutex poisoned");
                 crate::history::io::init_schema(&conn)
                     .expect("failed to initialize history table schema");
+                // Crash-recovery *detection* for batch jobs (`STUDIO_PLAN.md`
+                // Phase D8a, `promt.md` §17) — a small, additive
+                // `in_progress_jobs` table in this same connection/file (see
+                // `crate::history::inflight` module doc comment for the full
+                // honest write-up of what this does and does not do). Any
+                // row still present here at this exact point was, by
+                // construction, a batch job still non-terminal when the
+                // process last ended (crash/panic/force-kill) — recovered
+                // now as a real `Failed` `history` row (existing History
+                // dialog / existing Retry mechanism), rather than silently
+                // vanishing with no trace. Must run after `init_schema`
+                // above (the `history` table `recover_orphaned_jobs` writes
+                // into must already exist) and before
+                // `BatchJobManager`/`spawn_worker_pool` are managed/started
+                // below, so no real job can possibly write a fresh
+                // `in_progress_jobs` row before this one-time startup scan
+                // has already cleared out whatever stale rows a previous
+                // session left behind.
+                crate::history::inflight::init_schema(&conn)
+                    .expect("failed to initialize in_progress_jobs table schema");
+                match crate::history::inflight::recover_orphaned_jobs(&conn) {
+                    Ok(0) => {}
+                    Ok(recovered) => tracing::warn!(
+                        "recovered {recovered} orphaned batch job(s) left in-progress by an unclean previous exit"
+                    ),
+                    Err(e) => tracing::warn!(
+                        "failed to scan for orphaned in-progress batch jobs at startup: {e}"
+                    ),
+                }
             }
             // The live timeline session (current project + undo history +
             // clipboard), managed the same way as `MediaLibrary` above.

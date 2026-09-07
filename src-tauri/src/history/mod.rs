@@ -53,6 +53,18 @@
 //!   would always be `None` today regardless — kept as the one honest,
 //!   forward-looking rename of that spec field, not the spec's own concept.
 //!
+//! ## Crash-recovery detection (`STUDIO_PLAN.md` Phase D8a, `promt.md` §17)
+//!
+//! [`inflight`] is a second, small table in this exact same database/
+//! connection: one row per batch job that is currently non-terminal, kept in
+//! sync by `batch::manager` and scanned once at startup
+//! (`inflight::recover_orphaned_jobs`, wired from `lib.rs`) to honestly turn
+//! any job that was mid-flight when the process last ended into a real
+//! `Failed` row right here in `history` — rather than that job silently
+//! vanishing with no trace. See `inflight` module doc comment for the full
+//! write-up, including exactly why this is crash *detection*, not the
+//! finer-grained stage-skip *resume* §17's own worked example describes.
+//!
 //! ## Retry / re-run semantics
 //!
 //! A `HistoryEntry`'s `id` is exactly the batch job's own `job_id`
@@ -72,6 +84,7 @@
 //! module never conflates the two.
 
 pub mod error;
+pub mod inflight;
 pub mod io;
 
 pub use error::HistoryError;

@@ -768,3 +768,112 @@ Hand-written English + Vietnamese (not machine-transliterated) in both `en.json`
 ### Files created/changed
 
 No new files. Changed: `src/components/assets/AssetLibraryDialog.svelte`, `src/components/history/HistoryDialog.svelte`, `src/components/templates/TemplateGeneratorDialog.svelte`, `src/components/automation/AutomationRulesDialog.svelte` — each a Design System retrofit only, described per-file above. `src/locales/en.json`/`vi.json` (9 new `col*` keys across `assetLibrary`/`automationRules.list`; 3 dead `close` keys removed, `automationRules.close` deliberately kept). No `src-tauri/` file touched.
+
+---
+
+## Phase D8a — Job crash-recovery *detection* (promt.md §17 "JOB STATE / RESUME")
+
+Backend-only (`src/` untouched — no new/changed `#[tauri::command]`, no new specta-typed struct exposed over IPC, so `export_bindings` was not re-run; confirmed `src/types/bindings.ts` needed no changes). Ran independently of, but in the same shared working tree as, the Phase D8b Activity/Log pass below.
+
+### The honest scope line, stated up front
+
+This is **crash-recovery detection and honest surfacing**, not the fine-grained stage-skip *resume* `promt.md` §17's own worked example describes ("video đã Extract✓ Translate✓ Voice✓ Render✗ … restart app: resume từ Render"). Building true resume would require restructuring how `batch::pipeline::run_pipeline` hands each stage's output to the next — today it is one single, monolithic, run-to-completion function with no concept of "start at stage N, reusing stage N-1's already-computed output"; the in-progress `ProjectV1` being edited lives only in a stack-local variable inside that function, never persisted anywhere a restart could pick back up from (`batch::manager` module doc comment's own "Retry semantics" section already documents this exact same gap for plain in-process retry, which restarts from scratch for the identical reason). Restructuring that is a large, separate, high-risk architecture project on the single most complex subsystem in this codebase (freshly rearchitected for the Phase D4a N-worker pool) — explicitly out of scope for this task, per the task brief. **Nothing in `run_pipeline`'s stage execution logic, its stage-to-stage data flow, or `spawn_worker_pool`'s concurrency machinery was touched.**
+
+What was built instead: detect a job that was mid-flight when the app last crashed/was killed, and honestly surface it — as a real `Failed` entry in the existing `history` table, retryable via the existing, unchanged Retry mechanism (which already restarts from scratch, exactly like every other failure today) — rather than that job silently vanishing with no trace at all. This is the same "was the last exit clean" question `crate::logging`'s own whole-app `.session-active` marker (module doc comment, master prompt §86) already answers at the process level; this is the per-batch-job equivalent, with enough real data attached to make the resulting history row actually re-runnable.
+
+### 1. New table: `in_progress_jobs` (`src-tauri/src/history/inflight.rs`)
+
+A new file in the existing `history` module, extending the exact same SQLite database/connection `history::io`'s own `history` table already uses (`history` module's own storage-location decision, unchanged) — not a new database, not a new connection. Follows `history::io.rs`'s own conventions exactly: plain `&Connection` parameters, no `AppHandle` anywhere, directly unit-testable via `Connection::open_in_memory()`.
+
+Schema: `job_id` (PK), `batch_id`, `job_name`, `input_path`, `config` (the job's full `BatchPipelineConfig`, JSON — everything needed to actually re-run it from scratch), `status`, `stage`, `started_at`. `InFlightJob` is a plain internal Rust struct (not specta-typed/exposed over IPC — this table is purely an internal recovery mechanism the frontend never sees directly; only the resulting `history` row is ever surfaced to it).
+
+Real CRUD: `init_schema`, `upsert_inflight` (a plain `INSERT OR REPLACE` — unlike `history::io::record_terminal`'s own `retry_count`-preserving upsert, there is no auxiliary counter here worth preserving across an overwrite), `clear_inflight`, `list_inflight`. `status_to_str`/`status_from_str` were promoted from private to `pub(super)` in `history::io.rs` so `history::inflight` reuses the exact same `BatchJobStatus` <-> `TEXT` mapping rather than re-deriving a second, parallel one.
+
+`recover_orphaned_jobs(conn)` is the real startup-time consumer: reads every surviving row (each one is, by construction, an orphaned in-progress job from a prior crash/kill), records it as a `Failed` `history::HistoryEntry` with the honest, fixed error message `INTERRUPTED_ERROR_MESSAGE` = *"Interrupted by app restart — click Retry to reprocess from the start."*, reusing the row's own `job_id` as the history row's `id` (so if that job had already failed and been retried once before, this recovery correctly bumps `retry_count` on the same row via `history::io::record_terminal`'s existing upsert, rather than duplicating it) — then clears the `in_progress_jobs` row. `template_version` is honestly `None` (no `templates_dir` available at this point to re-resolve it against — the same "no templates_dir" case `batch::manager::build_history_entry` already produces on its own early-failure path). `duration_us` is a real, best-effort estimate (time between the row's own `started_at` and the recovery scan's own "now", parsed via `chrono`), falling back to `None` if `started_at` somehow isn't valid RFC3339 (defensive only — every real writer always produces one via `crate::project::now_rfc3339()`).
+
+### 2. Wiring into `batch::manager.rs` — purely additive, no rewrite of transition logic
+
+Two new functions, both directly unit-testable-in-spirit via the same "pure core + thin `AppHandle` wrapper" split every other piece of real logic in this file already uses:
+
+- `build_inflight_job(batch_id, handle) -> Option<InFlightJob>` — the pure core, mirroring `build_history_entry`'s own shape but inverted (`Some` only while *not* terminal, vs. that function's `Some` only once terminal).
+- `record_inflight_for_job(app, batch_id, handle)` — the real, best-effort write: upserts while non-terminal, clears the row the instant it's terminal. Mirrors `record_history_for_job`'s own posture exactly (never propagates a database error, never affects the job's own already-decided status, just `tracing::warn!`s and moves on) and, deliberately, its own lock ordering (release the job-state lock before acquiring the database connection lock — matched on purpose, since the two functions taking those locks in opposite orders would be a real deadlock risk).
+
+Called from every real state-transition point this manager already has, with zero changes to what those points *do* otherwise:
+- **`spawn_batch_worker`** (the one shared entry point `start_batch`/`start_multi_template_batch`/both `commands::history` rerun commands/`automation::manager` already funnel through) — writes each job's first `Queued` row right after enqueueing.
+- **`retry_batch_job`** — now routed through `spawn_batch_worker` itself (previously called `manager.enqueue_jobs` directly with an unused `_app` parameter) specifically so a retried job gets its own fresh `Queued` row too, without duplicating the write call.
+- **`run_job_with_events`'s own `on_update` closure** — already fires on every real stage transition a job reports (Analyzing/Transcribing/Editing/Rendering/Paused, and the final terminal one); now also calls `record_inflight_for_job` on every tick, which naturally upserts while non-terminal and clears once terminal — no separate terminal-specific call needed there.
+- **`run_job_with_events`'s early pipeline-path-resolution failure branch** (a job that fails before `process_job` ever runs, so never reaches the `on_update` closure) — explicitly clears the row too, since this branch forces the job straight to `Failed`.
+
+### 3. Startup wiring (`lib.rs`)
+
+Immediately after `history::io::init_schema` (same connection, same place `MediaLibrary` is already opened/managed), and before `BatchJobManager` is managed / `spawn_worker_pool` is started: `history::inflight::init_schema`, then `history::inflight::recover_orphaned_jobs`, with the recovered count logged via `tracing::warn!` (0 is the overwhelmingly common case — a clean previous exit leaves this table empty). Ordering matters both ways: the `history` table this recovery writes into must already exist, and the recovery scan must finish clearing stale rows before any real job could possibly write a fresh one.
+
+### 4. Real Rust unit tests (`src-tauri/src/history/inflight.rs`)
+
+Schema creation, insert/update/clear of an in-progress row (including "upserting the same job_id again overwrites in place, not duplicates" and "clearing an unknown job_id is a harmless no-op"), ordering, and the startup recovery scan itself: converting a surviving row into a real `Failed` history entry with the exact honest error message and clearing the row afterward; recovering multiple surviving rows at once; leaving an already-terminal, unrelated history entry completely undisturbed; and correctly bumping `retry_count` when recovering a job whose `job_id` already has a prior `Failed` history row from an earlier real failure.
+
+### Verification
+
+- WSL `cargo fmt --check` (via `cargo fmt`, no diff after): clean.
+- WSL `cargo clippy --all-targets -- -D warnings`: **0 warnings.**
+- WSL `cargo test --lib`: **1099 passed, 0 failed, 4 ignored** (pre-existing, unrelated `--ignored` network/model-download tests) — includes 25 tests under `history::` (up from the pre-existing `history::io`/`history::error`/`history` count), all passing, 8 of them new to this pass (`history::inflight::tests::*`).
+- No `export_bindings` re-run needed (no new/changed `#[tauri::command]`/specta-exposed type — `InFlightJob` is internal-only); confirmed `src/types/bindings.ts` unaffected.
+- `pnpm run check`/`pnpm run build` (PowerShell, `D:\Work\Work-out\capcut-auto`): both clean (see Phase D8b's own Verification section below — this task's backend-only change was confirmed to have no frontend-facing effect by the same combined run).
+
+### Files created/changed
+
+New: `src-tauri/src/history/inflight.rs`. Changed: `src-tauri/src/history/io.rs` (`status_to_str`/`status_from_str` promoted from private to `pub(super)`, no behavior change), `src-tauri/src/history/mod.rs` (`pub mod inflight;` + a doc-comment addition describing the new table), `src-tauri/src/batch/manager.rs` (`build_inflight_job`/`record_inflight_for_job` added; call sites wired into `spawn_batch_worker`/`retry_batch_job`/`run_job_with_events`, described above; module doc comment extended), `src-tauri/src/lib.rs` (schema init + `recover_orphaned_jobs` call wired into `setup()`, immediately after `history::io::init_schema`). No frontend file touched.
+
+---
+
+## Phase D8b — Activity/Log panel (promt.md §15 "LOG / ACTIVITY PANEL")
+
+Frontend-only, built concurrently with Phase D8a above in the same shared working tree (no overlap: D8a touched only `src-tauri/`, this pass touched only `src/`).
+
+### The real backend source this is built on — and the one honestly not fabricated
+
+Before writing any code, this pass checked for a real structured event/log stream to build on (task brief's own instruction): `tracing`/`log` crate usage in `src-tauri/` (real, but writes to a file via `crate::logging`, not an event the frontend can subscribe to — no Tauri event ever carries a `tracing` line to the frontend), the existing `batch:progress` Tauri event (`stores/batch.svelte.ts` already listens to it), and every other `emit(` call site in `src-tauri/src` (`media`/`render`/`transcription` progress events — each scoped to its own dialog/store already, none shaped as a general activity feed). The one real, already-flowing stream that actually matches §15's own worked example (`"10:21:03 Subtitle extraction completed"` / `"10:21:05 Translation started"` — i.e., pipeline stage transitions) is **`batch:progress`**: every batch job already reports its own human-readable current stage over it (`BatchJob.stage`, e.g. `"Analyzing media"`, `"Transcribing"`, `"Removing silence"`, `"Generating captions"`, `"Editing complete"`, `"Rendering"`, and — since `batch::manager::process_job`'s own terminal match arms set `stage` to exactly these words — `"Completed"`/`"Failed"`/`"Cancelled"` too).
+
+This app has no subtitle-translation/TTS dubbing pipeline yet (confirmed again before writing this section: `STUDIO_PLAN.md`'s own §10/§11 audit already documented this as a real, unbuilt gap), so §15's own literal example lines ("Translation started", "Voice generation started") are not fabricated here — what's real and built on is the *shape* of the signal (discrete, human-readable pipeline stage transitions), applied honestly to the one pipeline that actually exists today (the batch video-editing pipeline), not invented wholesale as a fake "system log."
+
+### 1. `stores/activityLog.svelte.ts` — new store, not an extension of `batch.svelte.ts`
+
+A new store (not folded into `stores/batch.svelte.ts`) since its own concern — turning stage transitions into a capped, filterable log feed — is genuinely separate from `batchStore`'s own per-job table/dialog bookkeeping; it registers its own independent `listen<BatchProgressEvent>("batch:progress", ...)` (Tauri events support multiple independent listeners on the same event name) rather than routing through `batchStore` at all.
+
+**Anti-spam granularity** (task brief + §15's own explicit "Không spam popup cho mọi event"): a job's progress ticks *within* one stage (10%, 42%, 87% while still `"Rendering"`) fire far more `batch:progress` events than there are real, meaningful steps. The store keeps a plain (non-reactive) `Map<jobId, lastStage>` and only appends a log entry the instant a job's own `stage` text actually *changes* — exactly the granularity §15's own example lines are at (one line per real step, never one line per percent). This one rule is also what makes terminal outcomes fall out for free, with no special-casing: since `process_job` already sets `stage` to `"Completed"`/`"Failed"`/`"Cancelled"` on the terminal snapshot, that's simply one more real stage-text change the exact same code path logs — `level` is derived from `job.status` (`failed` -> `error`, with `job.error` appended to the message when present; `cancelled` -> `warning`, a deliberate interruption rather than a pipeline fault; everything else, `Paused` included -> `info`).
+
+Real, in-memory ring buffer capped at 200 entries (task brief's own suggested cap), newest-first (a log/activity feed reads top-to-bottom like a chat timeline — picked over oldest-first specifically so "what just happened" never requires scrolling down, and documented as a deliberate choice in the store's own doc comment). **Deliberately not persisted** — this is session-local activity, not a second, redundant persistence layer duplicating Phase D8a's own real `history`/`in_progress_jobs` tables, which already own the durable record of the same jobs; over-scoping this into a third persistence mechanism was considered and rejected per the task brief's own "don't over-scope this" guidance.
+
+Exposes: `entries` (raw, newest-first), `filteredEntries` (derived off `levelFilter`), `counts` (a real `{info, warning, error}` tally over the *entire* retained buffer, not just the current filter — so a collapsed panel's header badges stay honest even while a filter is hiding most rows), `collapsed` (boolean, default `true`), `setLevelFilter`/`toggleCollapsed`/`clear`.
+
+### 2. `components/layout/ActivityLogPanel.svelte`
+
+Built from the Design System (`Panel`/`Badge`/`Select`/`Button`/`EmptyState`/`IconButton`, per `src/components/ui/__demo/UiDemo.svelte`'s own usage patterns) — no hand-rolled dialog chrome. `Panel`'s `title` prop takes a plain string (not a snippet, confirmed by reading `Panel.svelte` itself before writing this), so the panel's own title stays plain text; the level filter (`Select`, All/Info/Warning/Error), a `Button` "Clear", and a chevron `IconButton` toggle all live in `Panel`'s existing `actions` snippet — mirroring `JobQueuePanel.svelte`'s own proven `<Panel><... {#snippet actions()}...{/snippet} ...plain body markup.../></Panel>` shape exactly (confirmed by reading that file before combining an explicit `actions` snippet with implicit `children` content the same way).
+
+**Collapsed by default** (task brief + §15's own "collapsible", and its anti-spam instruction — a log panel that pops open uninvited on its own would be exactly the spam that line rules out). The collapsed header still honestly shows real warning/error count `Badge`s (not hidden behind an expand click) so a real problem is never invisible behind a collapsed panel — genuinely important errors still separately reach the user via the existing Toast/Dialog mechanisms, untouched by this pass; this panel is the secondary, on-demand detail view, exactly as the task brief specifies. Each entry row: a `HH:MM:SS` timestamp (`toLocaleTimeString()`, same convention `BatchJobsDialog.svelte`'s own batch-option label already uses), a level `Badge` (`info`->accent, `warning`->warn, `error`->neg — the same semantic-not-arbitrary color mapping every other Design System status pill in this codebase already follows), and the message text, in a scrollable (`max-height: 220px`) list so an active session's log never grows the shell unboundedly tall.
+
+### 3. Placement (`App.svelte`)
+
+Docked as a **4th row of the whole app shell's `.shell` grid** (`grid-template-rows: auto auto 1fr auto`, was `auto auto 1fr`) — below the tab strip and whichever of the 3 top-level tabs is active, mounted unconditionally next to the dialogs, not inside `WorkspaceTab`/Tab 1 specifically. Reasoning, stated in the component's own doc comment: batch jobs (the one real source this panel has) can already be started/watched from several places (Tab 1's `JobQueuePanel`, `BatchJobsDialog`, a Smart-Automation-triggered batch, a History "Re-run") — a log of their stage transitions is genuinely cross-cutting, not Tab-1-specific, so (collapsed) it stays visible no matter which tab is active, the same way `TopBar`/every dialog mounted in `App.svelte` already is. `App.svelte`'s own top-of-file doc comment was updated with one short paragraph noting the new 4th row (not rewritten).
+
+### i18n
+
+New top-level `"activityLog"` namespace (`title`/`expand`/`collapse`/`filterAll`/`filterInfo`/`filterWarning`/`filterError`/`clear`/`empty`/`emptyFiltered`), hand-written English + Vietnamese (not machine-transliterated) in both `en.json`/`vi.json`, re-read fresh immediately before this edit. The two count `Badge`s in the collapsed header render `activityLogStore.counts.error`/`.warning` as plain numbers directly (no `t()` call) — a bare count needs no translation, and an earlier draft's placeholder `activityLog.countBadge: "{{count}}"` key (a translation key that would only ever have rendered its own interpolation placeholder back out) was recognized as pointless and removed before finishing, rather than left in as dead weight.
+
+### Honest scope / what was deliberately not done
+
+- **No fabricated subtitle-translation/TTS log lines** — see the "real backend source" section above; §15's own literal example strings don't exist as real events in this codebase yet, and aren't invented here.
+- **No persistence** — deliberately session-local (see store section above); Phase D8a's own `history`/`in_progress_jobs` tables already own the durable record of the same underlying jobs.
+- **Only `batch:progress` is a real source today** — `render`/`transcription`/`media` progress events exist but are already scoped to their own dialogs/stores; wiring them into this same feed as additional, real sources is a legitimate future extension, not attempted this pass (the task brief explicitly scoped v1 to whichever real stream already matches §15's own example, which `batch:progress` does).
+- **No visual/runtime screenshot verification** — this task's own environment has no interactive browser/screenshot tool, matching every prior Phase D pass's identically-worded honesty note about this same limitation.
+
+### Verification
+
+- `pnpm run lint`: **0 problems.**
+- `pnpm run check`: **0 errors, 0 warnings, 272 files** (up from 270 — this pass's own two new files, `stores/activityLog.svelte.ts` and `components/layout/ActivityLogPanel.svelte`). The pre-existing, unrelated `vendor/capcut-mate` vite-config console error still prints but reports 0 errors/warnings, exactly as every prior phase has noted.
+- `pnpm run build`: **succeeds** (315 modules transformed). Same pre-existing "chunk larger than 500 kB" advisory, unrelated to this pass.
+- Locale parity: **1195/1195, zero one-sided keys**, re-run fresh via a standalone flatten-and-diff script against the live, fully-merged state of both files at the end of this pass (10 new `activityLog.*` keys each vs. the prior recorded total).
+
+### Files created/changed
+
+New: `src/stores/activityLog.svelte.ts`, `src/components/layout/ActivityLogPanel.svelte`. Changed: `src/App.svelte` (new import + `<ActivityLogPanel />` mounted as a 4th shell row, `.shell`'s `grid-template-rows` extended, top-of-file doc comment updated with one short paragraph), `src/locales/en.json`/`src/locales/vi.json` (new `activityLog` namespace, 10 keys each). No `src-tauri/` file touched.

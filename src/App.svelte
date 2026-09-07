@@ -15,6 +15,10 @@
     settings dialogs, see that component's own doc comment for the exact
     scope decision); Tab 3 ("Project/Asset/License Management") renders
     `ProjectAssetTab.svelte` (Phase D6, built concurrently with this pass).
+    Below the active tab's own content, a 4th shell row docks
+    `ActivityLogPanel.svelte` (Phase D8b, promt.md §15) — collapsed by
+    default, visible no matter which top-level tab is active; see that
+    component's own doc comment for the placement reasoning.
 
     Every dialog below is mounted exactly as before this pass, unconditionally
     (not gated by which top-level tab is active) — none of their own
@@ -26,6 +30,7 @@
   import WorkspaceTab from "./components/workspace/WorkspaceTab.svelte";
   import ProjectAssetTab from "./components/projects/ProjectAssetTab.svelte";
   import AutomationSettingsTab from "./components/automation/AutomationSettingsTab.svelte";
+  import ActivityLogPanel from "./components/layout/ActivityLogPanel.svelte";
   import { t } from "./lib/i18n.svelte";
   import ExportDialog from "./components/render/ExportDialog.svelte";
   import ModelManagerDialog from "./components/transcription/ModelManagerDialog.svelte";
@@ -68,6 +73,14 @@
       <ProjectAssetTab />
     {/if}
   </section>
+
+  <!-- Phase D8b (`STUDIO_PLAN.md`): Activity/Log panel (promt.md §15) —
+       docked as its own row at the bottom of the whole shell, below every
+       tab's own content, so it stays visible (collapsed by default)
+       regardless of which of the 3 top-level tabs is active — see
+       ActivityLogPanel.svelte's own doc comment for the full placement
+       reasoning. -->
+  <ActivityLogPanel />
 
   <!-- Mounted once here (not inside TopBar/Timeline) since the Export
        dialog has two entry points — TopBar's "File" menu and Timeline's
@@ -162,7 +175,7 @@
 <style>
   .shell {
     display: grid;
-    grid-template-rows: auto auto 1fr;
+    grid-template-rows: auto auto 1fr auto;
     height: 100vh;
     overflow: hidden;
   }

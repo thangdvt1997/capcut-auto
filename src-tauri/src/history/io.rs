@@ -60,7 +60,10 @@ pub fn open_in_memory() -> Result<Connection, HistoryError> {
     Ok(conn)
 }
 
-fn status_to_str(status: BatchJobStatus) -> &'static str {
+/// `pub(super)` (not private): `history::inflight`'s own `in_progress_jobs`
+/// table stores `BatchJobStatus` the exact same way, and reuses this mapping
+/// rather than re-deriving a second, parallel one.
+pub(super) fn status_to_str(status: BatchJobStatus) -> &'static str {
     match status {
         BatchJobStatus::Queued => "queued",
         BatchJobStatus::Analyzing => "analyzing",
@@ -74,7 +77,8 @@ fn status_to_str(status: BatchJobStatus) -> &'static str {
     }
 }
 
-fn status_from_str(s: &str) -> BatchJobStatus {
+/// `pub(super)` — see [`status_to_str`]'s doc comment.
+pub(super) fn status_from_str(s: &str) -> BatchJobStatus {
     match s {
         "queued" => BatchJobStatus::Queued,
         "analyzing" => BatchJobStatus::Analyzing,

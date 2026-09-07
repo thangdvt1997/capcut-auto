@@ -111,6 +111,23 @@
 //! if the underlying cause of the original failure hasn't changed (e.g. a
 //! model that's still not installed), it fails again identically, which is
 //! itself the correct, honest outcome.
+//!
+//! ## Crash-recovery detection (Phase D8a, `STUDIO_PLAN.md`/`promt.md` §17)
+//!
+//! [`record_inflight_for_job`] keeps `history::inflight`'s own
+//! `in_progress_jobs` table (that module's own doc comment) in sync with
+//! this manager's real, in-memory job state: an upsert while a job is
+//! non-terminal, a delete the instant it becomes terminal. Called from every
+//! real state-transition point this module has: [`spawn_batch_worker`]'s own
+//! enqueue (a job's first non-terminal state, `Queued`), [`retry_batch_job`]'s
+//! own re-enqueue, and every progress tick inside `run_job_with_events`
+//! (which already fires on every stage transition — including `Paused`,
+//! reported through the same `on_progress` callback as any other stage, and
+//! the final terminal one). Purely additive: no change to `run_pipeline`'s
+//! own stage execution/data flow, or to this module's worker-pool queue
+//! machinery above — see `history::inflight` module doc comment for the full
+//! honest-scope write-up of what this detects vs. the true stage-skip
+//! *resume* `promt.md` §17 itself describes (out of scope here).
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -855,6 +872,67 @@ fn record_history_for_job(
     }
 }
 
+/// Pure (no `AppHandle`) core of [`record_inflight_for_job`]: builds the
+/// `history::inflight::InFlightJob` a still-non-terminal job should be
+/// upserted as, or `None` once it has reached a terminal status (the signal
+/// for the caller to delete its row instead) — the exact same "`None` means
+/// something different to the caller" shape [`build_history_entry`] already
+/// uses, just inverted (that one returns `Some` only once terminal; this one
+/// returns `Some` only while *not* terminal). Split out for the same reason
+/// every other piece of real logic in this module is: directly unit-testable
+/// without a running Tauri app.
+fn build_inflight_job(
+    batch_id: &str,
+    handle: &JobHandle,
+) -> Option<history::inflight::InFlightJob> {
+    let state = handle.state.lock().expect("batch job state mutex poisoned");
+    if state.status.is_terminal() {
+        return None;
+    }
+    Some(history::inflight::InFlightJob {
+        job_id: state.id.clone(),
+        batch_id: batch_id.to_string(),
+        job_name: state.name.clone(),
+        input_path: handle.media_path.clone(),
+        config: handle.config.clone(),
+        status: state.status,
+        stage: state.stage.clone(),
+        started_at: state.started_at_rfc3339.clone(),
+    })
+}
+
+/// Best-effort, additive crash-recovery-detection write (module doc
+/// comment's "Crash-recovery detection" section, `STUDIO_PLAN.md` Phase
+/// D8a): upserts `handle`'s job into `history::inflight`'s
+/// `in_progress_jobs` table while it's non-terminal, or clears its row the
+/// instant it becomes terminal. Mirrors [`record_history_for_job`]'s own
+/// "never propagate a database error, never affect the job's own
+/// already-decided status, just log and move on" posture, and its own lock
+/// ordering (release the job-state lock before acquiring the database
+/// connection lock) — matched deliberately, not by coincidence, since two
+/// functions taking those two locks in opposite orders would be a real
+/// deadlock risk if they ever ran concurrently against the same job.
+fn record_inflight_for_job(app: &AppHandle, batch_id: &str, handle: &JobHandle) {
+    let job_id = handle
+        .state
+        .lock()
+        .expect("batch job state mutex poisoned")
+        .id
+        .clone();
+    let inflight = build_inflight_job(batch_id, handle);
+    let Some(library) = app.try_state::<crate::db::MediaLibrary>() else {
+        return;
+    };
+    let conn = library.0.lock().expect("media library mutex poisoned");
+    let result = match inflight {
+        Some(job) => history::inflight::upsert_inflight(&conn, &job),
+        None => history::inflight::clear_inflight(&conn, &job_id),
+    };
+    if let Err(e) = result {
+        tracing::warn!("failed to record in-flight batch job state for job {job_id}: {e}");
+    }
+}
+
 /// Runs one job to completion, resolving real IO paths first and emitting
 /// `batch:progress` on every meaningful step (including the final terminal
 /// snapshot) — the real, `AppHandle`-dependent counterpart to `process_job`
@@ -880,6 +958,11 @@ fn run_job_with_events(app: &AppHandle, job_id: &str) {
                 state.error = Some(e.to_string());
                 state.snapshot()
             };
+            // Terminal (Failed) already — clears any `in_progress_jobs` row
+            // this job may have picked up when it was first enqueued still
+            // `Queued` (module doc comment's "Crash-recovery detection"
+            // section).
+            record_inflight_for_job(app, &batch_id, &handle);
             record_history_for_job(app, &batch_id, &handle, None);
             let _ = app.emit(
                 BATCH_PROGRESS_EVENT,
@@ -895,7 +978,12 @@ fn run_job_with_events(app: &AppHandle, job_id: &str) {
 
     let app_for_emit = app.clone();
     let batch_id_for_emit = batch_id.clone();
+    let handle_for_inflight = handle.clone();
     process_job(&io, &handle, move |snapshot: &BatchJob| {
+        // Fires on every stage transition this job reports, including the
+        // final terminal one — upserts while non-terminal, clears once
+        // terminal (`record_inflight_for_job`'s own doc comment).
+        record_inflight_for_job(&app_for_emit, &batch_id_for_emit, &handle_for_inflight);
         let _ = app_for_emit.emit(
             BATCH_PROGRESS_EVENT,
             BatchProgressEvent {
@@ -950,8 +1038,25 @@ pub fn spawn_worker_pool(manager: &BatchJobManager, app: AppHandle, max_concurre
 /// all call this directly) keeps working with zero changes of their own —
 /// this pass's real structural change is entirely inside this function's own
 /// body.
+///
+/// Also the real, additive crash-recovery-detection write for a job's first
+/// non-terminal state (`Queued`, module doc comment's "Crash-recovery
+/// detection" section): every job in `job_ids` is freshly `Queued` at this
+/// exact point (this function is only ever called immediately after
+/// `create_batch`/`create_multi_template_batch`, or on a job
+/// `prepare_retry` just reset), so this is the correct place to give it its
+/// first `in_progress_jobs` row — before that, the job existed only in this
+/// process's own memory.
 pub fn spawn_batch_worker(app: AppHandle, job_ids: Vec<String>) {
-    app.state::<BatchJobManager>().enqueue_jobs(job_ids);
+    let manager = app.state::<BatchJobManager>();
+    manager.enqueue_jobs(job_ids.clone());
+    for job_id in &job_ids {
+        if let (Some(handle), Some(batch_id)) =
+            (manager.handle_for(job_id), manager.batch_id_for_job(job_id))
+        {
+            record_inflight_for_job(&app, &batch_id, &handle);
+        }
+    }
 }
 
 /// `commands::batch::start_batch`'s real logic: create the batch, then
@@ -1014,17 +1119,19 @@ pub fn start_multi_template_batch(
 /// job's state (`BatchJobManager::prepare_retry`), then push it back onto
 /// the shared worker-pool queue — not some batch-specific structure, since a
 /// "batch" is no longer a processing unit after this pass's rearchitecture
-/// (module doc comment). `_app` is kept (rather than dropped from this
-/// function's signature) purely so `commands::batch::retry_batch_job`'s own
-/// call site needs no change; it's no longer needed to spawn a dedicated
-/// thread the way the original one-thread-per-retry design required.
+/// (module doc comment). Routed through [`spawn_batch_worker`] (rather than
+/// calling `manager.enqueue_jobs` directly, as before Phase D8a) purely so
+/// the retried job also gets its fresh `Queued` `in_progress_jobs` row —
+/// `spawn_batch_worker`'s own doc comment — without duplicating that write
+/// here; `app` (previously `_app`, unused before this pass) is what makes
+/// that possible.
 pub fn retry_batch_job(
-    _app: AppHandle,
+    app: AppHandle,
     manager: &BatchJobManager,
     job_id: &str,
 ) -> Result<(), BatchError> {
     manager.prepare_retry(job_id)?;
-    manager.enqueue_jobs(vec![job_id.to_string()]);
+    spawn_batch_worker(app, vec![job_id.to_string()]);
     Ok(())
 }
 

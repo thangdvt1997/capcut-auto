@@ -1319,5 +1319,17 @@
     "workers": "Worker: {{count}}",
     "running": "Đang chạy: {{count}}",
     "queued": "Đang chờ: {{count}}"
+  },
+  "activityLog": {
+    "title": "Hoạt động / Nhật ký",
+    "expand": "Mở rộng nhật ký hoạt động",
+    "collapse": "Thu gọn nhật ký hoạt động",
+    "filterAll": "Tất cả",
+    "filterInfo": "Thông tin",
+    "filterWarning": "Cảnh báo",
+    "filterError": "Lỗi",
+    "clear": "Xóa",
+    "empty": "Chưa có hoạt động nào — mục nhật ký sẽ hiện ở đây khi các tác vụ hàng loạt chạy.",
+    "emptyFiltered": "Không có mục nào khớp bộ lọc này."
   }
 }
