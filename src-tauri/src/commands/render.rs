@@ -196,7 +196,16 @@ fn resolve_settings(
 /// converted to the clip's *on-timeline* position via the same
 /// `timeline::ops::source_delta_to_timeline_delta` math
 /// `timeline::silence` already uses for the equivalent conversion.
-fn compute_voice_speech_segments(
+///
+/// `pub(crate)`, not private: `batch::pipeline` (STUDIO_PLAN.md Phase S2)
+/// reuses this exact real computation to drive ducking for a template's
+/// `background_music` against the batch-built project's own main content
+/// audio track (marked `AudioRole::Voice` for exactly this purpose) —
+/// deliberately the same one real implementation, not a second one
+/// re-derived Tauri-free (this function already takes no `AppHandle`, only
+/// `ffmpeg: &Path`/`project: &ProjectV1`, so nothing about it needed to
+/// change to become reusable there).
+pub(crate) fn compute_voice_speech_segments(
     ffmpeg: &Path,
     project: &ProjectV1,
 ) -> Result<Vec<SpeechSegment>, AppErrorPayload> {

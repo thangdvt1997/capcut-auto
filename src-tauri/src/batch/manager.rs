@@ -516,6 +516,7 @@ pub(crate) struct PipelinePaths {
     ffprobe: PathBuf,
     models_dir: PathBuf,
     templates_dir: PathBuf,
+    assets_dir: PathBuf,
 }
 
 impl PipelinePaths {
@@ -525,6 +526,7 @@ impl PipelinePaths {
             ffprobe: &self.ffprobe,
             models_dir: &self.models_dir,
             templates_dir: &self.templates_dir,
+            assets_dir: &self.assets_dir,
         }
     }
 }
@@ -552,11 +554,22 @@ pub(crate) fn resolve_pipeline_paths(app: &AppHandle) -> Result<PipelinePaths, B
             stage: "Analyzing".to_string(),
             details: e.to_string(),
         })?;
+    // Batch's own template-application step (STUDIO_PLAN.md Phase S2)
+    // resolves a template's `intro`/`outro`/`watermark`/`background_music`
+    // asset-id references against this exact real Asset Library directory —
+    // the same one `commands::assets`'s own commands already read/write,
+    // never a second, parallel resolution.
+    let assets_dir =
+        crate::commands::assets::assets_dir(app).map_err(|e| BatchError::StageFailed {
+            stage: "Editing".to_string(),
+            details: e.to_string(),
+        })?;
     Ok(PipelinePaths {
         ffmpeg,
         ffprobe,
         models_dir,
         templates_dir,
+        assets_dir,
     })
 }
 
@@ -946,11 +959,13 @@ mod tests {
         let source = synth_source(&ffmpeg, &dir);
         let models_dir = dir.join("models");
         let templates_dir = dir.join("templates");
+        let assets_dir = dir.join("assets");
         let io = PipelineIo {
             ffmpeg: &ffmpeg,
             ffprobe: &ffprobe,
             models_dir: &models_dir,
             templates_dir: &templates_dir,
+            assets_dir: &assets_dir,
         };
 
         let handle = handle_for_path(source.to_str().unwrap(), minimal_config("fast_preview"));
@@ -979,11 +994,13 @@ mod tests {
         let source = synth_source(&ffmpeg, &dir);
         let models_dir = dir.join("models");
         let templates_dir = dir.join("templates");
+        let assets_dir = dir.join("assets");
         let io = PipelineIo {
             ffmpeg: &ffmpeg,
             ffprobe: &ffprobe,
             models_dir: &models_dir,
             templates_dir: &templates_dir,
+            assets_dir: &assets_dir,
         };
 
         let handle = handle_for_path(source.to_str().unwrap(), minimal_config("fast_preview"));
@@ -1008,11 +1025,13 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let models_dir = dir.join("models");
         let templates_dir = dir.join("templates");
+        let assets_dir = dir.join("assets");
         let io = PipelineIo {
             ffmpeg: &ffmpeg,
             ffprobe: &ffprobe,
             models_dir: &models_dir,
             templates_dir: &templates_dir,
+            assets_dir: &assets_dir,
         };
 
         let missing = dir.join("does-not-exist.mp4");
@@ -1039,6 +1058,7 @@ mod tests {
         let source = synth_source(&ffmpeg, &dir);
         let models_dir = dir.join("models");
         let templates_dir = dir.join("templates");
+        let assets_dir = dir.join("assets");
 
         let handle = handle_for_path(source.to_str().unwrap(), minimal_config("fast_preview"));
         handle.pause.store(true, Ordering::SeqCst);
@@ -1050,6 +1070,7 @@ mod tests {
         let ffprobe_owned = ffprobe.clone();
         let models_dir_owned = models_dir.clone();
         let templates_dir_owned = templates_dir.clone();
+        let assets_dir_owned = assets_dir.clone();
 
         let worker = std::thread::spawn(move || {
             let io = PipelineIo {
@@ -1057,6 +1078,7 @@ mod tests {
                 ffprobe: &ffprobe_owned,
                 models_dir: &models_dir_owned,
                 templates_dir: &templates_dir_owned,
+                assets_dir: &assets_dir_owned,
             };
             process_job(&io, &handle_for_thread, move |snapshot: &BatchJob| {
                 if snapshot.status == BatchJobStatus::Paused {
@@ -1147,11 +1169,13 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let models_dir = dir.join("models");
         let templates_dir = dir.join("templates");
+        let assets_dir = dir.join("assets");
         let io = PipelineIo {
             ffmpeg: &ffmpeg,
             ffprobe: &ffprobe,
             models_dir: &models_dir,
             templates_dir: &templates_dir,
+            assets_dir: &assets_dir,
         };
 
         let missing = dir.join("still-does-not-exist.mp4");
@@ -1330,11 +1354,13 @@ mod tests {
         let video02 = synth_named_source(&ffmpeg, &dir, "video02.mp4");
         let models_dir = dir.join("models");
         let templates_dir = dir.join("templates");
+        let assets_dir = dir.join("assets");
         let io = PipelineIo {
             ffmpeg: &ffmpeg,
             ffprobe: &ffprobe,
             models_dir: &models_dir,
             templates_dir: &templates_dir,
+            assets_dir: &assets_dir,
         };
 
         let manager = BatchJobManager::default();
@@ -1423,11 +1449,13 @@ mod tests {
         let missing_video = dir.join("does-not-exist.mp4");
         let models_dir = dir.join("models");
         let templates_dir = dir.join("templates");
+        let assets_dir = dir.join("assets");
         let io = PipelineIo {
             ffmpeg: &ffmpeg,
             ffprobe: &ffprobe,
             models_dir: &models_dir,
             templates_dir: &templates_dir,
+            assets_dir: &assets_dir,
         };
 
         let manager = BatchJobManager::default();
@@ -1508,11 +1536,13 @@ mod tests {
         let source = synth_source(&ffmpeg, &dir);
         let models_dir = dir.join("models");
         let templates_dir = dir.join("templates");
+        let assets_dir = dir.join("assets");
         let io = PipelineIo {
             ffmpeg: &ffmpeg,
             ffprobe: &ffprobe,
             models_dir: &models_dir,
             templates_dir: &templates_dir,
+            assets_dir: &assets_dir,
         };
 
         let handle = handle_for_path(source.to_str().unwrap(), minimal_config("fast_preview"));
@@ -1605,11 +1635,13 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let models_dir = dir.join("models");
         let templates_dir = dir.join("templates");
+        let assets_dir = dir.join("assets");
         let io = PipelineIo {
             ffmpeg: &ffmpeg,
             ffprobe: &ffprobe,
             models_dir: &models_dir,
             templates_dir: &templates_dir,
+            assets_dir: &assets_dir,
         };
 
         let missing = dir.join("does-not-exist.mp4");
@@ -1671,11 +1703,13 @@ mod tests {
         let source = synth_named_source(&ffmpeg, &dir, "video01.mp4");
         let models_dir = dir.join("models");
         let templates_dir = dir.join("templates");
+        let assets_dir = dir.join("assets");
         let io = PipelineIo {
             ffmpeg: &ffmpeg,
             ffprobe: &ffprobe,
             models_dir: &models_dir,
             templates_dir: &templates_dir,
+            assets_dir: &assets_dir,
         };
 
         let manager = BatchJobManager::default();

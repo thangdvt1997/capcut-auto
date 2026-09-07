@@ -30,12 +30,16 @@
 //!
 //! - **Real, wired to a consuming feature**: `Intro`/`Outro` (referenced
 //!   from `Template::intro`/`outro`, resolvable to a real video file usable
-//!   as a `project::MediaItem`); `Logo`/`Watermark` (an image file,
-//!   referenced from `Template::watermark`); `Music` (an audio file,
-//!   referenced from `Template::background_music` — could feed
-//!   `project::AudioClipSettings`/`AudioRole::Music` per the original Phase
-//!   11 audio-features work once a caller builds a project from a
-//!   template).
+//!   as a `project::MediaItem`, and actually spliced onto a batch job's
+//!   built project by `batch::pipeline::apply_intro_outro`, STUDIO_PLAN.md
+//!   Phase S2); `Logo`/`Watermark` (an image file, referenced from
+//!   `Template::watermark`, composited for real via `batch::pipeline::
+//!   apply_watermark` onto a new `TrackKind::Overlay` track — reusing
+//!   `render::plan`/`capcut::graph`'s own already-existing real overlay
+//!   engine, Phase S2); `Music` (an audio file, referenced from
+//!   `Template::background_music`, feeding a real new `AudioRole::Music`
+//!   track's `project::AudioClipSettings::volume`, Phase S2's
+//!   `batch::pipeline::apply_background_music`).
 //! - **Structural-only** (§17 lists these kinds, but no consuming feature
 //!   exists yet anywhere in this codebase — same honest "documented gap"
 //!   treatment `templates::mod`'s own `TransitionSettings`/

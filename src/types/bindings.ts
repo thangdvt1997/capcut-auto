@@ -3131,7 +3131,11 @@ sports_overlay: SportsOverlaySettings | null;
  * existed still deserializes, as `None` — upgrade spec §17's own
  * asset-by-id requirement, validated against the Asset Library at
  * save/update time (see [`validate_asset_references`]), never a raw
- * path.
+ * path. STUDIO_PLAN.md Phase S2: real, consumed by
+ * `batch::pipeline::apply_intro_outro`/`apply_watermark`/
+ * `apply_background_music` when building a batch job's project from a
+ * resolved template — not merely validated-but-inert as originally
+ * shipped.
  */
 intro?: AssetReference | null; outro?: AssetReference | null; watermark?: WatermarkReference | null; background_music?: BackgroundMusicReference | null; 
 /**
@@ -3289,9 +3293,12 @@ export type VideoCodec = "h264" | "h265" | "vp_9"
  * rather than reusing `project::CaptionAnchor` (vertical-only:
  * top/center/bottom, no left/right) or `project::CaptionAlignment`
  * (horizontal-only, meant for multi-line text alignment) — neither already
- * expresses a 2D corner, and no overlay-rendering engine exists yet to
- * consume a richer offset-based placement (see `assets::mod`'s own
- * `Watermark`-is-structural-until-an-overlay-engine-exists note).
+ * expresses a 2D corner. STUDIO_PLAN.md Phase S2: consumed for real by
+ * `batch::pipeline::apply_watermark`/`watermark_transform`, which converts
+ * a corner into the exact `ClipSettings::transform_x/y` half-canvas offset
+ * `render::plan`'s own real, already-existing overlay-compositing engine
+ * (`TrackKind::Overlay` + a still-image clip — see that field's own doc
+ * comment on `Template::watermark`) uses to actually place it.
  */
 export type WatermarkPosition = "top_left" | "top_right" | "bottom_left" | "bottom_right" | "center"
 export type WatermarkReference = { asset_id: string; position: WatermarkPosition }

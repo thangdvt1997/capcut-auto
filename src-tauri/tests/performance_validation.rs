@@ -163,11 +163,13 @@ fn bounded_concurrency_batch_pipeline_never_runs_more_than_one_ffmpeg_process_at
 
     let models_dir = dir.join("models");
     let templates_dir = dir.join("templates");
+    let assets_dir = dir.join("assets");
     let io = PipelineIo {
         ffmpeg: &ffmpeg,
         ffprobe: &ffprobe,
         models_dir: &models_dir,
         templates_dir: &templates_dir,
+        assets_dir: &assets_dir,
     };
     // `remove_silence: None`/`captions: None`: the exact same
     // `batch::pipeline`-internal `minimal_config()` shape (its own module's

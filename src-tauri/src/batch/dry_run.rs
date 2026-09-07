@@ -383,12 +383,14 @@ mod tests {
         ffprobe: &'a Path,
         models_dir: &'a Path,
         templates_dir: &'a Path,
+        assets_dir: &'a Path,
     ) -> PipelineIo<'a> {
         PipelineIo {
             ffmpeg,
             ffprobe,
             models_dir,
             templates_dir,
+            assets_dir,
         }
     }
 
@@ -484,6 +486,7 @@ mod tests {
         dir: PathBuf,
         models_dir: PathBuf,
         templates_dir: PathBuf,
+        assets_dir: PathBuf,
     }
 
     impl TestEnv {
@@ -496,12 +499,14 @@ mod tests {
             std::fs::create_dir_all(&dir).unwrap();
             let models_dir = dir.join("models");
             let templates_dir = dir.join("templates");
+            let assets_dir = dir.join("assets");
             Self {
                 ffmpeg,
                 ffprobe,
                 dir,
                 models_dir,
                 templates_dir,
+                assets_dir,
             }
         }
 
@@ -511,6 +516,7 @@ mod tests {
                 &self.ffprobe,
                 &self.models_dir,
                 &self.templates_dir,
+                &self.assets_dir,
             )
         }
     }
