@@ -311,8 +311,16 @@ pub(crate) fn run_dry_run(
         expected_output: DryRunExpectedOutput {
             output_path: output_path.display().to_string(),
             predicted_duration_us,
-            width: preset.settings.width,
-            height: preset.settings.height,
+            // STUDIO_PLAN.md Phase S3: the `"original"` pass-through preset
+            // has no fixed `width`/`height` of its own (`None` — see
+            // `RenderSettings`'s own doc comment) — a dry run's whole
+            // purpose is to report the REAL predicted output, so this
+            // resolves the same way `batch::pipeline::pass_through_source_canvas`
+            // does: fall back to the real, already-probed SOURCE's own
+            // dimensions rather than exposing a bare `None` with nothing
+            // concrete to show the caller.
+            width: preset.settings.width.unwrap_or(probed.width),
+            height: preset.settings.height.unwrap_or(probed.height),
             container: preset.settings.container,
             video_codec: preset.settings.video_codec,
         },
@@ -564,10 +572,13 @@ mod tests {
             .is_none());
 
         let expected_preset = render::find_preset("fast_preview").unwrap();
-        assert_eq!(result.expected_output.width, expected_preset.settings.width);
+        assert_eq!(
+            result.expected_output.width,
+            expected_preset.settings.width.unwrap()
+        );
         assert_eq!(
             result.expected_output.height,
-            expected_preset.settings.height
+            expected_preset.settings.height.unwrap()
         );
         assert_eq!(
             result.expected_output.container,
@@ -639,8 +650,11 @@ mod tests {
 
         // Falls back to the template's own export preset (tiktok_1080x1920).
         let preset = render::find_preset("tiktok_1080x1920").unwrap();
-        assert_eq!(result.expected_output.width, preset.settings.width);
-        assert_eq!(result.expected_output.height, preset.settings.height);
+        assert_eq!(result.expected_output.width, preset.settings.width.unwrap());
+        assert_eq!(
+            result.expected_output.height,
+            preset.settings.height.unwrap()
+        );
 
         let expected_path =
             pipeline::default_output_path(&source, &preset.settings, "edited").unwrap();

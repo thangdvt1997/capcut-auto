@@ -2236,6 +2236,26 @@ position_us: number; speed: number; enabled: boolean;
  * `SyncGroup` membership, see `SyncGroup` below.
  */
 group_id: string | null; clip_settings: ClipSettings }
+/**
+ * A manual per-clip crop region (STUDIO_PLAN.md Phase S3), normalized as
+ * 0.0-1.0 fractions of the SOURCE media's own native width/height —
+ * `(x, y)` is the crop rectangle's top-left corner, `(width, height)` its
+ * size, all relative to the media's own real dimensions
+ * (`render::graph::VideoClipNode::media_width/height`). This deliberately
+ * reuses `scale_x`/`scale_y`'s own existing convention on `ClipSettings`
+ * below — "a unitless value expressed relative to the media's own native
+ * dimensions" — rather than pixels (which would silently go stale the
+ * moment the same clip's source is swapped for a differently-sized
+ * proxy/re-encode) or `transform_x`/`transform_y`'s half-canvas-relative
+ * units (which describe *placement on the canvas*, a different concept
+ * from *which region of the source frame to keep*). Genuinely independent
+ * of `reframe::crop::CropWindow` (the automatic Shorts auto-reframe crop,
+ * pixel-based and computed over time from a detected subject position) —
+ * that system is completely unmodified by this field; this one is manual,
+ * static for the whole clip, and `None` (the default) has zero effect on
+ * any existing project/render.
+ */
+export type ClipCrop = { x: number; y: number; width: number; height: number }
 export type ClipSettings = { opacity: number; flip_h: boolean; flip_v: boolean; rotation_deg: number; scale_x: number; scale_y: number; 
 /**
  * Half-canvas-width/height units, matching pyJianYingDraft's
@@ -2243,7 +2263,14 @@ export type ClipSettings = { opacity: number; flip_h: boolean; flip_v: boolean; 
  * frequent bug source upstream; documented here so it isn't
  * rediscovered the hard way in the render/capcut adapters.
  */
-transform_x: number; transform_y: number }
+transform_x: number; transform_y: number; 
+/**
+ * Manual crop region (STUDIO_PLAN.md Phase S3) — see [`ClipCrop`]'s own
+ * doc comment for the unit convention. `#[serde(default)]` so a
+ * project saved before this field existed still deserializes cleanly,
+ * as `None` (no crop, i.e. today's exact existing behavior).
+ */
+crop?: ClipCrop | null }
 /**
  * A color in linear `[0.0, 1.0]` per-channel form — matches capcut-mate's
  * own `hex_to_rgb` convention (`vendor/capcut-mate/src/service/add_captions.py`)
@@ -2716,8 +2743,32 @@ export type RenderPreset = { id: string; name: string; description: string; sett
 /**
  * Full, independently-overridable render configuration. A preset
  * (`RenderPreset::settings`) is just one concrete value of this struct.
+ * 
+ * **`width`/`height`/`fps` are `Option` (STUDIO_PLAN.md Phase S3)**: every
+ * preset before this phase had a fixed value for all three; the new
+ * `"original"` preset (pass-through source resolution/fps/aspect) needs to
+ * express "no fixed value requested" instead, so all three became optional
+ * rather than special-casing a magic id string somewhere. `Some(_)` means
+ * exactly what it always meant (an explicit, validated target); `None`
+ * means "resolve from the source at render time" — see this struct's own
+ * `validate()` (a `None` dimension/fps has nothing to validate, so it's
+ * always accepted) and `render::presets::all_presets`'s `"original"` entry
+ * for the full design writeup. Importantly, this is honest about — not a
+ * new behavior invented for — this codebase's own pre-existing
+ * architecture: `render::plan::build_ffmpeg_plan` already reads the real
+ * output canvas size/frame rate from `RenderGraph::canvas`
+ * (`ProjectV1::canvas`), never from `RenderSettings::width/height/fps`
+ * directly (those exist here only for validation/documentation — every
+ * built-in `Template`'s own `canvas` already matches its referenced
+ * preset's `width`/`height` by construction, see `templates::mod`'s
+ * `canvas_16x9`/`canvas_9x16` helpers). So "pass-through" for the
+ * `"original"` preset is real and threaded through at the one place that
+ * currently hardcodes a fixed canvas independent of the real source:
+ * `batch::pipeline::run_pipeline`, which now builds the project's canvas
+ * from the real probed source dimensions/fps instead of a template's fixed
+ * canvas whenever the resolved preset requests pass-through (`width.is_none()`).
  */
-export type RenderSettings = { width: number; height: number; fps: Rational; container: Container; video_codec: VideoCodec; 
+export type RenderSettings = { width: number | null; height: number | null; fps: Rational | null; container: Container; video_codec: VideoCodec; 
 /**
  * `libx264`/`libx265`'s `-preset` speed/efficiency knob (`ultrafast`..
  * `veryslow`); ignored for `Vp9` and for hardware encoder backends

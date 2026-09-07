@@ -53,8 +53,8 @@ use crate::captions::generate as captions_generate;
 use crate::media::import::classify_extension;
 use crate::media::probe::{self, ProbedMedia};
 use crate::project::{
-    AudioClipSettings, AudioRole, CanvasV1, Clip, ClipSettings, MediaItem, MediaKind, ProjectV1,
-    Track, TrackKind, TranscriptEntry,
+    AudioClipSettings, AudioRole, CanvasRatioPreset, CanvasV1, Clip, ClipSettings, MediaItem,
+    MediaKind, ProjectV1, Track, TrackKind, TranscriptEntry,
 };
 use crate::render;
 use crate::templates::{self, io as template_io, Template, WatermarkPosition};
@@ -290,6 +290,42 @@ struct BuiltProject {
     video_track_id: Option<String>,
     audio_track_id: Option<String>,
     caption_track_id: String,
+}
+
+/// STUDIO_PLAN.md Phase S3: resolves the real "pass-through" canvas for the
+/// `"original"` render preset (`RenderSettings::width.is_none()`), a pure
+/// function of the resolved preset's settings and the already-probed
+/// source, so it's directly unit-testable without running the whole
+/// pipeline. `render::plan::build_ffmpeg_plan` always reads its real output
+/// canvas size/frame rate from `RenderGraph::canvas` (`ProjectV1::canvas`),
+/// never from `RenderSettings` directly (see that struct's own doc
+/// comment) — every *other* preset here only "just works" because every
+/// built-in `Template`'s own fixed `canvas` already matches its referenced
+/// preset's fixed dimensions by construction. Since the `"original"` preset
+/// has no such fixed dimensions to match, this is the one place that needs
+/// to build a canvas from the real, already-probed SOURCE's own
+/// dimensions/fps instead of a template's fixed one, so the final render
+/// genuinely passes the source through rather than falling back to some
+/// other implicit default.
+///
+/// Returns `None` (defer to the caller's own template-canvas / project-
+/// default fallback, exactly like every other preset already gets) unless
+/// the resolved preset really requests pass-through AND the source really
+/// has usable probed video dimensions — an audio-only source, or a probe
+/// that couldn't report them, has nothing sane to pass through.
+fn pass_through_source_canvas(
+    settings: &render::RenderSettings,
+    probed: &ProbedMedia,
+) -> Option<CanvasV1> {
+    if settings.width.is_some() || !probed.has_video || probed.width == 0 || probed.height == 0 {
+        return None;
+    }
+    Some(CanvasV1 {
+        width: probed.width,
+        height: probed.height,
+        fps: probed.fps,
+        ratio_preset: CanvasRatioPreset::Custom,
+    })
 }
 
 fn build_whole_media_project(
@@ -1029,8 +1065,11 @@ pub fn run_pipeline(
         });
     }
     let probed = probe::probe(io.ffprobe, media_path).map_err(|e| stage_failed("Analyzing", e))?;
-    let mut built =
-        build_whole_media_project(media_path, &probed, template.as_ref().map(|t| &t.canvas))?;
+    let source_canvas = pass_through_source_canvas(&preset.settings, &probed);
+    let canvas_override = source_canvas
+        .as_ref()
+        .or_else(|| template.as_ref().map(|t| &t.canvas));
+    let mut built = build_whole_media_project(media_path, &probed, canvas_override)?;
     on_progress(
         BatchJobStatus::Analyzing,
         "Analyzing media".to_string(),
@@ -1514,6 +1553,36 @@ mod tests {
         assert_eq!(built.project.canvas.height, 1920);
     }
 
+    // -- pass_through_source_canvas (STUDIO_PLAN.md Phase S3) ---------------
+
+    #[test]
+    fn pass_through_source_canvas_builds_a_canvas_from_the_probed_source_when_the_preset_has_no_fixed_dimensions(
+    ) {
+        let settings = render::find_preset("original").unwrap().settings;
+        assert!(
+            settings.width.is_none(),
+            "sanity: original preset really has no fixed width"
+        );
+        let canvas = pass_through_source_canvas(&settings, &probed(true, true))
+            .expect("a video source with a pass-through preset must resolve a canvas");
+        assert_eq!(canvas.width, 1920);
+        assert_eq!(canvas.height, 1080);
+        assert_eq!(canvas.fps, Rational::new(30, 1));
+        assert_eq!(canvas.ratio_preset, CanvasRatioPreset::Custom);
+    }
+
+    #[test]
+    fn pass_through_source_canvas_is_none_for_a_fixed_dimension_preset() {
+        let settings = render::find_preset("p1080").unwrap().settings;
+        assert!(pass_through_source_canvas(&settings, &probed(true, true)).is_none());
+    }
+
+    #[test]
+    fn pass_through_source_canvas_is_none_for_an_audio_only_source_even_with_the_original_preset() {
+        let settings = render::find_preset("original").unwrap().settings;
+        assert!(pass_through_source_canvas(&settings, &probed(false, true)).is_none());
+    }
+
     // -- resolve_template ---------------------------------------------------
 
     #[test]
@@ -1873,6 +1942,57 @@ mod tests {
         assert!(statuses.contains(&BatchJobStatus::Editing));
         assert!(statuses.contains(&BatchJobStatus::Rendering));
         assert!(!statuses.contains(&BatchJobStatus::Transcribing));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// STUDIO_PLAN.md Phase S3: the real, meaningful proof for the
+    /// `"original"` pass-through preset — a real synthesized source at a
+    /// deliberately non-standard 320x240@10fps (matching no built-in
+    /// preset's or template's own fixed dimensions) rendered with
+    /// `export_preset_id: "original"` and NO template (so there is no fixed
+    /// template `canvas` to fall back to, and no other implicit default
+    /// could accidentally make this pass — `ProjectV1::new`'s own default
+    /// canvas is a completely different 1920x1080) must still produce a
+    /// real rendered output whose own real probed dimensions and frame rate
+    /// match the SOURCE's, not some hardcoded value.
+    #[test]
+    fn original_preset_pass_through_produces_output_matching_the_real_probed_source_dimensions_and_fps(
+    ) {
+        let ffmpeg =
+            crate::ffmpeg::binaries::ffmpeg_path(None).expect("ffmpeg resolvable in test env");
+        let ffprobe =
+            crate::ffmpeg::binaries::ffprobe_path(None).expect("ffprobe resolvable in test env");
+        let dir =
+            std::env::temp_dir().join(format!("ave-batch-original-preset-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = synth_source(&ffmpeg, &dir);
+        let models_dir = dir.join("models");
+        let templates_dir = dir.join("templates");
+        let assets_dir = dir.join("assets");
+        let io = no_op_io(&ffmpeg, &ffprobe, &models_dir, &templates_dir, &assets_dir);
+
+        let mut config = minimal_config();
+        config.export_preset_id = Some("original".to_string());
+        assert!(config.template_id.is_none(), "no template to fall back to");
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let pause = Arc::new(AtomicBool::new(false));
+        let on_progress: Arc<dyn Fn(BatchJobStatus, String, f32) + Send + Sync> =
+            Arc::new(|_, _, _| {});
+
+        let output = run_pipeline(&io, &source, &config, cancel, pause, on_progress)
+            .expect("original-preset pipeline should complete");
+
+        let source_probed = crate::media::probe::probe(&ffprobe, &source).expect("probing source");
+        let output_probed =
+            crate::media::probe::probe(&ffprobe, &output).expect("probing rendered output");
+
+        assert_eq!(output_probed.width, 320);
+        assert_eq!(output_probed.height, 240);
+        assert_eq!(output_probed.width, source_probed.width);
+        assert_eq!(output_probed.height, source_probed.height);
+        assert_eq!(output_probed.fps, source_probed.fps);
 
         std::fs::remove_dir_all(&dir).ok();
     }

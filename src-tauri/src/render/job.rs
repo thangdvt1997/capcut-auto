@@ -166,9 +166,9 @@ mod tests {
             effect_nodes: vec![],
         };
         let mut settings = find_preset("fast_preview").unwrap().settings;
-        settings.width = 320;
-        settings.height = 240;
-        settings.fps = Rational::new(10, 1);
+        settings.width = Some(320);
+        settings.height = Some(240);
+        settings.fps = Some(Rational::new(10, 1));
         let plan = build_ffmpeg_plan(&graph, &settings, &out, &[]).expect("plan builds");
 
         let mut saw_done = false;
@@ -226,9 +226,9 @@ mod tests {
             effect_nodes: vec![],
         };
         let mut settings = find_preset("fast_preview").unwrap().settings;
-        settings.width = 320;
-        settings.height = 240;
-        settings.fps = Rational::new(10, 1);
+        settings.width = Some(320);
+        settings.height = Some(240);
+        settings.fps = Some(Rational::new(10, 1));
         let plan = build_ffmpeg_plan(&graph, &settings, &out, &[]).expect("plan builds");
 
         let cancel = AtomicBool::new(true); // already cancelled before the job starts
@@ -305,9 +305,9 @@ mod tests {
             effect_nodes: vec![],
         };
         let mut settings = find_preset("fast_preview").unwrap().settings;
-        settings.width = 320;
-        settings.height = 240;
-        settings.fps = Rational::new(10, 1);
+        settings.width = Some(320);
+        settings.height = Some(240);
+        settings.fps = Some(Rational::new(10, 1));
         let plan = build_plan(&graph, &settings, &out, &[]).expect("plan builds");
 
         let mut saw_done = false;

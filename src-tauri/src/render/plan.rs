@@ -48,7 +48,7 @@
 use std::path::Path;
 
 use crate::ffmpeg::command::FfmpegArgs;
-use crate::project::{ClipSettings, DuckingSettings};
+use crate::project::{ClipCrop, ClipSettings, DuckingSettings};
 use crate::vad::provider::SpeechSegment;
 
 use super::audio_filters::{
@@ -94,6 +94,38 @@ struct VideoClipFilter {
     end_s: String,
 }
 
+/// Resolves a manual [`ClipCrop`] (normalized 0.0-1.0 fractions of the
+/// SOURCE media's own dimensions — see that type's own doc comment for why)
+/// into a real pixel rectangle, clamped so it never extends past the
+/// source frame's bounds — the same bounds-safety discipline
+/// `reframe::crop::compute_crop_window` already applies to its own
+/// (independent, auto-detected) crop windows, applied here to a
+/// user-specified region instead. Returns `None` when there's nothing to
+/// crop (`crop` is `None`) or the media's own dimensions are unknown
+/// (`media_width`/`media_height == 0` — the same "can't do anything sane,
+/// fall back" case this function already handles for `scale` below).
+fn resolve_crop_pixels(
+    media_width: u32,
+    media_height: u32,
+    crop: Option<ClipCrop>,
+) -> Option<(u32, u32, u32, u32)> {
+    let crop = crop?;
+    if media_width == 0 || media_height == 0 {
+        return None;
+    }
+    let mw = media_width as f64;
+    let mh = media_height as f64;
+
+    let x = (crop.x.clamp(0.0, 1.0) * mw).round().clamp(0.0, mw - 1.0) as u32;
+    let y = (crop.y.clamp(0.0, 1.0) * mh).round().clamp(0.0, mh - 1.0) as u32;
+    let max_w = media_width.saturating_sub(x).max(1);
+    let max_h = media_height.saturating_sub(y).max(1);
+    let width = ((crop.width.clamp(0.0, 1.0) * mw).round().max(2.0) as u32).min(max_w);
+    let height = ((crop.height.clamp(0.0, 1.0) * mh).round().max(2.0) as u32).min(max_h);
+
+    Some((x, y, width, height))
+}
+
 fn build_video_clip_filter(
     input_index: usize,
     clip: &VideoClipNode,
@@ -110,6 +142,7 @@ fn build_video_clip_filter(
         scale_y,
         transform_x,
         transform_y,
+        crop,
     } = clip.settings;
 
     let on_duration_us = clip.on_timeline_duration_us();
@@ -143,7 +176,16 @@ fn build_video_clip_filter(
         )
     };
 
-    let mut chain = format!("[{input_index}:v]scale={scaled_w}:{scaled_h}");
+    let mut chain = format!("[{input_index}:v]");
+    // Manual crop (STUDIO_PLAN.md Phase S3), applied before scale — the
+    // same "crop first, then scale/place" ordering
+    // `reframe::crop`'s own module doc comment describes for its
+    // independent auto-reframe crop, kept consistent here rather than
+    // inventing a different order for this, unrelated, manual crop.
+    if let Some((cx, cy, cw, ch)) = resolve_crop_pixels(clip.media_width, clip.media_height, crop) {
+        chain.push_str(&format!("crop={cw}:{ch}:{cx}:{cy},"));
+    }
+    chain.push_str(&format!("scale={scaled_w}:{scaled_h}"));
     if flip_h {
         chain.push_str(",hflip");
     }
@@ -648,6 +690,7 @@ mod tests {
             scale_y: 0.5,
             transform_x: 1.0,
             transform_y: -1.0,
+            crop: None,
         };
         let graph = RenderGraph {
             canvas: canvas(),
@@ -675,6 +718,216 @@ mod tests {
         // center_x = (1920-960)/2 = 480; + 1.0*960 = 1440
         // center_y = (1080-540)/2 = 270; - (-1.0)*540 = 270+540 = 810
         assert!(s.contains("overlay=1440:810"), "{s}");
+    }
+
+    #[test]
+    fn manual_crop_produces_a_real_crop_filter_before_scale_using_source_media_pixel_dimensions() {
+        // STUDIO_PLAN.md Phase S3: crop is a fraction of the SOURCE MEDIA's
+        // own dimensions (1920x1080, per `video_clip`'s helper above), not
+        // the canvas — x=0.25 -> 480px, y=0.25 -> 270px, width=0.5 -> 960px,
+        // height=0.5 -> 540px.
+        let mut clip = video_clip("c1", "D:/in.mp4", 0, 2_000_000, 0);
+        clip.settings.crop = Some(ClipCrop {
+            x: 0.25,
+            y: 0.25,
+            width: 0.5,
+            height: 0.5,
+        });
+        let graph = RenderGraph {
+            canvas: canvas(),
+            duration_us: 2_000_000,
+            video_layers: vec![VideoLayer {
+                track_id: "v1".into(),
+                render_index: 0,
+                clips: vec![clip],
+            }],
+            audio_layers: vec![],
+            caption_nodes: vec![],
+            effect_nodes: vec![],
+        };
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
+        let s = args_string(&plan);
+        // Real generated filter-string proof (this codebase's own
+        // established convention, e.g. `batch::pipeline`'s watermark test)
+        // that the crop filter really took effect, at the exact resolved
+        // pixel rectangle, and appears BEFORE the scale filter in the chain.
+        assert!(s.contains("crop=960:540:480:270,scale="), "{s}");
+    }
+
+    #[test]
+    fn manual_crop_is_clamped_to_never_extend_past_the_source_frames_bounds() {
+        // A crop region near the source's bottom-right edge, deliberately
+        // requesting a width/height that would overhang if taken literally
+        // (0.9 + 0.5 > 1.0) — must clamp rather than emit an out-of-bounds
+        // (or ffmpeg-rejected) crop rectangle.
+        let mut clip = video_clip("c1", "D:/in.mp4", 0, 2_000_000, 0);
+        clip.settings.crop = Some(ClipCrop {
+            x: 0.9,
+            y: 0.9,
+            width: 0.5,
+            height: 0.5,
+        });
+        let graph = RenderGraph {
+            canvas: canvas(),
+            duration_us: 2_000_000,
+            video_layers: vec![VideoLayer {
+                track_id: "v1".into(),
+                render_index: 0,
+                clips: vec![clip],
+            }],
+            audio_layers: vec![],
+            caption_nodes: vec![],
+            effect_nodes: vec![],
+        };
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
+        let s = args_string(&plan);
+        // media is 1920x1080; x=0.9*1920=1728, so width must clamp to
+        // 1920-1728=192 (not 0.5*1920=960, which would overhang to 2688).
+        assert!(s.contains("crop=192:"), "{s}");
+        assert!(s.contains(":1728:"), "{s}");
+    }
+
+    #[test]
+    fn no_crop_set_produces_no_crop_filter_at_all() {
+        // `ClipSettings::default()`'s `crop: None` (video_clip's helper
+        // above) must have zero effect on the generated filter chain — the
+        // exact "purely additive, no existing render changes" requirement.
+        let clip = video_clip("c1", "D:/in.mp4", 0, 2_000_000, 0);
+        let graph = RenderGraph {
+            canvas: canvas(),
+            duration_us: 2_000_000,
+            video_layers: vec![VideoLayer {
+                track_id: "v1".into(),
+                render_index: 0,
+                clips: vec![clip],
+            }],
+            audio_layers: vec![],
+            caption_nodes: vec![],
+            effect_nodes: vec![],
+        };
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
+        let s = args_string(&plan);
+        assert!(!s.contains("crop="), "{s}");
+    }
+
+    /// Real end-to-end proof (this codebase's own established convention for
+    /// "a filter really took visible effect", per `render::job`'s own
+    /// real-render tests): a real synthesized source with a red LEFT half
+    /// and a blue RIGHT half, manually cropped to keep only the right
+    /// (blue) half. If the crop filter didn't really apply — or applied to
+    /// the wrong region — the rendered output would show a mix of red and
+    /// blue (or the wrong half); downsampling the real rendered output to a
+    /// single pixel and reading its real decoded color is a direct,
+    /// non-synthetic proof the crop actually reached the real ffmpeg
+    /// filter graph and changed the real visible content, not just that the
+    /// render command didn't error.
+    #[test]
+    fn a_real_render_with_manual_crop_keeps_only_the_cropped_regions_real_visible_content() {
+        let ffmpeg =
+            crate::ffmpeg::binaries::ffmpeg_path(None).expect("ffmpeg resolvable in test env");
+        let dir = std::env::temp_dir().join(format!(
+            "ave-render-manual-crop-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Real synthesized 400x100 source: left half solid red, right half
+        // solid blue.
+        let source = dir.join("split.mp4");
+        let synth_args = crate::ffmpeg::command::FfmpegArgs::new()
+            .args([
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:size=200x100:rate=10:duration=1",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=blue:size=200x100:rate=10:duration=1",
+                "-filter_complex",
+                "[0:v][1:v]hstack=inputs=2[out]",
+                "-map",
+                "[out]",
+            ])
+            .path(&source);
+        crate::ffmpeg::command::run_checked(&ffmpeg, &synth_args)
+            .expect("synthesizing real red/blue split source");
+
+        let canvas = CanvasV1 {
+            width: 400,
+            height: 100,
+            fps: Rational::new(10, 1),
+            ratio_preset: CanvasRatioPreset::Custom,
+        };
+        let mut clip = video_clip("c1", &source.to_string_lossy(), 0, 1_000_000, 0);
+        clip.media_width = 400;
+        clip.media_height = 100;
+        // Crop to the right (blue) half only: x=0.5, width=0.5, full height.
+        clip.settings.crop = Some(ClipCrop {
+            x: 0.5,
+            y: 0.0,
+            width: 0.5,
+            height: 1.0,
+        });
+        let graph = RenderGraph {
+            canvas,
+            duration_us: 1_000_000,
+            video_layers: vec![VideoLayer {
+                track_id: "v1".into(),
+                render_index: 0,
+                clips: vec![clip],
+            }],
+            audio_layers: vec![],
+            caption_nodes: vec![],
+            effect_nodes: vec![],
+        };
+        let mut settings = find_preset("fast_preview").unwrap().settings;
+        settings.width = Some(400);
+        settings.height = Some(100);
+        settings.fps = Some(Rational::new(10, 1));
+        let out = dir.join("cropped.mp4");
+        let plan = build_ffmpeg_plan(&graph, &settings, &out, &[]).expect("plan builds");
+
+        crate::render::job::run_render_job(&ffmpeg, &plan, &out, None, |_| {})
+            .expect("real crop render succeeds");
+        assert!(out.exists());
+
+        // Downsample the real rendered output to a single pixel and read
+        // its real decoded average color via rawvideo rgb24 bytes.
+        let probe_args = crate::ffmpeg::command::FfmpegArgs::new()
+            .args(["-y", "-v", "error"])
+            .input(&out)
+            .args([
+                "-vframes",
+                "1",
+                "-vf",
+                "scale=1:1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+            ])
+            .path(Path::new("-"));
+        let output = crate::ffmpeg::command::run_checked(&ffmpeg, &probe_args)
+            .expect("extracting the real rendered output's average pixel color");
+        assert_eq!(
+            output.stdout.len(),
+            3,
+            "expected exactly one rgb24 pixel's worth of real bytes"
+        );
+        let (r, g, b) = (output.stdout[0], output.stdout[1], output.stdout[2]);
+        assert!(
+            b > 150 && r < 100,
+            "expected the real rendered output to be blue (crop kept only the right/blue half), got rgb({r},{g},{b})"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

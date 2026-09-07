@@ -125,13 +125,13 @@ fn resolve_settings(
     };
 
     if let Some(v) = input.width {
-        settings.width = v;
+        settings.width = Some(v);
     }
     if let Some(v) = input.height {
-        settings.height = v;
+        settings.height = Some(v);
     }
     if let Some(v) = input.fps {
-        settings.fps = v;
+        settings.fps = Some(v);
     }
     if let Some(v) = input.container {
         settings.container = v;
@@ -416,7 +416,7 @@ mod tests {
             hardware_encoder: None,
         };
         let settings = resolve_settings(&input, &[]).expect("resolves");
-        assert_eq!((settings.width, settings.height), (1920, 1080));
+        assert_eq!((settings.width, settings.height), (Some(1920), Some(1080)));
         assert_eq!(settings.hardware_encoder, Some(EncoderBackend::Software));
     }
 
@@ -440,7 +440,7 @@ mod tests {
         assert_eq!(settings.crf, Some(15));
         assert_eq!(settings.audio_bitrate_kbps, 256);
         // Unoverridden fields keep the preset's values.
-        assert_eq!((settings.width, settings.height), (1920, 1080));
+        assert_eq!((settings.width, settings.height), (Some(1920), Some(1080)));
     }
 
     #[test]

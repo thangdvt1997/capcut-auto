@@ -87,6 +87,7 @@ mod tests {
             scale_y: 1.5,
             transform_x: 0.1,
             transform_y: -0.2,
+            crop: None,
         };
         let c = CapCutClipSettings::from(&p);
         assert_eq!(c.alpha, 0.5);

@@ -412,12 +412,13 @@ fn youtube_shorts() -> Template {
             merge_gap_us: 200_000,
         },
         transition_settings: TransitionSettings::cross_fade(200_000),
-        // No dedicated "YouTube Shorts" render preset exists in
-        // `render::presets::all_presets()` (only one vertical preset,
-        // `tiktok_1080x1920`, does — same 1080x1920 target resolution
-        // Shorts also uses) — reused honestly rather than inventing a
-        // near-duplicate preset for the same resolution/bitrate.
-        export_preset_id: "tiktok_1080x1920".to_string(),
+        // STUDIO_PLAN.md Phase S3: closes the gap this doc comment used to
+        // flag — `render::presets::all_presets()` now has a dedicated
+        // `youtube_shorts_1080x1920` preset (same 1080x1920 resolution as
+        // TikTok's own preset, since that's the real Shorts spec, but
+        // bitrate-controlled at YouTube's own published rate with
+        // higher-quality audio) instead of reusing TikTok's preset directly.
+        export_preset_id: "youtube_shorts_1080x1920".to_string(),
         ai_prompt_config: AiPromptConfig {
             emphasized_categories: vec![
                 SmartEditCategory::Repetition,
@@ -601,8 +602,57 @@ fn football_highlight() -> Template {
     }
 }
 
-/// The 8 built-in templates (master prompt §36's exact list), in the order
-/// §36 lists them. Pure catalog function, same pattern as
+/// Facebook Reels: vertical short-form, closely related to TikTok/YouTube
+/// Shorts in format but its own distinct built-in (STUDIO_PLAN.md Phase
+/// S3 — the audit's own "Preset: Facebook Reel — MISSING" gap closes with a
+/// real, dedicated `facebook_reel_1080x1920` render preset; this template is
+/// added alongside it, per this phase's own judgment call, so the preset is
+/// actually reachable through this catalog the same way every other preset
+/// here is reachable through at least one template, rather than left as an
+/// orphaned entry nothing in this catalog ever selects). Reuses TikTok's own
+/// caption style (bold, high-contrast — reads well at Reels' typical
+/// viewing size) rather than inventing a near-duplicate, with a
+/// zoom/cross-fade profile positioned between TikTok's (fastest, most
+/// aggressive) and YouTube Shorts' (slightly slower) own settings.
+fn facebook_reel() -> Template {
+    Template {
+        id: "tmpl_facebook_reel".to_string(),
+        name: "Facebook Reel".to_string(),
+        description: "Vertical short-form for Facebook Reels: bold high-contrast captions \
+            (shared with TikTok's own template), moderate zoom, and a cross-fade duration \
+            between TikTok's and YouTube Shorts' own."
+            .to_string(),
+        is_built_in: true,
+        canvas: canvas_9x16(),
+        caption_style: caption_style("template_tiktok"),
+        zoom_intensity: ZoomIntensity::Medium,
+        silence_settings: CutParams {
+            padding_before_us: 90_000,
+            padding_after_us: 90_000,
+            merge_gap_us: 175_000,
+        },
+        transition_settings: TransitionSettings::cross_fade(175_000),
+        export_preset_id: "facebook_reel_1080x1920".to_string(),
+        ai_prompt_config: AiPromptConfig {
+            emphasized_categories: vec![
+                SmartEditCategory::BoringSection,
+                SmartEditCategory::Repetition,
+                SmartEditCategory::WeakSentence,
+            ],
+            system_prompt_prefix: None,
+        },
+        sports_overlay: None,
+        intro: None,
+        outro: None,
+        watermark: None,
+        background_music: None,
+        version: default_template_version(),
+    }
+}
+
+/// The 9 built-in templates (master prompt §36's original 8, plus
+/// STUDIO_PLAN.md Phase S3's `facebook_reel`), in the order §36 lists its
+/// own 8. Pure catalog function, same pattern as
 /// `render::presets::all_presets`/`captions::styles::all_caption_templates` —
 /// every call returns fresh owned values with fixed, stable `id`s.
 pub fn all_templates() -> Vec<Template> {
@@ -615,6 +665,7 @@ pub fn all_templates() -> Vec<Template> {
         tutorial(),
         gaming(),
         football_highlight(),
+        facebook_reel(),
     ]
 }
 
@@ -818,11 +869,11 @@ mod tests {
     use crate::render::all_presets;
 
     #[test]
-    fn all_eight_built_in_templates_are_present_exactly_once() {
+    fn all_nine_built_in_templates_are_present_exactly_once() {
         let templates = all_templates();
-        assert_eq!(templates.len(), 8);
+        assert_eq!(templates.len(), 9);
         let ids: HashSet<&str> = templates.iter().map(|t| t.id.as_str()).collect();
-        assert_eq!(ids.len(), 8, "template ids must be unique");
+        assert_eq!(ids.len(), 9, "template ids must be unique");
         for expected in [
             "tmpl_talking_head",
             "tmpl_podcast",
@@ -832,6 +883,7 @@ mod tests {
             "tmpl_tutorial",
             "tmpl_gaming",
             "tmpl_football_highlight",
+            "tmpl_facebook_reel",
         ] {
             assert!(ids.contains(expected), "missing template {expected}");
         }
@@ -845,6 +897,7 @@ mod tests {
             "Tutorial",
             "Gaming",
             "Football Highlight",
+            "Facebook Reel",
         ] {
             assert!(
                 names.contains(expected),
@@ -901,8 +954,8 @@ mod tests {
     }
 
     #[test]
-    fn tiktok_and_youtube_shorts_are_9x16() {
-        for id in ["tmpl_tiktok", "tmpl_youtube_shorts"] {
+    fn tiktok_and_youtube_shorts_and_facebook_reel_are_9x16() {
+        for id in ["tmpl_tiktok", "tmpl_youtube_shorts", "tmpl_facebook_reel"] {
             let t = all_templates().into_iter().find(|t| t.id == id).unwrap();
             assert_eq!(t.canvas.ratio_preset, CanvasRatioPreset::Ratio9x16, "{id}");
             assert_eq!((t.canvas.width, t.canvas.height), (1080, 1920), "{id}");

@@ -265,9 +265,16 @@ class RenderStore {
   }
 
   private applySettings(s: RenderSettings): void {
-    this.width = s.width;
-    this.height = s.height;
-    this.fps = s.fps;
+    // `width`/`height`/`fps` are `null` on the "Original" pass-through
+    // preset (`STUDIO_PLAN.md` Phase S3) — this store has no frontend
+    // concept of "no fixed dimension" yet (that preset's own UI is a later
+    // pass), so selecting it simply leaves whatever this form's fields
+    // already held, rather than forcing a fallback value that would
+    // misrepresent "resolved from the source at render time" as a fixed
+    // number the user picked.
+    if (s.width !== null) this.width = s.width;
+    if (s.height !== null) this.height = s.height;
+    if (s.fps !== null) this.fps = s.fps;
     this.container = s.container;
     this.videoCodec = s.video_codec;
     this.x264Preset = s.x264_preset;

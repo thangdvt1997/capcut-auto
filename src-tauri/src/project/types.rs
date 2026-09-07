@@ -143,6 +143,31 @@ pub struct Track {
     pub clip_ids: Vec<String>,
 }
 
+/// A manual per-clip crop region (STUDIO_PLAN.md Phase S3), normalized as
+/// 0.0-1.0 fractions of the SOURCE media's own native width/height —
+/// `(x, y)` is the crop rectangle's top-left corner, `(width, height)` its
+/// size, all relative to the media's own real dimensions
+/// (`render::graph::VideoClipNode::media_width/height`). This deliberately
+/// reuses `scale_x`/`scale_y`'s own existing convention on `ClipSettings`
+/// below — "a unitless value expressed relative to the media's own native
+/// dimensions" — rather than pixels (which would silently go stale the
+/// moment the same clip's source is swapped for a differently-sized
+/// proxy/re-encode) or `transform_x`/`transform_y`'s half-canvas-relative
+/// units (which describe *placement on the canvas*, a different concept
+/// from *which region of the source frame to keep*). Genuinely independent
+/// of `reframe::crop::CropWindow` (the automatic Shorts auto-reframe crop,
+/// pixel-based and computed over time from a detected subject position) —
+/// that system is completely unmodified by this field; this one is manual,
+/// static for the whole clip, and `None` (the default) has zero effect on
+/// any existing project/render.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Type)]
+pub struct ClipCrop {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct ClipSettings {
     pub opacity: f64,
@@ -157,6 +182,12 @@ pub struct ClipSettings {
     /// rediscovered the hard way in the render/capcut adapters.
     pub transform_x: f64,
     pub transform_y: f64,
+    /// Manual crop region (STUDIO_PLAN.md Phase S3) — see [`ClipCrop`]'s own
+    /// doc comment for the unit convention. `#[serde(default)]` so a
+    /// project saved before this field existed still deserializes cleanly,
+    /// as `None` (no crop, i.e. today's exact existing behavior).
+    #[serde(default)]
+    pub crop: Option<ClipCrop>,
 }
 
 impl Default for ClipSettings {
@@ -170,6 +201,7 @@ impl Default for ClipSettings {
             scale_y: 1.0,
             transform_x: 0.0,
             transform_y: 0.0,
+            crop: None,
         }
     }
 }

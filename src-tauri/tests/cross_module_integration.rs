@@ -428,9 +428,9 @@ fn run_import_through_render_chain(
     let mut settings = find_preset("fast_preview")
         .expect("the built-in fast_preview preset exists")
         .settings;
-    settings.width = 320;
-    settings.height = 240;
-    settings.fps = Rational::new(10, 1);
+    settings.width = Some(320);
+    settings.height = Some(240);
+    settings.fps = Some(Rational::new(10, 1));
     let output_path = dir.join("rendered_output.mp4");
     let plan =
         build_ffmpeg_plan(&graph, &settings, &output_path, &[]).expect("real ffmpeg plan build");
