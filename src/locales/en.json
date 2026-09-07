@@ -736,7 +736,6 @@
   },
   "history": {
     "title": "History",
-    "close": "Close",
     "refreshButton": "Refresh",
     "loadMoreButton": "Load more",
     "loading": "Loading…",
@@ -848,7 +847,6 @@
   },
   "assetLibrary": {
     "title": "Asset Library",
-    "close": "Close",
     "explainer": "A small catalog of your own reusable files — intro/outro clips, logo/watermark images, background music, and more — each registered once and referenced by templates via a stable id instead of a hardcoded path. Files are referenced in place, never copied.",
     "loading": "Loading assets…",
     "loadFailed": "Couldn't load the Asset Library: {{error}}",
@@ -868,6 +866,10 @@
     "removeCancelButton": "Cancel",
     "removing": "Removing…",
     "closeButton": "Close",
+    "colName": "Name",
+    "colKind": "Kind",
+    "colPath": "Path",
+    "colActions": "Actions",
     "kind": {
       "intro": "Intro",
       "outro": "Outro",
@@ -903,7 +905,12 @@
       "deleteButton": "Delete",
       "deleteConfirmButton": "Click again to confirm delete",
       "deleteCancelButton": "Cancel",
-      "deleting": "Deleting…"
+      "deleting": "Deleting…",
+      "colName": "Name",
+      "colFolder": "Watched folder",
+      "colCondition": "Condition",
+      "colAction": "Action",
+      "colActions": "Actions"
     },
     "form": {
       "title": "New Automation Rule",
@@ -1140,7 +1147,6 @@
   },
   "templateGenerator": {
     "title": "AI Template Generator",
-    "close": "Close",
     "explainer": "Describe the template you want in plain language. AI converts it into a structured template definition, validated against your real caption styles, export presets, and Asset Library — then you preview it and, if it looks right, save it as a reusable custom template.",
     "promptSectionTitle": "Describe your template",
     "promptPlaceholder": "e.g. \"Create a TikTok-style football highlight template. 30-45 seconds, 9:16, large subtitles, highlight player names, logo in the top-right corner, 2-second intro, fast transitions.\"",

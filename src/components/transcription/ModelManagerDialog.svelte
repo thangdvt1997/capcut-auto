@@ -26,17 +26,31 @@
   When Phase 7's later Settings-surface work actually lands, this dialog's
   contents can be lifted wholesale into a "Transcription" settings section;
   nothing here assumes dialog-only presentation.
+
+  **Phase D7a Design System retrofit (`STUDIO_PLAN.md`):** the hand-rolled
+  backdrop/dialog shell is now `Modal.svelte` (Phase D1), each model row is
+  now `Card.svelte`, the hand-rolled status pill (`.mm-status*`) is
+  `Badge.svelte`, the progress track is `ProgressBar.svelte`, every button is
+  `Button.svelte`, every error banner is `ErrorState.svelte`, and the initial
+  "loading catalog" message is `LoadingState.svelte`. Every real behavior —
+  every store call, every `disabled`/gating condition, the two-step delete
+  confirm, the optimistic-progress-row download flow — is unchanged, only
+  the markup underneath it. Left bespoke: the explainer paragraph (plain
+  text, no component needed) and the "download complete" success line (a
+  full-sentence banner, not a small pill — no Design System "success banner"
+  primitive exists yet, same honest gap `ExportDialog.svelte`'s own retrofit
+  documents for its own render-complete message).
 -->
 <script lang="ts">
   import { modelManagerStore, type ModelView } from "../../stores/modelManager.svelte";
   import { t } from "../../lib/i18n.svelte";
-
-  function onKeydown(e: KeyboardEvent): void {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      modelManagerStore.close();
-    }
-  }
+  import Modal from "../ui/Modal.svelte";
+  import Card from "../ui/Card.svelte";
+  import Badge from "../ui/Badge.svelte";
+  import ProgressBar from "../ui/ProgressBar.svelte";
+  import Button from "../ui/Button.svelte";
+  import ErrorState from "../ui/ErrorState.svelte";
+  import LoadingState from "../ui/LoadingState.svelte";
 
   const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB"];
 
@@ -63,190 +77,129 @@
     if (!m.progress || m.progress.size <= 0) return 0;
     return Math.min(1, m.progress.downloaded / m.progress.size);
   }
+
+  function statusBadgeVariant(m: ModelView): "neutral" | "pos" | "accent" {
+    if (m.downloading) return "accent";
+    if (m.installed) return "pos";
+    return "neutral";
+  }
 </script>
 
-{#if modelManagerStore.open}
-  <div class="mm-backdrop" role="presentation" onclick={() => modelManagerStore.close()}>
-    <div
-      class="mm-dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label={t("modelManager.title")}
-      tabindex="-1"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={onKeydown}
-    >
-      <div class="mm-header">
-        <span class="mm-title">{t("modelManager.title")}</span>
-        <button class="btn btn-ghost" onclick={() => modelManagerStore.close()} title={t("modelManager.close")}>×</button>
-      </div>
+<Modal open={modelManagerStore.open} title={t("modelManager.title")} width={620} onClose={() => modelManagerStore.close()}>
+  <p class="mm-explainer muted-2">{t("modelManager.explainer")}</p>
 
-      <div class="mm-body">
-        <p class="mm-explainer muted-2">{t("modelManager.explainer")}</p>
+  {#if modelManagerStore.loadError}
+    <ErrorState message={t("modelManager.loadFailed", { error: modelManagerStore.loadError })} />
+  {/if}
 
-        {#if modelManagerStore.loadError}
-          <div class="mm-error">{t("modelManager.loadFailed", { error: modelManagerStore.loadError })}</div>
-        {/if}
+  {#if modelManagerStore.loading && modelManagerStore.available.length === 0}
+    <LoadingState message={t("modelManager.loading")} />
+  {/if}
 
-        {#if modelManagerStore.loading && modelManagerStore.available.length === 0}
-          <p class="mm-empty muted-2">{t("modelManager.loading")}</p>
-        {/if}
+  <div class="mm-list">
+    {#each modelManagerStore.modelsView as m (m.entry.id)}
+      <Card>
+        <div class="mm-card-main">
+          <div class="mm-card-info">
+            <span class="mm-name">{m.entry.display_name}</span>
+            <span class="mm-filename muted-2">{m.entry.filename}</span>
+            <span class="mm-meta muted-2">
+              {formatBytes(m.installedSizeBytes ?? m.entry.approx_size_bytes)}
+              · {m.entry.multilingual ? t("modelManager.languageMultilingual") : t("modelManager.languageEnglishOnly")}
+            </span>
+          </div>
 
-        <div class="mm-list">
-          {#each modelManagerStore.modelsView as m (m.entry.id)}
-            <div class="mm-card">
-              <div class="mm-card-main">
-                <div class="mm-card-info">
-                  <span class="mm-name">{m.entry.display_name}</span>
-                  <span class="mm-filename muted-2">{m.entry.filename}</span>
-                  <span class="mm-meta muted-2">
-                    {formatBytes(m.installedSizeBytes ?? m.entry.approx_size_bytes)}
-                    · {m.entry.multilingual ? t("modelManager.languageMultilingual") : t("modelManager.languageEnglishOnly")}
-                  </span>
-                </div>
-
-                <div class="mm-card-actions">
-                  {#if m.downloading}
-                    <span class="mm-status mm-status-downloading">{t("modelManager.statusDownloading")}</span>
-                    <button
-                      class="btn btn-ghost btn-sm"
-                      disabled={modelManagerStore.cancellingByModel[m.entry.id]}
-                      onclick={() => void modelManagerStore.cancelDownload(m.entry.id)}
-                    >
-                      {modelManagerStore.cancellingByModel[m.entry.id] ? t("modelManager.cancelling") : t("modelManager.cancelButton")}
-                    </button>
-                  {:else if m.installed}
-                    <span class="mm-status mm-status-installed">{t("modelManager.statusInstalled")}</span>
-                    {#if m.pendingDelete}
-                      <button
-                        class="btn btn-danger btn-sm"
-                        disabled={modelManagerStore.deletingByModel[m.entry.id]}
-                        onclick={() => void modelManagerStore.confirmDelete(m.entry.id)}
-                      >
-                        {modelManagerStore.deletingByModel[m.entry.id] ? t("modelManager.deleting") : t("modelManager.deleteConfirmButton")}
-                      </button>
-                      <button class="btn btn-ghost btn-sm" onclick={() => modelManagerStore.cancelDeleteRequest()}>
-                        {t("modelManager.deleteCancelButton")}
-                      </button>
-                    {:else}
-                      <button class="btn btn-ghost btn-sm" onclick={() => modelManagerStore.requestDelete(m.entry.id)}>
-                        {t("modelManager.deleteButton")}
-                      </button>
-                    {/if}
-                  {:else}
-                    <span class="mm-status mm-status-not-installed">{t("modelManager.statusNotInstalled")}</span>
-                    <button class="btn btn-sm" onclick={() => void modelManagerStore.download(m.entry.id)}>
-                      {t("modelManager.downloadButton")}
-                    </button>
-                  {/if}
-                </div>
-              </div>
-
-              {#if modelManagerStore.startErrorByModel[m.entry.id]}
-                <div class="mm-error">{t("modelManager.downloadFailed", { error: modelManagerStore.startErrorByModel[m.entry.id] ?? "" })}</div>
+          <div class="mm-card-actions">
+            {#if m.downloading}
+              <Badge variant={statusBadgeVariant(m)}>{t("modelManager.statusDownloading")}</Badge>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={modelManagerStore.cancellingByModel[m.entry.id]}
+                onclick={() => void modelManagerStore.cancelDownload(m.entry.id)}
+              >
+                {modelManagerStore.cancellingByModel[m.entry.id] ? t("modelManager.cancelling") : t("modelManager.cancelButton")}
+              </Button>
+            {:else if m.installed}
+              <Badge variant={statusBadgeVariant(m)}>{t("modelManager.statusInstalled")}</Badge>
+              {#if m.pendingDelete}
+                <Button
+                  variant="danger"
+                  size="sm"
+                  disabled={modelManagerStore.deletingByModel[m.entry.id]}
+                  onclick={() => void modelManagerStore.confirmDelete(m.entry.id)}
+                >
+                  {modelManagerStore.deletingByModel[m.entry.id] ? t("modelManager.deleting") : t("modelManager.deleteConfirmButton")}
+                </Button>
+                <Button variant="ghost" size="sm" onclick={() => modelManagerStore.cancelDeleteRequest()}>
+                  {t("modelManager.deleteCancelButton")}
+                </Button>
+              {:else}
+                <Button variant="ghost" size="sm" onclick={() => modelManagerStore.requestDelete(m.entry.id)}>
+                  {t("modelManager.deleteButton")}
+                </Button>
               {/if}
-
-              {#if m.progress}
-                <div class="mm-progress-section">
-                  {#if m.progress.error}
-                    <div class="mm-error">{t("modelManager.downloadFailed", { error: m.progress.error })}</div>
-                    <button class="btn btn-ghost btn-sm" onclick={() => modelManagerStore.dismissProgress(m.entry.id)}>
-                      {t("modelManager.dismissButton")}
-                    </button>
-                  {:else if m.progress.done}
-                    <p class="mm-success">{t("modelManager.downloadComplete")}</p>
-                  {:else}
-                    <div class="mm-progress-track">
-                      <div class="mm-progress-fill" style="width:{progressFraction(m) * 100}%"></div>
-                    </div>
-                    <p class="mm-progress-label muted-2">
-                      {t("modelManager.downloadedOfSize", {
-                        downloaded: formatBytes(m.progress.downloaded),
-                        size: formatBytes(m.progress.size),
-                      })}
-                      · {formatSpeed(m.progress.speed_bytes_per_sec)}
-                      · {t("modelManager.etaLabel", { eta: formatEta(m.progress.eta_secs) })}
-                    </p>
-                  {/if}
-                </div>
-              {/if}
-            </div>
-          {/each}
+            {:else}
+              <Badge variant={statusBadgeVariant(m)}>{t("modelManager.statusNotInstalled")}</Badge>
+              <Button size="sm" onclick={() => void modelManagerStore.download(m.entry.id)}>
+                {t("modelManager.downloadButton")}
+              </Button>
+            {/if}
+          </div>
         </div>
-      </div>
 
-      <div class="mm-footer">
-        <span class="mm-footer-spacer"></span>
-        <button class="btn btn-ghost" onclick={() => modelManagerStore.close()}>{t("modelManager.closeButton")}</button>
-      </div>
-    </div>
+        {#if modelManagerStore.startErrorByModel[m.entry.id]}
+          <ErrorState message={t("modelManager.downloadFailed", { error: modelManagerStore.startErrorByModel[m.entry.id] ?? "" })} />
+        {/if}
+
+        {#if m.progress}
+          <div class="mm-progress-section">
+            {#if m.progress.error}
+              <ErrorState message={t("modelManager.downloadFailed", { error: m.progress.error })} />
+              <Button variant="ghost" size="sm" onclick={() => modelManagerStore.dismissProgress(m.entry.id)}>
+                {t("modelManager.dismissButton")}
+              </Button>
+            {:else if m.progress.done}
+              <p class="mm-success">{t("modelManager.downloadComplete")}</p>
+            {:else}
+              <ProgressBar
+                value={progressFraction(m)}
+                max={1}
+                label={`${t("modelManager.downloadedOfSize", {
+                  downloaded: formatBytes(m.progress.downloaded),
+                  size: formatBytes(m.progress.size),
+                })} · ${formatSpeed(m.progress.speed_bytes_per_sec)} · ${t("modelManager.etaLabel", { eta: formatEta(m.progress.eta_secs) })}`}
+              />
+            {/if}
+          </div>
+        {/if}
+      </Card>
+    {/each}
   </div>
-{/if}
+
+  {#snippet footer()}
+    <span class="mm-footer-spacer"></span>
+    <Button variant="ghost" onclick={() => modelManagerStore.close()}>{t("modelManager.closeButton")}</Button>
+  {/snippet}
+</Modal>
 
 <style>
-  .mm-backdrop {
-    position: fixed;
-    inset: 0;
-    background: hsl(0 0% 0% / 0.5);
-    display: grid;
-    place-items: center;
-    z-index: 100;
-  }
-  .mm-dialog {
-    width: min(620px, 94vw);
-    max-height: 88vh;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    background: var(--surface);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-lg);
-    box-shadow: 0 20px 60px hsl(0 0% 0% / 0.5);
-    overflow: hidden;
-  }
-  .mm-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  .mm-title {
-    font-size: 13px;
-    font-weight: 600;
-  }
-  .mm-body {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 12px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
+  /* Design System retrofit (Phase D7a, `STUDIO_PLAN.md`): the dialog shell,
+     status pills, buttons, error banners, loading message, and progress
+     track are all gone from here — `Modal`/`Card`/`Badge`/`Button`/
+     `ErrorState`/`LoadingState`/`ProgressBar` (Design System) own that chrome
+     now. Only what has no Design System equivalent remains: the explainer
+     paragraph, the per-card internal layout (info/actions row), and the
+     success banner. */
   .mm-explainer {
     margin: 0;
     font-size: 11.5px;
     line-height: 1.5;
   }
-  .mm-empty {
-    margin: 0;
-    font-size: 11.5px;
-  }
   .mm-list {
     display: flex;
     flex-direction: column;
     gap: 8px;
-  }
-  .mm-card {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: 10px 12px;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
   }
   .mm-card-main {
     display: flex;
@@ -278,74 +231,15 @@
     gap: 8px;
     flex-shrink: 0;
   }
-  .mm-status {
-    font-size: 10.5px;
-    padding: 2px 8px;
-    border-radius: 999px;
-    white-space: nowrap;
-  }
-  .mm-status-installed {
-    color: var(--pos, #3fb950);
-    background: hsl(140 60% 50% / 0.1);
-  }
-  .mm-status-not-installed {
-    color: var(--muted);
-    background: var(--surface);
-  }
-  .mm-status-downloading {
-    color: var(--accent);
-    background: hsl(213 94% 68% / 0.1);
-  }
-  .btn-sm {
-    height: 24px;
-    padding: 0 10px;
-    font-size: 11px;
-  }
-  .btn-danger {
-    background: hsl(0 84% 65% / 0.12);
-    border: 1px solid hsl(0 84% 65% / 0.4);
-    color: var(--neg);
-  }
   .mm-progress-section {
     display: flex;
     flex-direction: column;
     gap: 6px;
   }
-  .mm-progress-track {
-    height: 6px;
-    background: var(--surface);
-    border-radius: 3px;
-    overflow: hidden;
-  }
-  .mm-progress-fill {
-    height: 100%;
-    background: var(--accent);
-    transition: width 0.15s linear;
-  }
-  .mm-progress-label {
-    margin: 0;
-    font-size: 10.5px;
-  }
   .mm-success {
     margin: 0;
     font-size: 11px;
     color: var(--pos, #3fb950);
-  }
-  .mm-error {
-    padding: 6px 10px;
-    font-size: 10.5px;
-    color: var(--neg);
-    background: hsl(0 84% 65% / 0.08);
-    border: 1px solid hsl(0 84% 65% / 0.3);
-    border-radius: var(--radius-sm);
-  }
-  .mm-footer {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 14px;
-    border-top: 1px solid var(--border);
-    flex-shrink: 0;
   }
   .mm-footer-spacer {
     flex: 1;

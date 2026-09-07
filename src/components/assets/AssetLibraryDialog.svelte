@@ -23,18 +23,31 @@
   `TemplatesPanel.svelte`'s intro/outro/watermark/background-music pickers
   read from — registering an asset here makes it immediately selectable
   there, no separate fetch needed.
+
+  **Phase D7c Design System retrofit (`STUDIO_PLAN.md`):** the hand-rolled
+  backdrop/dialog shell is now `Modal.svelte` (Phase D1), the two flex-row
+  asset lists are now `DataTable.svelte` (Name/Kind/Path/Actions columns,
+  real client-side sort added on Name/Kind — a free, honest addition the
+  retrofit enables, not a behavior change), the kind pill is `Badge.svelte`,
+  the kind/name inputs are `Select.svelte`/`Input.svelte`, every button is
+  `Button.svelte`, and the three empty/loading messages are
+  `EmptyState.svelte`. Every real behavior is unchanged: the exact same
+  `assetsStore` state/methods drive every conditional, disabled state, and
+  click handler as before (`armRemove`/`cancelRemove`/`confirmRemove`,
+  `pickFile`/`submitAdd`, the `canSubmitAdd` gate).
 -->
 <script lang="ts">
   import { assetsStore, ASSET_KINDS, CONSUMED_ASSET_KINDS } from "../../stores/assets.svelte";
   import { t } from "../../lib/i18n.svelte";
   import type { Asset, AssetKind } from "../../types/bindings";
-
-  function onKeydown(e: KeyboardEvent): void {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      assetsStore.close();
-    }
-  }
+  import Modal from "../ui/Modal.svelte";
+  import DataTable from "../ui/DataTable.svelte";
+  import Badge from "../ui/Badge.svelte";
+  import Button from "../ui/Button.svelte";
+  import Select from "../ui/Select.svelte";
+  import type { SelectOption } from "../ui/Select.svelte";
+  import Input from "../ui/Input.svelte";
+  import EmptyState from "../ui/EmptyState.svelte";
 
   const consumedKinds = ASSET_KINDS.filter((k) => CONSUMED_ASSET_KINDS.has(k));
   const structuralKinds = ASSET_KINDS.filter((k) => !CONSUMED_ASSET_KINDS.has(k));
@@ -42,183 +55,163 @@
   function assetsFor(kinds: AssetKind[]): Asset[] {
     return assetsStore.assets.filter((a) => kinds.includes(a.kind));
   }
+
+  function assetKey(asset: Asset): string {
+    return asset.id;
+  }
+
+  let kindOptions = $derived<SelectOption[]>(ASSET_KINDS.map((k) => ({ value: k, label: t(`assetLibrary.kind.${k}`) })));
 </script>
 
-{#snippet assetRow(asset: Asset)}
-  <div class="al-row">
-    <div class="al-row-info">
-      <span class="al-name">{asset.name}</span>
-      <span class="al-badge">{t(`assetLibrary.kind.${asset.kind}`)}</span>
-      <span class="al-path mono muted-2" title={asset.file_path}>{asset.file_path}</span>
-    </div>
+{#snippet nameCell(asset: Asset)}
+  <span class="al-name">{asset.name}</span>
+{/snippet}
+{#snippet kindCell(asset: Asset)}
+  <Badge>{t(`assetLibrary.kind.${asset.kind}`)}</Badge>
+{/snippet}
+{#snippet pathCell(asset: Asset)}
+  <span class="al-path mono muted-2" title={asset.file_path}>{asset.file_path}</span>
+{/snippet}
+{#snippet actionsCell(asset: Asset)}
+  <div class="al-actions">
     {#if assetsStore.pendingRemoveId === asset.id}
-      <button
-        class="btn btn-danger btn-sm"
+      <Button
+        variant="danger"
+        size="sm"
         disabled={assetsStore.removingId === asset.id}
         onclick={() => void assetsStore.confirmRemove(asset.id)}
       >
         {assetsStore.removingId === asset.id ? t("assetLibrary.removing") : t("assetLibrary.removeConfirmButton")}
-      </button>
-      <button class="btn btn-ghost btn-sm" onclick={() => assetsStore.cancelRemove()}>
+      </Button>
+      <Button variant="ghost" size="sm" onclick={() => assetsStore.cancelRemove()}>
         {t("assetLibrary.removeCancelButton")}
-      </button>
+      </Button>
     {:else}
-      <button class="btn btn-ghost btn-sm" onclick={() => assetsStore.armRemove(asset.id)}>
+      <Button variant="ghost" size="sm" onclick={() => assetsStore.armRemove(asset.id)}>
         {t("assetLibrary.removeButton")}
-      </button>
+      </Button>
     {/if}
   </div>
 {/snippet}
 
-{#if assetsStore.open}
-  <div class="al-backdrop" role="presentation" onclick={() => assetsStore.close()}>
-    <div
-      class="al-dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label={t("assetLibrary.title")}
-      tabindex="-1"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={onKeydown}
-    >
-      <div class="al-header">
-        <span class="al-title">{t("assetLibrary.title")}</span>
-        <button class="btn btn-ghost" onclick={() => assetsStore.close()} title={t("assetLibrary.close")}>×</button>
+<Modal open={assetsStore.open} title={t("assetLibrary.title")} onClose={() => assetsStore.close()} width={680}>
+  {#snippet footer()}
+    <Button variant="ghost" onclick={() => assetsStore.close()}>{t("assetLibrary.closeButton")}</Button>
+  {/snippet}
+
+  <p class="al-explainer muted-2">{t("assetLibrary.explainer")}</p>
+
+  {#if assetsStore.loadError}
+    <div class="al-error">{t("assetLibrary.loadFailed", { error: assetsStore.loadError })}</div>
+  {/if}
+
+  <div class="al-add-form">
+    <span class="al-section-title">{t("assetLibrary.addSectionTitle")}</span>
+    <div class="al-add-row">
+      <div class="al-field-narrow">
+        <Select
+          value={assetsStore.addKind}
+          options={kindOptions}
+          onchange={(v) => (assetsStore.addKind = v as AssetKind)}
+        />
       </div>
-
-      <div class="al-body">
-        <p class="al-explainer muted-2">{t("assetLibrary.explainer")}</p>
-
-        {#if assetsStore.loadError}
-          <div class="al-error">{t("assetLibrary.loadFailed", { error: assetsStore.loadError })}</div>
-        {/if}
-
-        <div class="al-add-form">
-          <span class="al-section-title">{t("assetLibrary.addSectionTitle")}</span>
-          <div class="al-add-row">
-            <select class="al-input al-input-narrow" bind:value={assetsStore.addKind}>
-              {#each ASSET_KINDS as k (k)}
-                <option value={k}>{t(`assetLibrary.kind.${k}`)}</option>
-              {/each}
-            </select>
-            <input
-              class="al-input"
-              type="text"
-              placeholder={t("assetLibrary.namePlaceholder")}
-              bind:value={assetsStore.addName}
-            />
-            <button class="btn btn-ghost btn-sm" onclick={() => void assetsStore.pickFile()}>
-              {t("assetLibrary.chooseFileButton")}
-            </button>
-            <button class="btn btn-sm" disabled={!assetsStore.canSubmitAdd} onclick={() => void assetsStore.submitAdd()}>
-              {assetsStore.adding ? t("assetLibrary.adding") : t("assetLibrary.addButton")}
-            </button>
-          </div>
-          {#if assetsStore.addFilePath}
-            <span class="al-picked-path mono muted-2" title={assetsStore.addFilePath}>{assetsStore.addFilePath}</span>
-          {/if}
-          {#if !CONSUMED_ASSET_KINDS.has(assetsStore.addKind)}
-            <span class="al-note muted-2">{t("assetLibrary.structuralKindNote")}</span>
-          {/if}
-          {#if assetsStore.addError}
-            <div class="al-error">{assetsStore.addError}</div>
-          {/if}
-        </div>
-
-        {#if assetsStore.removeError}
-          <div class="al-error">{assetsStore.removeError}</div>
-        {/if}
-
-        {#if assetsStore.loading && assetsStore.assets.length === 0}
-          <p class="al-empty muted-2">{t("assetLibrary.loading")}</p>
-        {/if}
-
-        <span class="al-section-title">{t("assetLibrary.consumedSectionTitle")}</span>
-        <p class="al-note muted-2">{t("assetLibrary.consumedSectionNote")}</p>
-        {#if assetsFor(consumedKinds).length === 0}
-          <p class="al-empty muted-2">{t("assetLibrary.noneRegistered")}</p>
-        {:else}
-          <div class="al-list">
-            {#each assetsFor(consumedKinds) as asset (asset.id)}
-              {@render assetRow(asset)}
-            {/each}
-          </div>
-        {/if}
-
-        <span class="al-section-title">{t("assetLibrary.structuralSectionTitle")}</span>
-        <p class="al-note muted-2">{t("assetLibrary.structuralSectionNote")}</p>
-        {#if assetsFor(structuralKinds).length === 0}
-          <p class="al-empty muted-2">{t("assetLibrary.noneRegistered")}</p>
-        {:else}
-          <div class="al-list">
-            {#each assetsFor(structuralKinds) as asset (asset.id)}
-              {@render assetRow(asset)}
-            {/each}
-          </div>
-        {/if}
+      <div class="al-field-grow">
+        <Input bind:value={assetsStore.addName} placeholder={t("assetLibrary.namePlaceholder")} />
       </div>
-
-      <div class="al-footer">
-        <span class="al-footer-spacer"></span>
-        <button class="btn btn-ghost" onclick={() => assetsStore.close()}>{t("assetLibrary.closeButton")}</button>
-      </div>
+      <Button variant="ghost" size="sm" onclick={() => void assetsStore.pickFile()}>
+        {t("assetLibrary.chooseFileButton")}
+      </Button>
+      <Button size="sm" disabled={!assetsStore.canSubmitAdd} onclick={() => void assetsStore.submitAdd()}>
+        {assetsStore.adding ? t("assetLibrary.adding") : t("assetLibrary.addButton")}
+      </Button>
     </div>
+    {#if assetsStore.addFilePath}
+      <span class="al-picked-path mono muted-2" title={assetsStore.addFilePath}>{assetsStore.addFilePath}</span>
+    {/if}
+    {#if !CONSUMED_ASSET_KINDS.has(assetsStore.addKind)}
+      <span class="al-note muted-2">{t("assetLibrary.structuralKindNote")}</span>
+    {/if}
+    {#if assetsStore.addError}
+      <div class="al-error">{assetsStore.addError}</div>
+    {/if}
   </div>
-{/if}
+
+  {#if assetsStore.removeError}
+    <div class="al-error">{assetsStore.removeError}</div>
+  {/if}
+
+  {#if assetsStore.loading && assetsStore.assets.length === 0}
+    <EmptyState title={t("assetLibrary.loading")} />
+  {/if}
+
+  <span class="al-section-title">{t("assetLibrary.consumedSectionTitle")}</span>
+  <p class="al-note muted-2">{t("assetLibrary.consumedSectionNote")}</p>
+  {#if assetsFor(consumedKinds).length === 0}
+    <EmptyState title={t("assetLibrary.noneRegistered")} />
+  {:else}
+    <DataTable
+      columns={[
+        { key: "name", label: t("assetLibrary.colName"), sortable: true, accessor: (a) => a.name, cell: nameCell },
+        {
+          key: "kind",
+          label: t("assetLibrary.colKind"),
+          sortable: true,
+          accessor: (a) => t(`assetLibrary.kind.${a.kind}`),
+          cell: kindCell,
+        },
+        { key: "path", label: t("assetLibrary.colPath"), cell: pathCell },
+        { key: "actions", label: t("assetLibrary.colActions"), cell: actionsCell },
+      ]}
+      rows={assetsFor(consumedKinds)}
+      rowKey={assetKey}
+    />
+  {/if}
+
+  <span class="al-section-title">{t("assetLibrary.structuralSectionTitle")}</span>
+  <p class="al-note muted-2">{t("assetLibrary.structuralSectionNote")}</p>
+  {#if assetsFor(structuralKinds).length === 0}
+    <EmptyState title={t("assetLibrary.noneRegistered")} />
+  {:else}
+    <DataTable
+      columns={[
+        { key: "name", label: t("assetLibrary.colName"), sortable: true, accessor: (a) => a.name, cell: nameCell },
+        {
+          key: "kind",
+          label: t("assetLibrary.colKind"),
+          sortable: true,
+          accessor: (a) => t(`assetLibrary.kind.${a.kind}`),
+          cell: kindCell,
+        },
+        { key: "path", label: t("assetLibrary.colPath"), cell: pathCell },
+        { key: "actions", label: t("assetLibrary.colActions"), cell: actionsCell },
+      ]}
+      rows={assetsFor(structuralKinds)}
+      rowKey={assetKey}
+    />
+  {/if}
+</Modal>
 
 <style>
-  .al-backdrop {
-    position: fixed;
-    inset: 0;
-    background: hsl(0 0% 0% / 0.5);
-    display: grid;
-    place-items: center;
-    z-index: 100;
-  }
-  .al-dialog {
-    width: min(680px, 94vw);
-    max-height: 88vh;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    background: var(--surface);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-lg);
-    box-shadow: 0 20px 60px hsl(0 0% 0% / 0.5);
-    overflow: hidden;
-  }
-  .al-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  .al-title {
-    font-size: 13px;
-    font-weight: 600;
-  }
-  .al-body {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 12px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
+  /* Design System retrofit (Phase D7c, `STUDIO_PLAN.md`): the dialog shell
+     (`.al-backdrop`/`.al-dialog`/`.al-header`/`.al-title`/`.al-footer`/
+     `.al-footer-spacer`), the two flex-row asset lists (`.al-list`/`.al-row`/
+     `.al-row-info`/`.al-badge`), the hand-rolled `<select>`/`<input>`
+     (`.al-input*`), and every button's sizing/danger override (`.btn-sm`/
+     `.btn-danger`) are ALL gone — `Modal`/`DataTable`/`Badge`/`Select`/
+     `Input`/`Button`/`EmptyState` (Design System) now own that chrome. Only
+     the handful of layout rules with no Design System equivalent remain:
+     the explainer/section-title/note text sizing, the add-form's bordered
+     box, the narrow/growing flex sizing for the inline kind-select/name-
+     input row (matching the original `.al-input-narrow`/`.al-input`'s
+     140px-fixed/flex:1 split), the picked-path/name/path text truncation,
+     and the inline error banners. */
   .al-explainer {
     margin: 0;
     font-size: 11.5px;
     line-height: 1.5;
   }
-  .al-empty {
-    margin: 0;
-    font-size: 11.5px;
-  }
   .al-section-title {
-    margin-top: 6px;
+    margin-top: var(--space-1);
     font-size: 10.5px;
     font-weight: 600;
     letter-spacing: 0.04em;
@@ -233,8 +226,8 @@
   .al-add-form {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding: 10px;
+    gap: var(--space-2);
+    padding: var(--space-3);
     background: var(--surface-2);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
@@ -242,22 +235,14 @@
   .al-add-row {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-2);
     flex-wrap: wrap;
   }
-  .al-input {
-    height: 26px;
-    padding: 0 8px;
-    background: var(--input);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    color: var(--foreground);
-    font: inherit;
-    font-size: 11.5px;
+  .al-field-grow {
     flex: 1;
     min-width: 120px;
   }
-  .al-input-narrow {
+  .al-field-narrow {
     flex: 0 0 auto;
     width: 140px;
     min-width: 0;
@@ -266,75 +251,29 @@
     font-size: 10.5px;
     word-break: break-all;
   }
-  .al-list {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .al-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 8px 10px;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-  }
-  .al-row-info {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-    flex-wrap: wrap;
-  }
   .al-name {
     font-size: 12px;
     font-weight: 600;
     white-space: nowrap;
   }
-  .al-badge {
-    font-size: 9.5px;
-    padding: 1px 6px;
-    border-radius: 999px;
-    border: 1px solid var(--border);
-    color: var(--muted);
-    white-space: nowrap;
-  }
   .al-path {
-    font-size: 10px;
+    display: block;
     max-width: 280px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .btn-sm {
-    height: 24px;
-    padding: 0 8px;
-    font-size: 10.5px;
-  }
-  .btn-danger {
-    background: hsl(0 84% 65% / 0.12);
-    border: 1px solid hsl(0 84% 65% / 0.4);
-    color: var(--neg);
-  }
-  .al-error {
-    padding: 6px 10px;
-    font-size: 10.5px;
-    color: var(--neg);
-    background: hsl(0 84% 65% / 0.08);
-    border: 1px solid hsl(0 84% 65% / 0.3);
-    border-radius: var(--radius-sm);
-  }
-  .al-footer {
+  .al-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 10px 14px;
-    border-top: 1px solid var(--border);
-    flex-shrink: 0;
+    gap: var(--space-1);
   }
-  .al-footer-spacer {
-    flex: 1;
+  .al-error {
+    padding: var(--space-2) var(--space-3);
+    font-size: 10.5px;
+    color: var(--neg);
+    background: var(--neg-bg);
+    border: 1px solid var(--neg-border);
+    border-radius: var(--radius-sm);
   }
 </style>

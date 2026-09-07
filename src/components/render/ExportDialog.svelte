@@ -13,17 +13,39 @@
   and Export/Cancel/progress wire to the real `start_render_job`/
   `cancel_render_job` commands + the `render:progress` event — no
   client-side progress simulation.
+
+  **Phase D7a Design System retrofit (`STUDIO_PLAN.md`):** the hand-rolled
+  backdrop/dialog shell is now `Modal.svelte` (Phase D1), each section
+  heading is now `Panel.svelte`, every native `<select>` with a real, finite
+  option list (fps/container/video codec/x264 preset/audio codec/hardware
+  encoder) is now `Select.svelte`, every action button is `Button.svelte`,
+  the two error banners (`presetsError`/`hardwareError`/`startError`/a failed
+  render) are `ErrorState.svelte`, the two "detecting…"/"loading…" one-liners
+  are `LoadingState.svelte`, and the render-progress track is
+  `ProgressBar.svelte`. Every real behavior — every store call, every
+  `disabled`/gating condition, every conditional branch — is unchanged, only
+  the markup underneath it. Left deliberately bespoke (no Design System
+  primitive covers either shape yet): the numeric fields (resolution/CRF/
+  bitrate — `Input.svelte` only supports text-like `type`s, not `number`,
+  per its own doc comment) and the CRF-vs-bitrate radio-button pair (no
+  `Radio` component exists in the library). The preset-card grid also stays
+  bespoke: `Card.svelte`'s `interactive` variant has no "currently selected"
+  visual state to key off without changing that shared component, and the
+  selected/unselected distinction here is a real, load-bearing piece of the
+  preset-picker's own affordance, not just chrome.
 -->
 <script lang="ts">
   import { renderStore, X264_PRESETS } from "../../stores/render.svelte";
   import { t } from "../../lib/i18n.svelte";
-
-  function onKeydown(e: KeyboardEvent): void {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      renderStore.close();
-    }
-  }
+  import Modal from "../ui/Modal.svelte";
+  import Panel from "../ui/Panel.svelte";
+  import Select from "../ui/Select.svelte";
+  import type { SelectOption } from "../ui/Select.svelte";
+  import Button from "../ui/Button.svelte";
+  import ProgressBar from "../ui/ProgressBar.svelte";
+  import ErrorState from "../ui/ErrorState.svelte";
+  import LoadingState from "../ui/LoadingState.svelte";
+  import type { AudioCodec, Container, EncoderBackend, VideoCodec } from "../../types/bindings";
 
   function formatPercent(fraction: number | null): string {
     return fraction !== null ? `${Math.round(fraction * 100)}%` : "…";
@@ -45,302 +67,261 @@
         return t("exportDialog.hwSoftware");
     }
   }
+
+  function codecLabel(codec: VideoCodec): string {
+    return codec === "h264" ? "H.264" : codec === "h265" ? "H.265" : "VP9";
+  }
+
+  const containerSelectOptions: SelectOption[] = [
+    { value: "mp_4", label: "MP4" },
+    { value: "web_m", label: "WebM" },
+  ];
+
+  let videoCodecSelectOptions = $derived<SelectOption[]>(
+    renderStore.videoCodecOptions.map((codec) => ({ value: codec, label: codecLabel(codec) })),
+  );
+  let x264PresetSelectOptions: SelectOption[] = X264_PRESETS.map((p) => ({ value: p, label: p }));
+  let audioCodecSelectOptions = $derived<SelectOption[]>(
+    renderStore.audioCodecOptions.map((codec) => ({ value: codec, label: codec.toUpperCase() })),
+  );
+  let fpsSelectOptions = $derived<SelectOption[]>(
+    renderStore.fpsSelectOptions.map((opt) => ({ value: opt.key, label: opt.label })),
+  );
+  let hwEncoderSelectOptions = $derived<SelectOption[]>([
+    { value: "auto", label: t("exportDialog.hwAuto") },
+    { value: "software", label: t("exportDialog.hwSoftware") },
+    ...renderStore.detectedWorkingEncoders
+      .filter((enc) => enc.backend !== "software")
+      .map((enc) => ({ value: enc.backend, label: encoderLabel(enc.backend) })),
+  ]);
 </script>
 
-{#if renderStore.open}
-  <div class="rd-backdrop" role="presentation" onclick={() => renderStore.close()}>
-    <div
-      class="rd-dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label={t("exportDialog.title")}
-      tabindex="-1"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={onKeydown}
-    >
-      <div class="rd-header">
-        <span class="rd-title">{t("exportDialog.title")}</span>
-        <button class="btn btn-ghost" onclick={() => renderStore.close()} title={t("exportDialog.close")}>×</button>
-      </div>
+<Modal open={renderStore.open} title={t("exportDialog.title")} width={720} onClose={() => renderStore.close()}>
+  <Panel title={t("exportDialog.presetSectionTitle")}>
+    {#if renderStore.presetsError}
+      <ErrorState message={renderStore.presetsError} />
+    {/if}
+    <div class="rd-preset-grid">
+      {#each renderStore.presets as preset (preset.id)}
+        <button
+          class="rd-preset-card"
+          class:selected={renderStore.selectedPresetId === preset.id}
+          onclick={() => renderStore.selectPreset(preset.id)}
+        >
+          <span class="rd-preset-name">{preset.name}</span>
+          <span class="rd-preset-desc muted-2">{preset.description}</span>
+        </button>
+      {/each}
+    </div>
+    {#if renderStore.presetsLoading}
+      <LoadingState message={t("exportDialog.loadingPresets")} />
+    {/if}
+  </Panel>
 
-      <div class="rd-body">
-        <section class="rd-section">
-          <h3 class="rd-section-title">{t("exportDialog.presetSectionTitle")}</h3>
-          {#if renderStore.presetsError}
-            <div class="rd-error">{renderStore.presetsError}</div>
-          {/if}
-          <div class="rd-preset-grid">
-            {#each renderStore.presets as preset (preset.id)}
-              <button
-                class="rd-preset-card"
-                class:selected={renderStore.selectedPresetId === preset.id}
-                onclick={() => renderStore.selectPreset(preset.id)}
-              >
-                <span class="rd-preset-name">{preset.name}</span>
-                <span class="rd-preset-desc muted-2">{preset.description}</span>
-              </button>
-            {/each}
-            {#if renderStore.presetsLoading}
-              <span class="muted-2">{t("exportDialog.loadingPresets")}</span>
-            {/if}
-          </div>
-        </section>
+  <Panel title={t("exportDialog.settingsSectionTitle")}>
+    <div class="rd-row">
+      <label class="rd-label" for="rd-width">{t("exportDialog.resolutionLabel")}</label>
+      <input id="rd-width" class="rd-number rd-number-sm" type="number" min="2" step="2" bind:value={renderStore.width} />
+      <span class="rd-x muted-2">×</span>
+      <input aria-label={t("exportDialog.heightLabel")} class="rd-number rd-number-sm" type="number" min="2" step="2" bind:value={renderStore.height} />
+    </div>
 
-        <section class="rd-section">
-          <h3 class="rd-section-title">{t("exportDialog.settingsSectionTitle")}</h3>
-
-          <div class="rd-row">
-            <label class="rd-label" for="rd-width">{t("exportDialog.resolutionLabel")}</label>
-            <input id="rd-width" class="rd-number rd-number-sm" type="number" min="2" step="2" bind:value={renderStore.width} />
-            <span class="rd-x muted-2">×</span>
-            <input aria-label={t("exportDialog.heightLabel")} class="rd-number rd-number-sm" type="number" min="2" step="2" bind:value={renderStore.height} />
-          </div>
-
-          <div class="rd-row">
-            <label class="rd-label" for="rd-fps">{t("exportDialog.fpsLabel")}</label>
-            <select
-              id="rd-fps"
-              class="rd-select"
-              value={renderStore.fpsSelectValue}
-              onchange={(e) => renderStore.setFpsByKey((e.target as HTMLSelectElement).value)}
-            >
-              {#each renderStore.fpsSelectOptions as opt (opt.key)}
-                <option value={opt.key}>{opt.label}</option>
-              {/each}
-            </select>
-          </div>
-
-          <div class="rd-row">
-            <label class="rd-label" for="rd-container">{t("exportDialog.containerLabel")}</label>
-            <select
-              id="rd-container"
-              class="rd-select"
-              value={renderStore.container}
-              onchange={(e) => renderStore.setContainer((e.target as HTMLSelectElement).value as "mp_4" | "web_m")}
-            >
-              <option value="mp_4">MP4</option>
-              <option value="web_m">WebM</option>
-            </select>
-          </div>
-
-          <div class="rd-row">
-            <label class="rd-label" for="rd-video-codec">{t("exportDialog.videoCodecLabel")}</label>
-            <select id="rd-video-codec" class="rd-select" bind:value={renderStore.videoCodec}>
-              {#each renderStore.videoCodecOptions as codec (codec)}
-                <option value={codec}>{codec === "h264" ? "H.264" : codec === "h265" ? "H.265" : "VP9"}</option>
-              {/each}
-            </select>
-          </div>
-
-          {#if renderStore.videoCodec === "h264" || renderStore.videoCodec === "h265"}
-            <div class="rd-row">
-              <label class="rd-label" for="rd-x264-preset">{t("exportDialog.encodeSpeedLabel")}</label>
-              <select id="rd-x264-preset" class="rd-select" bind:value={renderStore.x264Preset}>
-                {#each X264_PRESETS as p (p)}
-                  <option value={p}>{p}</option>
-                {/each}
-              </select>
-            </div>
-          {/if}
-
-          <div class="rd-row">
-            <span class="rd-label">{t("exportDialog.qualityModeLabel")}</span>
-            <div class="rd-radio-group">
-              <label class="rd-radio">
-                <input type="radio" name="rd-bitrate-mode" value="crf" checked={renderStore.bitrateMode === "crf"} onchange={() => (renderStore.bitrateMode = "crf")} />
-                {t("exportDialog.qualityModeCrf")}
-              </label>
-              <label class="rd-radio">
-                <input type="radio" name="rd-bitrate-mode" value="bitrate" checked={renderStore.bitrateMode === "bitrate"} onchange={() => (renderStore.bitrateMode = "bitrate")} />
-                {t("exportDialog.qualityModeBitrate")}
-              </label>
-            </div>
-          </div>
-
-          {#if renderStore.bitrateMode === "crf"}
-            <div class="rd-row">
-              <label class="rd-label" for="rd-crf">{t("exportDialog.crfLabel")}</label>
-              <input id="rd-crf" class="rd-number rd-number-sm" type="number" min="0" max="51" bind:value={renderStore.crf} />
-              <span class="rd-hint muted-2">{t("exportDialog.crfHint")}</span>
-            </div>
-          {:else}
-            <div class="rd-row">
-              <label class="rd-label" for="rd-video-bitrate">{t("exportDialog.videoBitrateLabel")}</label>
-              <input id="rd-video-bitrate" class="rd-number" type="number" min="1" bind:value={renderStore.videoBitrateKbps} />
-              <span class="rd-hint muted-2">kbps</span>
-            </div>
-          {/if}
-
-          <div class="rd-row">
-            <label class="rd-label" for="rd-audio-codec">{t("exportDialog.audioCodecLabel")}</label>
-            <select id="rd-audio-codec" class="rd-select" bind:value={renderStore.audioCodec}>
-              {#each renderStore.audioCodecOptions as codec (codec)}
-                <option value={codec}>{codec.toUpperCase()}</option>
-              {/each}
-            </select>
-          </div>
-
-          <div class="rd-row">
-            <label class="rd-label" for="rd-audio-bitrate">{t("exportDialog.audioBitrateLabel")}</label>
-            <input id="rd-audio-bitrate" class="rd-number" type="number" min="1" bind:value={renderStore.audioBitrateKbps} />
-            <span class="rd-hint muted-2">kbps</span>
-          </div>
-        </section>
-
-        <section class="rd-section">
-          <h3 class="rd-section-title">{t("exportDialog.hwSectionTitle")}</h3>
-          {#if renderStore.hardwareLoading}
-            <p class="rd-empty muted-2">{t("exportDialog.hwDetecting")}</p>
-          {:else if renderStore.hardwareError}
-            <div class="rd-error">{renderStore.hardwareError}</div>
-          {:else if renderStore.hardware}
-            <p class="rd-hw-active">{t("exportDialog.hwActiveEncoder", { label: renderStore.hardware.active_encoder_label })}</p>
-            <div class="rd-row">
-              <label class="rd-label" for="rd-hw-encoder">{t("exportDialog.hwForceLabel")}</label>
-              <select
-                id="rd-hw-encoder"
-                class="rd-select"
-                value={renderStore.hardwareEncoder ?? "auto"}
-                onchange={(e) => {
-                  const v = (e.target as HTMLSelectElement).value;
-                  renderStore.hardwareEncoder = v === "auto" ? null : (v as "software" | "nvenc" | "quick_sync" | "amf");
-                }}
-              >
-                <option value="auto">{t("exportDialog.hwAuto")}</option>
-                <option value="software">{t("exportDialog.hwSoftware")}</option>
-                {#each renderStore.detectedWorkingEncoders as enc (enc.backend)}
-                  {#if enc.backend !== "software"}
-                    <option value={enc.backend}>{encoderLabel(enc.backend)}</option>
-                  {/if}
-                {/each}
-              </select>
-            </div>
-            {#if renderStore.hardware.encoders.length > 0}
-              <ul class="rd-hw-list muted-2">
-                {#each renderStore.hardware.encoders as enc (enc.backend)}
-                  <li>{encoderLabel(enc.backend)}: {enc.working ? t("exportDialog.hwWorking") : t("exportDialog.hwNotAvailable")}</li>
-                {/each}
-              </ul>
-            {/if}
-          {/if}
-        </section>
-
-        <section class="rd-section">
-          <h3 class="rd-section-title">{t("exportDialog.outputSectionTitle")}</h3>
-          <div class="rd-row">
-            <button class="btn" onclick={() => void renderStore.chooseOutputPath()}>{t("exportDialog.chooseOutputButton")}</button>
-            <span class="rd-output-path muted-2" title={renderStore.outputPath ?? undefined}>
-              {renderStore.outputPath ? basename(renderStore.outputPath) : t("exportDialog.noOutputChosen")}
-            </span>
-          </div>
-        </section>
-
-        {#if renderStore.startError}
-          <div class="rd-error">{renderStore.startError}</div>
-        {/if}
-
-        {#if renderStore.progress}
-          <section class="rd-section">
-            <h3 class="rd-section-title">{t("exportDialog.progressSectionTitle")}</h3>
-            {#if renderStore.progress.error}
-              <div class="rd-error">{t("exportDialog.renderFailed", { error: renderStore.progress.error })}</div>
-            {:else if renderStore.progress.done}
-              <p class="rd-success">
-                {t("exportDialog.renderComplete", { path: renderStore.progress.output_path ?? "" })}
-              </p>
-            {:else}
-              <div class="rd-progress-track">
-                <div
-                  class="rd-progress-fill"
-                  style="width:{renderStore.progress.fraction !== null ? renderStore.progress.fraction * 100 : 0}%"
-                ></div>
-              </div>
-              <p class="rd-progress-label muted-2">
-                {formatPercent(renderStore.progress.fraction)}
-                {#if renderStore.progress.speed !== null}
-                  · {t("exportDialog.speedLabel", { speed: renderStore.progress.speed.toFixed(2) })}
-                {/if}
-              </p>
-            {/if}
-          </section>
-        {/if}
-      </div>
-
-      <div class="rd-footer">
-        {#if renderStore.isRendering}
-          <button class="btn btn-danger" disabled={renderStore.cancelling} onclick={() => void renderStore.cancel()}>
-            {renderStore.cancelling ? t("exportDialog.cancelling") : t("exportDialog.cancelButton")}
-          </button>
-        {:else if renderStore.progress?.done}
-          <button class="btn" onclick={() => renderStore.startNewExport()}>{t("exportDialog.newExportButton")}</button>
-        {:else}
-          <button class="btn" disabled={!renderStore.canExport} onclick={() => void renderStore.startExport()}>
-            {renderStore.starting ? t("exportDialog.starting") : t("exportDialog.exportButton")}
-          </button>
-        {/if}
-        <span class="rd-footer-spacer"></span>
-        <button class="btn btn-ghost" onclick={() => renderStore.close()}>{t("exportDialog.closeButton")}</button>
+    <div class="rd-row">
+      <label class="rd-label" for="rd-fps">{t("exportDialog.fpsLabel")}</label>
+      <div class="rd-select-wrap">
+        <Select
+          id="rd-fps"
+          value={renderStore.fpsSelectValue}
+          options={fpsSelectOptions}
+          onchange={(v) => renderStore.setFpsByKey(v)}
+        />
       </div>
     </div>
-  </div>
-{/if}
+
+    <div class="rd-row">
+      <label class="rd-label" for="rd-container">{t("exportDialog.containerLabel")}</label>
+      <div class="rd-select-wrap">
+        <Select
+          id="rd-container"
+          value={renderStore.container}
+          options={containerSelectOptions}
+          onchange={(v) => renderStore.setContainer(v as Container)}
+        />
+      </div>
+    </div>
+
+    <div class="rd-row">
+      <label class="rd-label" for="rd-video-codec">{t("exportDialog.videoCodecLabel")}</label>
+      <div class="rd-select-wrap">
+        <Select
+          id="rd-video-codec"
+          value={renderStore.videoCodec}
+          options={videoCodecSelectOptions}
+          onchange={(v) => (renderStore.videoCodec = v as VideoCodec)}
+        />
+      </div>
+    </div>
+
+    {#if renderStore.videoCodec === "h264" || renderStore.videoCodec === "h265"}
+      <div class="rd-row">
+        <label class="rd-label" for="rd-x264-preset">{t("exportDialog.encodeSpeedLabel")}</label>
+        <div class="rd-select-wrap">
+          <Select id="rd-x264-preset" bind:value={renderStore.x264Preset} options={x264PresetSelectOptions} />
+        </div>
+      </div>
+    {/if}
+
+    <div class="rd-row">
+      <span class="rd-label">{t("exportDialog.qualityModeLabel")}</span>
+      <div class="rd-radio-group">
+        <label class="rd-radio">
+          <input
+            type="radio"
+            name="rd-bitrate-mode"
+            value="crf"
+            checked={renderStore.bitrateMode === "crf"}
+            onchange={() => (renderStore.bitrateMode = "crf")}
+          />
+          {t("exportDialog.qualityModeCrf")}
+        </label>
+        <label class="rd-radio">
+          <input
+            type="radio"
+            name="rd-bitrate-mode"
+            value="bitrate"
+            checked={renderStore.bitrateMode === "bitrate"}
+            onchange={() => (renderStore.bitrateMode = "bitrate")}
+          />
+          {t("exportDialog.qualityModeBitrate")}
+        </label>
+      </div>
+    </div>
+
+    {#if renderStore.bitrateMode === "crf"}
+      <div class="rd-row">
+        <label class="rd-label" for="rd-crf">{t("exportDialog.crfLabel")}</label>
+        <input id="rd-crf" class="rd-number rd-number-sm" type="number" min="0" max="51" bind:value={renderStore.crf} />
+        <span class="rd-hint muted-2">{t("exportDialog.crfHint")}</span>
+      </div>
+    {:else}
+      <div class="rd-row">
+        <label class="rd-label" for="rd-video-bitrate">{t("exportDialog.videoBitrateLabel")}</label>
+        <input id="rd-video-bitrate" class="rd-number" type="number" min="1" bind:value={renderStore.videoBitrateKbps} />
+        <span class="rd-hint muted-2">kbps</span>
+      </div>
+    {/if}
+
+    <div class="rd-row">
+      <label class="rd-label" for="rd-audio-codec">{t("exportDialog.audioCodecLabel")}</label>
+      <div class="rd-select-wrap">
+        <Select
+          id="rd-audio-codec"
+          value={renderStore.audioCodec}
+          options={audioCodecSelectOptions}
+          onchange={(v) => (renderStore.audioCodec = v as AudioCodec)}
+        />
+      </div>
+    </div>
+
+    <div class="rd-row">
+      <label class="rd-label" for="rd-audio-bitrate">{t("exportDialog.audioBitrateLabel")}</label>
+      <input id="rd-audio-bitrate" class="rd-number" type="number" min="1" bind:value={renderStore.audioBitrateKbps} />
+      <span class="rd-hint muted-2">kbps</span>
+    </div>
+  </Panel>
+
+  <Panel title={t("exportDialog.hwSectionTitle")}>
+    {#if renderStore.hardwareLoading}
+      <LoadingState message={t("exportDialog.hwDetecting")} />
+    {:else if renderStore.hardwareError}
+      <ErrorState message={renderStore.hardwareError} />
+    {:else if renderStore.hardware}
+      <p class="rd-hw-active">{t("exportDialog.hwActiveEncoder", { label: renderStore.hardware.active_encoder_label })}</p>
+      <div class="rd-row">
+        <label class="rd-label" for="rd-hw-encoder">{t("exportDialog.hwForceLabel")}</label>
+        <div class="rd-select-wrap">
+          <Select
+            id="rd-hw-encoder"
+            value={renderStore.hardwareEncoder ?? "auto"}
+            options={hwEncoderSelectOptions}
+            onchange={(v) => {
+              renderStore.hardwareEncoder = v === "auto" ? null : (v as EncoderBackend);
+            }}
+          />
+        </div>
+      </div>
+      {#if renderStore.hardware.encoders.length > 0}
+        <ul class="rd-hw-list muted-2">
+          {#each renderStore.hardware.encoders as enc (enc.backend)}
+            <li>{encoderLabel(enc.backend)}: {enc.working ? t("exportDialog.hwWorking") : t("exportDialog.hwNotAvailable")}</li>
+          {/each}
+        </ul>
+      {/if}
+    {/if}
+  </Panel>
+
+  <Panel title={t("exportDialog.outputSectionTitle")}>
+    <div class="rd-row">
+      <Button size="sm" onclick={() => void renderStore.chooseOutputPath()}>{t("exportDialog.chooseOutputButton")}</Button>
+      <span class="rd-output-path muted-2" title={renderStore.outputPath ?? undefined}>
+        {renderStore.outputPath ? basename(renderStore.outputPath) : t("exportDialog.noOutputChosen")}
+      </span>
+    </div>
+  </Panel>
+
+  {#if renderStore.startError}
+    <ErrorState message={renderStore.startError} />
+  {/if}
+
+  {#if renderStore.progress}
+    <Panel title={t("exportDialog.progressSectionTitle")}>
+      {#if renderStore.progress.error}
+        <ErrorState message={t("exportDialog.renderFailed", { error: renderStore.progress.error })} />
+      {:else if renderStore.progress.done}
+        <p class="rd-success">
+          {t("exportDialog.renderComplete", { path: renderStore.progress.output_path ?? "" })}
+        </p>
+      {:else}
+        <ProgressBar
+          value={renderStore.progress.fraction ?? 0}
+          max={1}
+          label={formatPercent(renderStore.progress.fraction) +
+            (renderStore.progress.speed !== null
+              ? ` · ${t("exportDialog.speedLabel", { speed: renderStore.progress.speed.toFixed(2) })}`
+              : "")}
+        />
+      {/if}
+    </Panel>
+  {/if}
+
+  {#snippet footer()}
+    {#if renderStore.isRendering}
+      <Button variant="danger" disabled={renderStore.cancelling} onclick={() => void renderStore.cancel()}>
+        {renderStore.cancelling ? t("exportDialog.cancelling") : t("exportDialog.cancelButton")}
+      </Button>
+    {:else if renderStore.progress?.done}
+      <Button onclick={() => renderStore.startNewExport()}>{t("exportDialog.newExportButton")}</Button>
+    {:else}
+      <Button disabled={!renderStore.canExport} onclick={() => void renderStore.startExport()}>
+        {renderStore.starting ? t("exportDialog.starting") : t("exportDialog.exportButton")}
+      </Button>
+    {/if}
+    <span class="rd-footer-spacer"></span>
+    <Button variant="ghost" onclick={() => renderStore.close()}>{t("exportDialog.closeButton")}</Button>
+  {/snippet}
+</Modal>
 
 <style>
-  .rd-backdrop {
-    position: fixed;
-    inset: 0;
-    background: hsl(0 0% 0% / 0.5);
-    display: grid;
-    place-items: center;
-    z-index: 100;
-  }
-  .rd-dialog {
-    width: min(720px, 94vw);
-    max-height: 88vh;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    background: var(--surface);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-lg);
-    box-shadow: 0 20px 60px hsl(0 0% 0% / 0.5);
-    overflow: hidden;
-  }
-  .rd-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  .rd-title {
-    font-size: 13px;
-    font-weight: 600;
-  }
-  .rd-body {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 12px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-  .rd-section {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    min-width: 0;
-  }
-  .rd-section-title {
-    margin: 0;
-    font-size: 10.5px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--muted);
-  }
+  /* Design System retrofit (Phase D7a, `STUDIO_PLAN.md`): the dialog shell,
+     section headings, finite-option selects, buttons, error/loading text,
+     and the progress track are all gone from here — `Modal`/`Panel`/
+     `Select`/`Button`/`ErrorState`/`LoadingState`/`ProgressBar` (Design
+     System) own that chrome now. Only what has no Design System equivalent
+     remains: the preset-card grid (needs a "selected" visual state Card.svelte
+     doesn't expose), the numeric inputs (Input.svelte doesn't support
+     type="number"), the CRF/bitrate radio pair (no Radio component exists),
+     and small layout-only helpers (row/label/select-wrap sizing, the hw list,
+     the success banner). */
   .rd-preset-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -359,10 +340,21 @@
     color: inherit;
     font: inherit;
   }
-  .rd-preset-card:hover { border-color: var(--border-strong); }
-  .rd-preset-card.selected { border-color: var(--accent); background: hsl(213 94% 68% / 0.08); }
-  .rd-preset-name { font-size: 11.5px; font-weight: 600; }
-  .rd-preset-desc { font-size: 10.5px; line-height: 1.4; }
+  .rd-preset-card:hover {
+    border-color: var(--border-strong);
+  }
+  .rd-preset-card.selected {
+    border-color: var(--accent);
+    background: hsl(213 94% 68% / 0.08);
+  }
+  .rd-preset-name {
+    font-size: 11.5px;
+    font-weight: 600;
+  }
+  .rd-preset-desc {
+    font-size: 10.5px;
+    line-height: 1.4;
+  }
   .rd-row {
     display: flex;
     align-items: center;
@@ -375,15 +367,9 @@
     flex-shrink: 0;
     min-width: 120px;
   }
-  .rd-select {
+  .rd-select-wrap {
     flex: 1;
     min-width: 0;
-    height: 26px;
-    background: var(--input);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    color: var(--foreground);
-    font-size: 11.5px;
   }
   .rd-number {
     width: 100px;
@@ -396,10 +382,19 @@
     font: inherit;
     font-size: 11.5px;
   }
-  .rd-number-sm { width: 76px; }
-  .rd-x { flex-shrink: 0; }
-  .rd-hint { font-size: 10.5px; }
-  .rd-radio-group { display: flex; gap: 14px; }
+  .rd-number-sm {
+    width: 76px;
+  }
+  .rd-x {
+    flex-shrink: 0;
+  }
+  .rd-hint {
+    font-size: 10.5px;
+  }
+  .rd-radio-group {
+    display: flex;
+    gap: 14px;
+  }
   .rd-radio {
     display: inline-flex;
     align-items: center;
@@ -407,8 +402,11 @@
     font-size: 11.5px;
     cursor: pointer;
   }
-  .rd-empty { margin: 0; font-size: 11.5px; }
-  .rd-hw-active { margin: 0; font-size: 12px; font-weight: 600; }
+  .rd-hw-active {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 600;
+  }
   .rd-hw-list {
     margin: 0;
     padding-left: 18px;
@@ -421,14 +419,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .rd-error {
-    padding: 8px 10px;
-    font-size: 11px;
-    color: var(--neg);
-    background: hsl(0 84% 65% / 0.08);
-    border: 1px solid hsl(0 84% 65% / 0.3);
-    border-radius: var(--radius-sm);
-  }
   .rd-success {
     margin: 0;
     padding: 8px 10px;
@@ -439,33 +429,7 @@
     border-radius: var(--radius-sm);
     word-break: break-all;
   }
-  .rd-progress-track {
-    height: 8px;
-    background: var(--surface-2);
-    border-radius: 4px;
-    overflow: hidden;
-  }
-  .rd-progress-fill {
-    height: 100%;
-    background: var(--accent);
-    transition: width 0.15s linear;
-  }
-  .rd-progress-label {
-    margin: 0;
-    font-size: 11px;
-  }
-  .rd-footer {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 14px;
-    border-top: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  .rd-footer-spacer { flex: 1; }
-  .btn-danger {
-    background: hsl(0 84% 65% / 0.12);
-    border: 1px solid hsl(0 84% 65% / 0.4);
-    color: var(--neg);
+  .rd-footer-spacer {
+    flex: 1;
   }
 </style>

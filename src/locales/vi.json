@@ -736,7 +736,6 @@
   },
   "history": {
     "title": "Lịch sử",
-    "close": "Đóng",
     "refreshButton": "Làm mới",
     "loadMoreButton": "Tải thêm",
     "loading": "Đang tải…",
@@ -848,7 +847,6 @@
   },
   "assetLibrary": {
     "title": "Thư viện tài nguyên",
-    "close": "Đóng",
     "explainer": "Danh mục nhỏ chứa các tệp bạn dùng lại — đoạn intro/outro, ảnh logo/watermark, nhạc nền, v.v. — mỗi tệp được đăng ký một lần và được các mẫu tham chiếu qua một id cố định thay vì đường dẫn cố định. Tệp được tham chiếu tại chỗ, không sao chép.",
     "loading": "Đang tải danh sách tài nguyên…",
     "loadFailed": "Không tải được Thư viện tài nguyên: {{error}}",
@@ -868,6 +866,10 @@
     "removeCancelButton": "Hủy",
     "removing": "Đang xóa…",
     "closeButton": "Đóng",
+    "colName": "Tên",
+    "colKind": "Loại",
+    "colPath": "Đường dẫn",
+    "colActions": "Hành động",
     "kind": {
       "intro": "Intro",
       "outro": "Outro",
@@ -903,7 +905,12 @@
       "deleteButton": "Xóa",
       "deleteConfirmButton": "Bấm lần nữa để xác nhận xóa",
       "deleteCancelButton": "Hủy",
-      "deleting": "Đang xóa…"
+      "deleting": "Đang xóa…",
+      "colName": "Tên",
+      "colFolder": "Thư mục theo dõi",
+      "colCondition": "Điều kiện",
+      "colAction": "Hành động",
+      "colActions": "Hành động"
     },
     "form": {
       "title": "Quy tắc tự động hóa mới",
@@ -1140,7 +1147,6 @@
   },
   "templateGenerator": {
     "title": "Tạo mẫu bằng AI",
-    "close": "Đóng",
     "explainer": "Mô tả mẫu bạn muốn bằng ngôn ngữ tự nhiên. AI sẽ chuyển thành một định nghĩa mẫu có cấu trúc, được kiểm tra hợp lệ dựa trên kiểu phụ đề, cấu hình xuất và Thư viện tài nguyên thực tế của bạn — sau đó bạn xem trước và, nếu ưng ý, lưu thành mẫu tùy chỉnh dùng lại được.",
     "promptSectionTitle": "Mô tả mẫu của bạn",
     "promptPlaceholder": "vd: \"Tạo cho tôi template video bóng đá dạng TikTok. Video khoảng 30-45 giây, 9:16, subtitle lớn, highlight tên cầu thủ, logo góc phải, intro 2 giây, transition nhanh.\"",

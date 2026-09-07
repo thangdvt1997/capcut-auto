@@ -19,11 +19,25 @@
   backend reports (including `"deferred"`), it never second-guesses it.
 
   Pure UI over `stores/updateSettings.svelte.ts`.
+
+  Phase D7b retrofit: shell/sections/buttons now come from the Design
+  System (`Modal`/`Panel`/`Button`/`ErrorState`, Phase D1). Every store call
+  (`setMode`/`checkNow`/`installNow`) and every `disabled`/conditional-
+  render expression is unchanged. No RadioGroup component exists yet, so
+  the three check-mode options stay hand-rolled `<input type="radio">`
+  rows; the status line stays a plain paragraph (its text is a full
+  sentence, not a short label, so `Badge` — built for short pills — isn't a
+  fit) with its color reusing the shared `--pos`/`--warn` tokens instead of
+  a hex-fallback literal. See `STUDIO_PLAN.md`'s Phase D7b section.
 -->
 <script lang="ts">
   import { updateSettingsStore, UPDATE_CHECK_MODES } from "../../stores/updateSettings.svelte";
   import { t } from "../../lib/i18n.svelte";
   import type { UpdateCheckMode } from "../../types/bindings";
+  import Modal from "../ui/Modal.svelte";
+  import Panel from "../ui/Panel.svelte";
+  import Button from "../ui/Button.svelte";
+  import ErrorState from "../ui/ErrorState.svelte";
 
   function modeLabel(mode: UpdateCheckMode): string {
     switch (mode) {
@@ -54,163 +68,79 @@
         return t("updateSettings.statusInstalling");
     }
   }
-
-  function onKeydown(e: KeyboardEvent): void {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      updateSettingsStore.close();
-    }
-  }
 </script>
 
-{#if updateSettingsStore.open}
-  <div class="us-backdrop" role="presentation" onclick={() => updateSettingsStore.close()}>
-    <div
-      class="us-dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label={t("updateSettings.title")}
-      tabindex="-1"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={onKeydown}
-    >
-      <div class="us-header">
-        <span class="us-title">{t("updateSettings.title")}</span>
-        <button class="btn btn-ghost" onclick={() => updateSettingsStore.close()} title={t("updateSettings.close")}>×</button>
-      </div>
+<Modal
+  open={updateSettingsStore.open}
+  title={t("updateSettings.title")}
+  width={520}
+  onClose={() => updateSettingsStore.close()}
+>
+  <p class="us-explainer muted-2">{t("updateSettings.explainer")}</p>
 
-      <div class="us-body">
-        <p class="us-explainer muted-2">{t("updateSettings.explainer")}</p>
+  <Panel title={t("updateSettings.modeSectionTitle")}>
+    {#each UPDATE_CHECK_MODES as mode (mode)}
+      <label class="us-radio-row">
+        <input
+          type="radio"
+          name="update-check-mode"
+          value={mode}
+          checked={updateSettingsStore.mode === mode}
+          onchange={() => updateSettingsStore.setMode(mode)}
+        />
+        <span>{modeLabel(mode)}</span>
+      </label>
+    {/each}
+  </Panel>
 
-        <section class="us-section">
-          <h3 class="us-section-title">{t("updateSettings.modeSectionTitle")}</h3>
-          {#each UPDATE_CHECK_MODES as mode (mode)}
-            <label class="us-radio-row">
-              <input
-                type="radio"
-                name="update-check-mode"
-                value={mode}
-                checked={updateSettingsStore.mode === mode}
-                onchange={() => updateSettingsStore.setMode(mode)}
-              />
-              <span>{modeLabel(mode)}</span>
-            </label>
-          {/each}
-        </section>
-
-        <section class="us-section">
-          <h3 class="us-section-title">{t("updateSettings.checkSectionTitle")}</h3>
-          <div class="us-row">
-            <button
-              class="btn"
-              disabled={updateSettingsStore.checking || updateSettingsStore.mode === "disabled"}
-              onclick={() => void updateSettingsStore.checkNow()}
-            >
-              {updateSettingsStore.checking ? t("updateSettings.checking") : t("updateSettings.checkButton")}
-            </button>
-            {#if updateSettingsStore.lastOutcome?.status === "available"}
-              <button
-                class="btn btn-ghost"
-                disabled={updateSettingsStore.installing}
-                onclick={() => void updateSettingsStore.installNow()}
-              >
-                {updateSettingsStore.installing ? t("updateSettings.installing") : t("updateSettings.installButton")}
-              </button>
-            {/if}
-          </div>
-          <p
-            class="us-status"
-            class:us-status-available={updateSettingsStore.lastOutcome?.status === "available"}
-            class:us-status-deferred={updateSettingsStore.lastOutcome?.status === "deferred"}
-          >
-            {statusLine()}
-          </p>
-          {#if updateSettingsStore.lastError}
-            <div class="us-error">{updateSettingsStore.lastError}</div>
-          {/if}
-        </section>
-      </div>
-
-      <div class="us-footer">
-        <span class="us-footer-spacer"></span>
-        <button class="btn btn-ghost" onclick={() => updateSettingsStore.close()}>{t("updateSettings.close")}</button>
-      </div>
+  <Panel title={t("updateSettings.checkSectionTitle")}>
+    <div class="us-row">
+      <Button disabled={updateSettingsStore.checking || updateSettingsStore.mode === "disabled"} onclick={() => void updateSettingsStore.checkNow()}>
+        {updateSettingsStore.checking ? t("updateSettings.checking") : t("updateSettings.checkButton")}
+      </Button>
+      {#if updateSettingsStore.lastOutcome?.status === "available"}
+        <Button variant="ghost" disabled={updateSettingsStore.installing} onclick={() => void updateSettingsStore.installNow()}>
+          {updateSettingsStore.installing ? t("updateSettings.installing") : t("updateSettings.installButton")}
+        </Button>
+      {/if}
     </div>
-  </div>
-{/if}
+    <p
+      class="us-status"
+      class:us-status-available={updateSettingsStore.lastOutcome?.status === "available"}
+      class:us-status-deferred={updateSettingsStore.lastOutcome?.status === "deferred"}
+    >
+      {statusLine()}
+    </p>
+    {#if updateSettingsStore.lastError}
+      <ErrorState message={updateSettingsStore.lastError} />
+    {/if}
+  </Panel>
+
+  {#snippet footer()}
+    <Button variant="ghost" onclick={() => updateSettingsStore.close()}>{t("updateSettings.close")}</Button>
+  {/snippet}
+</Modal>
 
 <style>
-  .us-backdrop {
-    position: fixed;
-    inset: 0;
-    background: hsl(0 0% 0% / 0.5);
-    display: grid;
-    place-items: center;
-    z-index: 100;
-  }
-  .us-dialog {
-    width: min(520px, 94vw);
-    max-height: 88vh;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    background: var(--surface);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-lg);
-    box-shadow: 0 20px 60px hsl(0 0% 0% / 0.5);
-    overflow: hidden;
-  }
-  .us-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  .us-title {
-    font-size: 13px;
-    font-weight: 600;
-  }
-  .us-body {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 12px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
+  /* No Design System paragraph-typography primitive exists for a small
+     explainer sentence (Panel/EmptyState don't include one) — kept as a
+     tiny local class, unchanged in size/spacing from the original. */
   .us-explainer {
     margin: 0;
     font-size: 11.5px;
     line-height: 1.5;
   }
-  .us-section {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    min-width: 0;
-  }
-  .us-section-title {
-    margin: 0;
-    font-size: 10.5px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--muted);
-  }
   .us-radio-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     font-size: 12px;
     cursor: pointer;
   }
   .us-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
   }
   .us-status {
     margin: 0;
@@ -218,30 +148,11 @@
     color: var(--muted);
   }
   .us-status-available {
-    color: var(--pos, #3fb950);
+    color: var(--pos);
     font-weight: 600;
   }
   .us-status-deferred {
-    color: var(--warn, #d29922);
+    color: var(--warn);
     font-weight: 600;
-  }
-  .us-error {
-    padding: 8px 10px;
-    font-size: 11px;
-    color: var(--neg);
-    background: hsl(0 84% 65% / 0.08);
-    border: 1px solid hsl(0 84% 65% / 0.3);
-    border-radius: var(--radius-sm);
-  }
-  .us-footer {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 14px;
-    border-top: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  .us-footer-spacer {
-    flex: 1;
   }
 </style>

@@ -39,6 +39,39 @@
   never blocks reaching "Ready" or using the basic editor afterward — master
   prompt §58's "AI configuration must be optional" / "the basic editor
   should work without cloud AI."
+
+  **Phase D7a Design System retrofit (`STUDIO_PLAN.md`):** every button is
+  now `Button.svelte`/`IconButton.svelte` (Phase D1), every "Working"/"Not
+  working"/"Installed"/"Downloading" pill is `Badge.svelte`, the top step
+  progress strip is `ProgressBar.svelte`, every error banner is
+  `ErrorState.svelte`, every "detecting.../loading..." one-liner is
+  `LoadingState.svelte`, and the Transcription Model step's per-model rows
+  are `Card.svelte` (matching `ModelManagerDialog.svelte`'s own retrofit).
+  Every real behavior — every store call, the `$effect` that lazily triggers
+  each step's detection, every Skip/Back/Continue/Finish condition — is
+  unchanged, only the markup underneath it.
+
+  **Deliberately NOT switched to the shared `Modal.svelte` shell (a real,
+  documented exception, not an oversight):** this wizard's own backdrop is
+  hardcoded to `z-index: 90`, one below every standalone dialog's own 100 —
+  because several wizard steps open one of those dialogs (CapCutSettingsDialog/
+  AiSettingsDialog/ModelManagerDialog/SystemInfoDialog) as a sub-action, and
+  those must render ON TOP of the wizard, not underneath it (see the original
+  z-index comment, preserved below). `Modal.svelte` hardcodes `z-index: 100`
+  with no prop to override it, and since those four dialogs are *also*
+  `Modal.svelte` instances mounted later in `App.svelte`'s DOM order than
+  this wizard, giving this wizard the same fixed z-index would make it paint
+  ON TOP of them instead — a genuine stacking-order regression, not a purely
+  visual one. Changing `Modal.svelte`'s own public API (e.g. adding a
+  `zIndex` prop) was judged out of scope for this pass, since it's a shared
+  component several other concurrently-retrofitted dialogs already depend on
+  in this same working tree. So the backdrop/dialog shell, its own Escape
+  handler, and the header/close-button/step-indicator stay hand-rolled,
+  exactly as before. The checklist icons (`.frw-check-icon`) and the
+  key/value FFmpeg detail list (`.frw-kv`) also stay bespoke — neither is a
+  text-pill "status badge" or an actionable button/select/table, so nothing
+  in the Design System maps onto either without changing what they actually
+  look like.
 -->
 <script lang="ts">
   import { firstRunWizardStore, type WizardStep } from "../../stores/firstRunWizard.svelte";
@@ -50,6 +83,13 @@
   import { systemInfoStore } from "../../stores/systemInfo.svelte";
   import { t } from "../../lib/i18n.svelte";
   import type { AiProviderKind } from "../../types/bindings";
+  import Button from "../ui/Button.svelte";
+  import IconButton from "../ui/IconButton.svelte";
+  import Badge from "../ui/Badge.svelte";
+  import ProgressBar from "../ui/ProgressBar.svelte";
+  import ErrorState from "../ui/ErrorState.svelte";
+  import LoadingState from "../ui/LoadingState.svelte";
+  import Card from "../ui/Card.svelte";
 
   const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB"];
 
@@ -138,15 +178,10 @@
             {t("firstRunWizard.stepIndicator", { current: firstRunWizardStore.stepNumber, total: firstRunWizardStore.totalSteps })}
           </span>
         </div>
-        <button class="btn btn-ghost" onclick={() => firstRunWizardStore.close()} title={t("firstRunWizard.closeTooltip")}>×</button>
+        <IconButton ariaLabel={t("firstRunWizard.closeTooltip")} onclick={() => firstRunWizardStore.close()}>×</IconButton>
       </div>
 
-      <div class="frw-progress-track">
-        <div
-          class="frw-progress-fill"
-          style="width:{(firstRunWizardStore.stepNumber / firstRunWizardStore.totalSteps) * 100}%"
-        ></div>
-      </div>
+      <ProgressBar value={firstRunWizardStore.stepNumber} max={firstRunWizardStore.totalSteps} />
 
       <div class="frw-body">
         <h2 class="frw-step-title">{t(stepTitleKey(firstRunWizardStore.currentStep))}</h2>
@@ -157,10 +192,10 @@
         {:else if firstRunWizardStore.currentStep === "systemCheck"}
           <p class="frw-p">{t("firstRunWizard.systemCheckBody")}</p>
           {#if firstRunWizardStore.systemInfoError}
-            <div class="frw-error">{t("firstRunWizard.systemCheckErrorPrefix", { error: firstRunWizardStore.systemInfoError })}</div>
+            <ErrorState message={t("firstRunWizard.systemCheckErrorPrefix", { error: firstRunWizardStore.systemInfoError })} />
           {/if}
           {#if firstRunWizardStore.systemInfoLoading && !firstRunWizardStore.systemInfo}
-            <p class="frw-p muted-2">{t("firstRunWizard.systemCheckLoading")}</p>
+            <LoadingState message={t("firstRunWizard.systemCheckLoading")} />
           {/if}
           {#if firstRunWizardStore.systemInfo}
             {@const info = firstRunWizardStore.systemInfo}
@@ -211,16 +246,16 @@
               <p class="frw-p">{t("firstRunWizard.ffmpegNotFoundHint")}</p>
             {/if}
           {:else}
-            <p class="frw-p muted-2">{t("firstRunWizard.systemCheckLoading")}</p>
+            <LoadingState message={t("firstRunWizard.systemCheckLoading")} />
           {/if}
 
         {:else if firstRunWizardStore.currentStep === "gpu"}
           <p class="frw-p">{t("firstRunWizard.gpuBody")}</p>
           {#if renderStore.hardwareError}
-            <div class="frw-error">{t("firstRunWizard.gpuErrorPrefix", { error: renderStore.hardwareError })}</div>
+            <ErrorState message={t("firstRunWizard.gpuErrorPrefix", { error: renderStore.hardwareError })} />
           {/if}
           {#if renderStore.hardwareLoading && !renderStore.hardware}
-            <p class="frw-p muted-2">{t("firstRunWizard.gpuLoading")}</p>
+            <LoadingState message={t("firstRunWizard.gpuLoading")} />
           {/if}
           {#if renderStore.hardware}
             <p class="frw-p"><strong>{t("firstRunWizard.gpuActiveLabel")}:</strong> {renderStore.hardware.active_encoder_label}</p>
@@ -231,9 +266,9 @@
                 {#each renderStore.hardware.encoders as enc (enc.backend)}
                   <li>
                     {enc.label}
-                    <span class:frw-badge-ok={enc.working} class:frw-badge-warn={!enc.working} class="frw-badge">
+                    <Badge variant={enc.working ? "pos" : "warn"}>
                       {enc.working ? t("firstRunWizard.gpuWorkingBadge") : t("firstRunWizard.gpuNotWorkingBadge")}
-                    </span>
+                    </Badge>
                   </li>
                 {/each}
               </ul>
@@ -243,10 +278,10 @@
         {:else if firstRunWizardStore.currentStep === "capcut"}
           <p class="frw-p">{t("firstRunWizard.capcutBody")}</p>
           {#if capcutStore.detectError}
-            <div class="frw-error">{t("firstRunWizard.capcutErrorPrefix", { error: capcutStore.detectError })}</div>
+            <ErrorState message={t("firstRunWizard.capcutErrorPrefix", { error: capcutStore.detectError })} />
           {/if}
           {#if capcutStore.detectLoading && capcutStore.installations.length === 0}
-            <p class="frw-p muted-2">{t("firstRunWizard.capcutLoading")}</p>
+            <LoadingState message={t("firstRunWizard.capcutLoading")} />
           {:else if capcutStore.installations.length === 0}
             <p class="frw-p muted-2">{t("firstRunWizard.capcutNoneDetected")}</p>
           {:else}
@@ -258,9 +293,9 @@
               {/each}
             </ul>
           {/if}
-          <button class="btn btn-ghost btn-sm" onclick={() => capcutStore.openSettings()}>
+          <Button variant="ghost" size="sm" onclick={() => capcutStore.openSettings()}>
             {t("firstRunWizard.capcutConfigureButton")}
-          </button>
+          </Button>
 
         {:else if firstRunWizardStore.currentStep === "aiProvider"}
           <p class="frw-p">{t("firstRunWizard.aiProviderBody")}</p>
@@ -271,35 +306,37 @@
               <span class="muted-2">{t("firstRunWizard.aiProviderNotConfiguredLabel")}</span>
             {/if}
           </p>
-          <button class="btn btn-sm" onclick={() => aiSettingsStore.openDialog()}>
+          <Button size="sm" onclick={() => aiSettingsStore.openDialog()}>
             {t("firstRunWizard.aiProviderConfigureButton")}
-          </button>
+          </Button>
 
         {:else if firstRunWizardStore.currentStep === "transcriptionModel"}
           <p class="frw-p">{t("firstRunWizard.transcriptionModelBody")}</p>
           {#if modelManagerStore.loadError}
-            <div class="frw-error">{modelManagerStore.loadError}</div>
+            <ErrorState message={modelManagerStore.loadError} />
           {/if}
           {#if modelManagerStore.loading && modelManagerStore.available.length === 0}
-            <p class="frw-p muted-2">{t("firstRunWizard.transcriptionModelLoading")}</p>
+            <LoadingState message={t("firstRunWizard.transcriptionModelLoading")} />
           {:else}
             <div class="frw-list">
               {#each modelManagerStore.modelsView as m (m.entry.id)}
-                <div class="frw-model-row">
-                  <div class="frw-model-info">
-                    <span class="frw-model-name">{m.entry.display_name}</span>
-                    <span class="muted-2 frw-model-size">{formatBytes(m.installedSizeBytes ?? m.entry.approx_size_bytes)}</span>
+                <Card padding="sm">
+                  <div class="frw-model-row">
+                    <div class="frw-model-info">
+                      <span class="frw-model-name">{m.entry.display_name}</span>
+                      <span class="muted-2 frw-model-size">{formatBytes(m.installedSizeBytes ?? m.entry.approx_size_bytes)}</span>
+                    </div>
+                    {#if m.downloading}
+                      <Badge variant="warn">{t("firstRunWizard.transcriptionModelDownloading")}</Badge>
+                    {:else if m.installed}
+                      <Badge variant="pos">{t("firstRunWizard.transcriptionModelInstalledBadge")}</Badge>
+                    {:else}
+                      <Button variant="ghost" size="sm" onclick={() => void modelManagerStore.download(m.entry.id)}>
+                        {t("firstRunWizard.transcriptionModelDownloadButton")}
+                      </Button>
+                    {/if}
                   </div>
-                  {#if m.downloading}
-                    <span class="frw-badge frw-badge-warn">{t("firstRunWizard.transcriptionModelDownloading")}</span>
-                  {:else if m.installed}
-                    <span class="frw-badge frw-badge-ok">{t("firstRunWizard.transcriptionModelInstalledBadge")}</span>
-                  {:else}
-                    <button class="btn btn-ghost btn-sm" onclick={() => void modelManagerStore.download(m.entry.id)}>
-                      {t("firstRunWizard.transcriptionModelDownloadButton")}
-                    </button>
-                  {/if}
-                </div>
+                </Card>
               {/each}
             </div>
           {/if}
@@ -310,23 +347,23 @@
             {projectFolderStore.path ?? t("firstRunWizard.projectFolderNoneChosen")}
           </p>
           <div class="frw-row">
-            <button class="btn btn-sm" onclick={() => void projectFolderStore.browse()}>
+            <Button size="sm" onclick={() => void projectFolderStore.browse()}>
               {t("firstRunWizard.projectFolderChooseButton")}
-            </button>
+            </Button>
             {#if projectFolderStore.path}
-              <button class="btn btn-ghost btn-sm" onclick={() => projectFolderStore.clear()}>
+              <Button variant="ghost" size="sm" onclick={() => projectFolderStore.clear()}>
                 {t("firstRunWizard.projectFolderClearButton")}
-              </button>
+              </Button>
             {/if}
           </div>
 
         {:else if firstRunWizardStore.currentStep === "ready"}
           <p class="frw-p">{t("firstRunWizard.readyBody")}</p>
           <div class="frw-row frw-row-wrap">
-            <button class="btn btn-ghost btn-sm" onclick={() => modelManagerStore.openDialog()}>{t("topBar.modelManagerButton")}</button>
-            <button class="btn btn-ghost btn-sm" onclick={() => capcutStore.openSettings()}>{t("topBar.capcutSettingsButton")}</button>
-            <button class="btn btn-ghost btn-sm" onclick={() => aiSettingsStore.openDialog()}>{t("topBar.aiSettingsButton")}</button>
-            <button class="btn btn-ghost btn-sm" onclick={() => systemInfoStore.openDialog()}>{t("topBar.systemInfoButton")}</button>
+            <Button variant="ghost" size="sm" onclick={() => modelManagerStore.openDialog()}>{t("topBar.modelManagerButton")}</Button>
+            <Button variant="ghost" size="sm" onclick={() => capcutStore.openSettings()}>{t("topBar.capcutSettingsButton")}</Button>
+            <Button variant="ghost" size="sm" onclick={() => aiSettingsStore.openDialog()}>{t("topBar.aiSettingsButton")}</Button>
+            <Button variant="ghost" size="sm" onclick={() => systemInfoStore.openDialog()}>{t("topBar.systemInfoButton")}</Button>
           </div>
           <p class="frw-p muted-2">{t("firstRunWizard.readyReopenHint")}</p>
         {/if}
@@ -334,20 +371,20 @@
 
       <div class="frw-footer">
         {#if !firstRunWizardStore.isFirstStep}
-          <button class="btn btn-ghost" onclick={() => firstRunWizardStore.back()}>{t("firstRunWizard.backButton")}</button>
+          <Button variant="ghost" onclick={() => firstRunWizardStore.back()}>{t("firstRunWizard.backButton")}</Button>
         {/if}
         <span class="frw-footer-spacer"></span>
 
         {#if firstRunWizardStore.currentStep === "welcome"}
-          <button class="btn btn-ghost" onclick={() => firstRunWizardStore.finish()}>{t("firstRunWizard.welcomeSkipSetup")}</button>
-          <button class="btn" onclick={() => firstRunWizardStore.next()}>{t("firstRunWizard.welcomeGetStarted")}</button>
+          <Button variant="ghost" onclick={() => firstRunWizardStore.finish()}>{t("firstRunWizard.welcomeSkipSetup")}</Button>
+          <Button onclick={() => firstRunWizardStore.next()}>{t("firstRunWizard.welcomeGetStarted")}</Button>
         {:else if firstRunWizardStore.currentStep === "aiProvider" || firstRunWizardStore.currentStep === "transcriptionModel" || firstRunWizardStore.currentStep === "projectFolder"}
-          <button class="btn btn-ghost" onclick={() => firstRunWizardStore.next()}>{t("firstRunWizard.skipButton")}</button>
-          <button class="btn" onclick={() => firstRunWizardStore.next()}>{t("firstRunWizard.continueButton")}</button>
+          <Button variant="ghost" onclick={() => firstRunWizardStore.next()}>{t("firstRunWizard.skipButton")}</Button>
+          <Button onclick={() => firstRunWizardStore.next()}>{t("firstRunWizard.continueButton")}</Button>
         {:else if firstRunWizardStore.currentStep === "ready"}
-          <button class="btn" onclick={() => firstRunWizardStore.finish()}>{t("firstRunWizard.finishButton")}</button>
+          <Button onclick={() => firstRunWizardStore.finish()}>{t("firstRunWizard.finishButton")}</Button>
         {:else}
-          <button class="btn" onclick={() => firstRunWizardStore.next()}>{t("firstRunWizard.nextButton")}</button>
+          <Button onclick={() => firstRunWizardStore.next()}>{t("firstRunWizard.nextButton")}</Button>
         {/if}
       </div>
     </div>
@@ -355,6 +392,14 @@
 {/if}
 
 <style>
+  /* Design System retrofit (Phase D7a, `STUDIO_PLAN.md`): every button/badge/
+     progress-bar/error-banner/loading-message class this file used to
+     hand-roll (`.btn`/`.frw-badge*`/`.frw-progress*`/`.frw-error`/the plain
+     loading `<p>`s) is gone — `Button`/`IconButton`/`Badge`/`ProgressBar`/
+     `ErrorState`/`LoadingState`/`Card` (Design System) own that chrome now.
+     The outer backdrop/dialog shell stays bespoke on purpose — see this
+     file's own top doc comment for the real, documented z-index reason
+     `Modal.svelte` isn't used here. */
   .frw-backdrop {
     position: fixed;
     inset: 0;
@@ -399,16 +444,6 @@
   }
   .frw-step-indicator {
     font-size: 10.5px;
-  }
-  .frw-progress-track {
-    height: 3px;
-    background: var(--surface-2);
-    flex-shrink: 0;
-  }
-  .frw-progress-fill {
-    height: 100%;
-    background: var(--accent);
-    transition: width 200ms ease;
   }
   .frw-body {
     flex: 1;
@@ -503,29 +538,11 @@
     gap: 8px;
     font-size: 11.5px;
   }
-  .frw-badge {
-    font-size: 10.5px;
-    padding: 2px 8px;
-    border-radius: 999px;
-    white-space: nowrap;
-  }
-  .frw-badge-ok {
-    color: var(--pos, #3fb950);
-    background: hsl(140 60% 50% / 0.1);
-  }
-  .frw-badge-warn {
-    color: var(--warn, #d29922);
-    background: hsl(38 92% 60% / 0.1);
-  }
   .frw-model-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 10px;
-    padding: 8px 10px;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
   }
   .frw-model-info {
     display: flex;
@@ -550,19 +567,6 @@
   }
   .frw-row-wrap {
     flex-wrap: wrap;
-  }
-  .btn-sm {
-    height: 24px;
-    padding: 0 10px;
-    font-size: 11px;
-  }
-  .frw-error {
-    padding: 8px 10px;
-    font-size: 11px;
-    color: var(--neg);
-    background: hsl(0 84% 65% / 0.08);
-    border: 1px solid hsl(0 84% 65% / 0.3);
-    border-radius: var(--radius-sm);
   }
   .frw-footer {
     display: flex;

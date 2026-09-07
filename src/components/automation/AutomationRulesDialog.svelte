@@ -28,22 +28,89 @@
   build a partial editor that can't really do that, this dialog only offers
   Create + toggle-enabled + delete. A rule that needs different settings is
   deleted and recreated.
+
+  **Phase D7c Design System retrofit (`STUDIO_PLAN.md`):** the hand-rolled
+  backdrop/dialog shell is now `Modal.svelte` (Phase D1), the rule list is
+  now `DataTable.svelte` (Name/Folder/Condition/Action/Actions columns, real
+  client-side sort added on Name/Folder — a free, honest addition the
+  retrofit enables, not a behavior change), the per-rule enable toggle is
+  `Checkbox.svelte` (not `Switch.svelte` — see below, a deliberate choice to
+  preserve a real existing interaction), the Create Rule form's bordered box
+  is `Panel.svelte` + `Card.svelte`, its name/template/preset fields are
+  `Input.svelte`/`Select.svelte`, its two toggles are `Checkbox.svelte`, and
+  every button is `Button.svelte`. The numeric minutes field stays a plain
+  `<input type="number">` — `Input.svelte`'s own doc comment explicitly
+  scopes numeric fields out (`Slider.svelte` is this pass's numeric
+  primitive, but it's a drag-a-handle control, not a typed-number field —
+  swapping to it would be a real interaction change, not just chrome).
+
+  **Enable toggle: `Checkbox`, not `Switch`.** The original row's toggle was
+  a native `<input type="checkbox">` wrapped in a `<label>` together with
+  the rule's name — clicking the *name text itself* toggles the rule, a
+  real, working bit of native label/input semantics. `Switch.svelte` renders
+  a `<button role="switch">`, not an `<input>`, so a native `<label>` around
+  it would NOT delegate clicks the same way — adopting it here would quietly
+  drop that click target. `Checkbox.svelte` renders the exact same
+  `<label><input type="checkbox">…</label>` recipe the original hand-rolled,
+  so it's the byte-for-byte-behavior-preserving choice, even though
+  `AutomationSettingsTab.svelte`'s own unrelated, brand-new "quick toggle"
+  row (Phase D5) uses `Switch` for the same store method — that file never
+  had this click-the-label-text behavior to preserve in the first place.
+
+  **Escape-key nuance preserved.** The original's own `onKeydown` did NOT
+  always close the whole dialog: if the Create Rule form was open, Escape
+  closed just the form (`closeCreateForm()`); only when the form was already
+  closed did Escape close the dialog itself. `Modal.svelte`'s own built-in
+  Escape handler always calls `onClose` unconditionally, which would lose
+  this distinction. Fixed here with a `window`-level, capture-phase keydown
+  listener (registered/torn down by a real `$effect` scoped to
+  `automationStore.open`, the same "component owns lifecycle, store owns
+  state" pattern `stores/autoZoom.svelte.ts`'s own doc comment already
+  established for an unrelated feature): capture-phase runs before any
+  bubble-phase listener a click/focus location would otherwise route
+  through, so this reproduces the original's "catches Escape anywhere in
+  the dialog, regardless of what currently has focus" behavior exactly — a
+  plain `onkeydown` attached to one wrapper `<div>` inside `Modal`'s own
+  body would NOT catch Escape if focus happened to be on the footer's Close
+  button instead (a sibling subtree), which is why this uses `window` +
+  capture instead. When the form is open, the listener calls
+  `closeCreateForm()` and stops propagation, so `Modal`'s own handler never
+  fires; when the form is closed, the listener does nothing and the key
+  event proceeds to `Modal`'s own handler exactly as before. Backdrop-click
+  and the header's `×` always closed the whole dialog unconditionally in the
+  original too, so wiring `Modal`'s `onClose` straight to
+  `automationStore.close()` reproduces that half unchanged.
 -->
 <script lang="ts">
   import { automationStore } from "../../stores/automation.svelte";
   import { t } from "../../lib/i18n.svelte";
   import type { AutomationRule } from "../../types/bindings";
+  import Modal from "../ui/Modal.svelte";
+  import DataTable from "../ui/DataTable.svelte";
+  import Panel from "../ui/Panel.svelte";
+  import Card from "../ui/Card.svelte";
+  import Checkbox from "../ui/Checkbox.svelte";
+  import Input from "../ui/Input.svelte";
+  import Select from "../ui/Select.svelte";
+  import type { SelectOption } from "../ui/Select.svelte";
+  import Button from "../ui/Button.svelte";
+  import EmptyState from "../ui/EmptyState.svelte";
 
-  function onKeydown(e: KeyboardEvent): void {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      if (automationStore.showCreateForm) {
+  // See the file's own doc comment ("Escape-key nuance preserved") for why
+  // this is a window-level capture-phase listener rather than a plain
+  // `onkeydown` on some wrapper element.
+  $effect(() => {
+    if (!automationStore.open) return;
+    function handleEscape(e: KeyboardEvent): void {
+      if (e.key === "Escape" && automationStore.showCreateForm) {
+        e.preventDefault();
+        e.stopPropagation();
         automationStore.closeCreateForm();
-      } else {
-        automationStore.close();
       }
     }
-  }
+    window.addEventListener("keydown", handleEscape, true);
+    return () => window.removeEventListener("keydown", handleEscape, true);
+  });
 
   function basename(path: string): string {
     return path.split(/[\\/]/).pop() || path;
@@ -74,292 +141,250 @@
     const preset = automationStore.presets.find((p) => p.id === presetId);
     return `${templatePart} ${t("automationRules.list.actionPresetSuffix", { preset: preset?.name ?? presetId })}`;
   }
+
+  function ruleKey(rule: AutomationRule): string {
+    return rule.id;
+  }
+
+  let templateSelectOptions = $derived<SelectOption[]>([
+    { value: "", label: t("automationRules.form.noTemplateOption") },
+    ...automationStore.templates.map((tpl) => ({ value: tpl.id, label: tpl.name })),
+  ]);
+
+  let exportPresetOptions = $derived<SelectOption[]>([
+    ...((automationStore.createMultiTemplateMode
+      ? automationStore.createTemplateIds.length > 0
+      : automationStore.createTemplateId !== null)
+      ? [{ value: "", label: t("automationRules.form.useTemplateDefaultPreset") }]
+      : []),
+    ...automationStore.presets.map((p) => ({ value: p.id, label: p.name })),
+  ]);
 </script>
 
-{#snippet ruleRow(rule: AutomationRule)}
-  <div class="ar-row">
-    <div class="ar-row-main">
-      <div class="ar-row-header">
-        <label class="ar-toggle">
-          <input
-            type="checkbox"
-            checked={rule.enabled}
-            disabled={automationStore.togglingById[rule.id] ?? false}
-            onchange={(e) => void automationStore.setEnabled(rule, (e.target as HTMLInputElement).checked)}
-          />
-          <span class="ar-name">{rule.name}</span>
-        </label>
+{#snippet nameCell(rule: AutomationRule)}
+  <div class="ar-name-cell">
+    <Checkbox
+      checked={rule.enabled}
+      disabled={automationStore.togglingById[rule.id] ?? false}
+      onchange={(checked) => void automationStore.setEnabled(rule, checked)}
+    >
+      <span class="ar-name">{rule.name}</span>
+    </Checkbox>
+    {#if automationStore.toggleErrorById[rule.id]}
+      <div class="ar-error">
+        {t("automationRules.list.toggleFailed", { error: automationStore.toggleErrorById[rule.id] ?? "" })}
       </div>
-      <div class="ar-detail">
-        <span class="ar-detail-label">{t("automationRules.list.watchedFolderLabel")}:</span>
-        <span class="mono ar-detail-value" title={rule.trigger.path}>{rule.trigger.path}</span>
-      </div>
-      <div class="ar-detail">
-        <span class="ar-detail-label">{t("automationRules.list.conditionLabel")}:</span>
-        <span class="ar-detail-value">{conditionSummary(rule)}</span>
-      </div>
-      <div class="ar-detail">
-        <span class="ar-detail-label">{t("automationRules.list.actionLabel")}:</span>
-        <span class="ar-detail-value">{actionSummary(rule)}</span>
-      </div>
-      {#if automationStore.toggleErrorById[rule.id]}
-        <div class="ar-error">{t("automationRules.list.toggleFailed", { error: automationStore.toggleErrorById[rule.id] ?? "" })}</div>
-      {/if}
-    </div>
-    <div class="ar-row-actions">
-      {#if automationStore.pendingDeleteId === rule.id}
-        <button
-          class="btn btn-danger btn-sm"
-          disabled={automationStore.deletingId === rule.id}
-          onclick={() => void automationStore.confirmDelete(rule.id)}
-        >
-          {automationStore.deletingId === rule.id ? t("automationRules.list.deleting") : t("automationRules.list.deleteConfirmButton")}
-        </button>
-        <button class="btn btn-ghost btn-sm" onclick={() => automationStore.cancelDelete()}>
-          {t("automationRules.list.deleteCancelButton")}
-        </button>
-      {:else}
-        <button class="btn btn-ghost btn-sm" onclick={() => automationStore.armDelete(rule.id)}>
-          {t("automationRules.list.deleteButton")}
-        </button>
-      {/if}
-    </div>
+    {/if}
+  </div>
+{/snippet}
+{#snippet folderCell(rule: AutomationRule)}
+  <span class="mono ar-detail-value" title={rule.trigger.path}>{rule.trigger.path}</span>
+{/snippet}
+{#snippet conditionCell(rule: AutomationRule)}
+  {conditionSummary(rule)}
+{/snippet}
+{#snippet actionCell(rule: AutomationRule)}
+  {actionSummary(rule)}
+{/snippet}
+{#snippet rowActionsCell(rule: AutomationRule)}
+  <div class="ar-row-actions">
+    {#if automationStore.pendingDeleteId === rule.id}
+      <Button
+        variant="danger"
+        size="sm"
+        disabled={automationStore.deletingId === rule.id}
+        onclick={() => void automationStore.confirmDelete(rule.id)}
+      >
+        {automationStore.deletingId === rule.id ? t("automationRules.list.deleting") : t("automationRules.list.deleteConfirmButton")}
+      </Button>
+      <Button variant="ghost" size="sm" onclick={() => automationStore.cancelDelete()}>
+        {t("automationRules.list.deleteCancelButton")}
+      </Button>
+    {:else}
+      <Button variant="ghost" size="sm" onclick={() => automationStore.armDelete(rule.id)}>
+        {t("automationRules.list.deleteButton")}
+      </Button>
+    {/if}
   </div>
 {/snippet}
 
-{#if automationStore.open}
-  <div class="ar-backdrop" role="presentation" onclick={() => automationStore.close()}>
-    <div
-      class="ar-dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label={t("automationRules.title")}
-      tabindex="-1"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={onKeydown}
-    >
-      <div class="ar-header">
-        <span class="ar-title">{t("automationRules.title")}</span>
-        <button class="btn btn-ghost" onclick={() => automationStore.close()} title={t("automationRules.close")}>×</button>
-      </div>
+<Modal open={automationStore.open} title={t("automationRules.title")} onClose={() => automationStore.close()} width={760}>
+  {#snippet footer()}
+    <Button variant="ghost" onclick={() => automationStore.close()}>{t("automationRules.close")}</Button>
+  {/snippet}
 
-      <div class="ar-body">
-        <p class="ar-explainer muted-2">{t("automationRules.explainer")}</p>
+  <div class="ar-body">
+    <p class="ar-explainer muted-2">{t("automationRules.explainer")}</p>
 
-        {#if automationStore.loadError}
-          <div class="ar-error">{t("automationRules.loadFailed", { error: automationStore.loadError })}</div>
-        {/if}
-        {#if automationStore.deleteError}
-          <div class="ar-error">{automationStore.deleteError}</div>
-        {/if}
+    {#if automationStore.loadError}
+      <div class="ar-error">{t("automationRules.loadFailed", { error: automationStore.loadError })}</div>
+    {/if}
+    {#if automationStore.deleteError}
+      <div class="ar-error">{automationStore.deleteError}</div>
+    {/if}
 
-        <div class="ar-toolbar-row">
-          <span class="ar-footer-spacer"></span>
-          <button class="btn btn-sm" onclick={() => automationStore.openCreateForm()}>
-            {t("automationRules.newRuleButton")}
-          </button>
-        </div>
+    <div class="ar-toolbar-row">
+      <span class="ar-toolbar-spacer"></span>
+      <Button size="sm" onclick={() => automationStore.openCreateForm()}>
+        {t("automationRules.newRuleButton")}
+      </Button>
+    </div>
 
-        {#if automationStore.showCreateForm}
-          <div class="ar-form">
-            <span class="ar-section-title">{t("automationRules.form.title")}</span>
+    {#if automationStore.showCreateForm}
+      <Panel title={t("automationRules.form.title")}>
+        <Card>
+          <div class="ar-form-row">
+            <label class="ar-label" for="ar-name">{t("automationRules.form.nameLabel")}</label>
+            <div class="ar-field-grow">
+              <Input id="ar-name" bind:value={automationStore.createName} placeholder={t("automationRules.form.namePlaceholder")} />
+            </div>
+          </div>
 
+          <div class="ar-form-row">
+            <Button variant="ghost" size="sm" onclick={() => void automationStore.pickFolder()}>
+              {t("automationRules.form.chooseFolderButton")}
+            </Button>
+            {#if automationStore.createFolderPath}
+              <span class="mono ar-detail-value" title={automationStore.createFolderPath}>
+                {basename(automationStore.createFolderPath)}
+              </span>
+            {:else}
+              <span class="muted-2">{t("automationRules.form.noFolderChosen")}</span>
+            {/if}
+          </div>
+
+          <span class="ar-section-title">{t("automationRules.form.conditionSectionTitle")}</span>
+          <Checkbox bind:checked={automationStore.createConditionEnabled}>
+            {t("automationRules.form.conditionCheckboxLabel")}
+          </Checkbox>
+          {#if automationStore.createConditionEnabled}
             <div class="ar-form-row">
-              <label class="ar-label" for="ar-name">{t("automationRules.form.nameLabel")}</label>
               <input
-                id="ar-name"
-                class="ar-input"
-                type="text"
-                placeholder={t("automationRules.form.namePlaceholder")}
-                bind:value={automationStore.createName}
+                class="ar-number"
+                type="number"
+                min="0"
+                step="1"
+                bind:value={automationStore.createMinDurationMinutes}
+              />
+              <span class="muted-2">{t("automationRules.form.minDurationSuffix")}</span>
+            </div>
+          {/if}
+
+          <span class="ar-section-title">{t("automationRules.form.actionSectionTitle")}</span>
+          <Checkbox bind:checked={automationStore.createMultiTemplateMode}>
+            {t("automationRules.form.multiTemplateToggle")}
+          </Checkbox>
+          {#if automationStore.createMultiTemplateMode}
+            <p class="ar-hint muted-2">{t("automationRules.form.multiTemplateHint")}</p>
+            {#if automationStore.templates.length > 0}
+              <ul class="ar-template-list">
+                {#each automationStore.templates as tpl (tpl.id)}
+                  <li class="ar-template-item">
+                    <Checkbox
+                      checked={automationStore.createTemplateIds.includes(tpl.id)}
+                      onchange={() => automationStore.toggleCreateTemplateSelection(tpl.id)}
+                    >
+                      {tpl.name}
+                    </Checkbox>
+                  </li>
+                {/each}
+              </ul>
+            {:else}
+              <p class="ar-hint muted-2">{t("automationRules.form.noTemplatesYet")}</p>
+            {/if}
+          {:else}
+            <div class="ar-form-row">
+              <label class="ar-label" for="ar-template">{t("automationRules.form.templateLabel")}</label>
+              <div class="ar-field-grow">
+                <Select
+                  id="ar-template"
+                  value={automationStore.createTemplateId ?? ""}
+                  options={templateSelectOptions}
+                  onchange={(v) => (automationStore.createTemplateId = v || null)}
+                />
+              </div>
+            </div>
+          {/if}
+
+          <div class="ar-form-row">
+            <label class="ar-label" for="ar-preset">{t("automationRules.form.exportPresetLabel")}</label>
+            <div class="ar-field-grow">
+              <Select
+                id="ar-preset"
+                value={automationStore.createExportPresetId ?? ""}
+                options={exportPresetOptions}
+                onchange={(v) => (automationStore.createExportPresetId = v || null)}
               />
             </div>
-
-            <div class="ar-form-row">
-              <button class="btn btn-ghost btn-sm" onclick={() => void automationStore.pickFolder()}>
-                {t("automationRules.form.chooseFolderButton")}
-              </button>
-              {#if automationStore.createFolderPath}
-                <span class="mono ar-detail-value" title={automationStore.createFolderPath}>
-                  {basename(automationStore.createFolderPath)}
-                </span>
-              {:else}
-                <span class="muted-2">{t("automationRules.form.noFolderChosen")}</span>
-              {/if}
-            </div>
-
-            <span class="ar-section-title">{t("automationRules.form.conditionSectionTitle")}</span>
-            <label class="ar-checkbox">
-              <input type="checkbox" bind:checked={automationStore.createConditionEnabled} />
-              {t("automationRules.form.conditionCheckboxLabel")}
-            </label>
-            {#if automationStore.createConditionEnabled}
-              <div class="ar-form-row">
-                <input
-                  class="ar-number"
-                  type="number"
-                  min="0"
-                  step="1"
-                  bind:value={automationStore.createMinDurationMinutes}
-                />
-                <span class="muted-2">{t("automationRules.form.minDurationSuffix")}</span>
-              </div>
-            {/if}
-
-            <span class="ar-section-title">{t("automationRules.form.actionSectionTitle")}</span>
-            <label class="ar-checkbox">
-              <input type="checkbox" bind:checked={automationStore.createMultiTemplateMode} />
-              {t("automationRules.form.multiTemplateToggle")}
-            </label>
-            {#if automationStore.createMultiTemplateMode}
-              <p class="ar-hint muted-2">{t("automationRules.form.multiTemplateHint")}</p>
-              {#if automationStore.templates.length > 0}
-                <ul class="ar-template-list">
-                  {#each automationStore.templates as tpl (tpl.id)}
-                    <li class="ar-template-item">
-                      <label class="ar-checkbox">
-                        <input
-                          type="checkbox"
-                          checked={automationStore.createTemplateIds.includes(tpl.id)}
-                          onchange={() => automationStore.toggleCreateTemplateSelection(tpl.id)}
-                        />
-                        {tpl.name}
-                      </label>
-                    </li>
-                  {/each}
-                </ul>
-              {:else}
-                <p class="ar-hint muted-2">{t("automationRules.form.noTemplatesYet")}</p>
-              {/if}
-            {:else}
-              <div class="ar-form-row">
-                <label class="ar-label" for="ar-template">{t("automationRules.form.templateLabel")}</label>
-                <select
-                  id="ar-template"
-                  class="ar-select"
-                  value={automationStore.createTemplateId ?? ""}
-                  onchange={(e) => (automationStore.createTemplateId = (e.target as HTMLSelectElement).value || null)}
-                >
-                  <option value="">{t("automationRules.form.noTemplateOption")}</option>
-                  {#each automationStore.templates as tpl (tpl.id)}
-                    <option value={tpl.id}>{tpl.name}</option>
-                  {/each}
-                </select>
-              </div>
-            {/if}
-
-            <div class="ar-form-row">
-              <label class="ar-label" for="ar-preset">{t("automationRules.form.exportPresetLabel")}</label>
-              <select
-                id="ar-preset"
-                class="ar-select"
-                value={automationStore.createExportPresetId ?? ""}
-                onchange={(e) => (automationStore.createExportPresetId = (e.target as HTMLSelectElement).value || null)}
-              >
-                {#if automationStore.createMultiTemplateMode ? automationStore.createTemplateIds.length > 0 : automationStore.createTemplateId !== null}
-                  <option value="">{t("automationRules.form.useTemplateDefaultPreset")}</option>
-                {/if}
-                {#each automationStore.presets as p (p.id)}
-                  <option value={p.id}>{p.name}</option>
-                {/each}
-              </select>
-            </div>
-
-            <p class="ar-hint muted-2">{t("automationRules.form.scopeHint")}</p>
-
-            {#if automationStore.createError}
-              <div class="ar-error">{automationStore.createError}</div>
-            {/if}
-
-            <div class="ar-form-row">
-              <button
-                class="btn btn-sm"
-                disabled={!automationStore.canSubmitCreate}
-                onclick={() => void automationStore.submitCreate()}
-              >
-                {automationStore.creating ? t("automationRules.form.creating") : t("automationRules.form.createButton")}
-              </button>
-              <button class="btn btn-ghost btn-sm" onclick={() => automationStore.closeCreateForm()}>
-                {t("automationRules.form.cancelButton")}
-              </button>
-            </div>
           </div>
-        {/if}
 
-        {#if automationStore.loading && automationStore.rules.length === 0}
-          <p class="ar-empty muted-2">{t("automationRules.loading")}</p>
-        {:else if automationStore.rules.length === 0}
-          <p class="ar-empty muted-2">{t("automationRules.noRules")}</p>
-        {:else}
-          <div class="ar-list">
-            {#each automationStore.rules as rule (rule.id)}
-              {@render ruleRow(rule)}
-            {/each}
+          <p class="ar-hint muted-2">{t("automationRules.form.scopeHint")}</p>
+
+          {#if automationStore.createError}
+            <div class="ar-error">{automationStore.createError}</div>
+          {/if}
+
+          <div class="ar-form-row">
+            <Button size="sm" disabled={!automationStore.canSubmitCreate} onclick={() => void automationStore.submitCreate()}>
+              {automationStore.creating ? t("automationRules.form.creating") : t("automationRules.form.createButton")}
+            </Button>
+            <Button variant="ghost" size="sm" onclick={() => automationStore.closeCreateForm()}>
+              {t("automationRules.form.cancelButton")}
+            </Button>
           </div>
-        {/if}
-      </div>
+        </Card>
+      </Panel>
+    {/if}
 
-      <div class="ar-footer">
-        <span class="ar-footer-spacer"></span>
-        <button class="btn btn-ghost" onclick={() => automationStore.close()}>{t("automationRules.close")}</button>
-      </div>
-    </div>
+    {#if automationStore.loading && automationStore.rules.length === 0}
+      <EmptyState title={t("automationRules.loading")} />
+    {:else if automationStore.rules.length === 0}
+      <EmptyState title={t("automationRules.noRules")} />
+    {:else}
+      <DataTable
+        columns={[
+          { key: "name", label: t("automationRules.list.colName"), sortable: true, accessor: (r) => r.name, cell: nameCell },
+          {
+            key: "folder",
+            label: t("automationRules.list.colFolder"),
+            sortable: true,
+            accessor: (r) => r.trigger.path,
+            cell: folderCell,
+          },
+          { key: "condition", label: t("automationRules.list.colCondition"), cell: conditionCell },
+          { key: "action", label: t("automationRules.list.colAction"), cell: actionCell },
+          { key: "actions", label: t("automationRules.list.colActions"), cell: rowActionsCell },
+        ]}
+        rows={automationStore.rules}
+        rowKey={ruleKey}
+      />
+    {/if}
   </div>
-{/if}
+</Modal>
 
 <style>
-  .ar-backdrop {
-    position: fixed;
-    inset: 0;
-    background: hsl(0 0% 0% / 0.5);
-    display: grid;
-    place-items: center;
-    z-index: 100;
-  }
-  .ar-dialog {
-    width: min(680px, 94vw);
-    max-height: 88vh;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    background: var(--surface);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-lg);
-    box-shadow: 0 20px 60px hsl(0 0% 0% / 0.5);
-    overflow: hidden;
-  }
-  .ar-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  .ar-title {
-    font-size: 13px;
-    font-weight: 600;
-  }
-  .ar-body {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 12px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
+  /* Design System retrofit (Phase D7c, `STUDIO_PLAN.md`): the dialog shell
+     (`.ar-backdrop`/`.ar-dialog`/`.ar-header`/`.ar-title`/`.ar-footer`),
+     the rule list (`.ar-list`/`.ar-row*`/`.ar-toggle`), the form's bordered
+     box (`.ar-form`), the `<input>`/`<select>` recipe (`.ar-input`/
+     `.ar-select`), the `.ar-checkbox` recipe, and every button's sizing/
+     danger override (`.btn-sm`/`.btn-danger`) are ALL gone — `Modal`/
+     `DataTable`/`Panel`/`Card`/`Checkbox`/`Select`/`Input`/`Button`/
+     `EmptyState` (Design System) now own that chrome. Only the handful of
+     layout rules with no Design System equivalent remain: the explainer/
+     section-title/hint text sizing, the toolbar row + spacer, the form
+     row's label+field layout (including the narrow/growing flex sizing
+     matching the original `.ar-input`'s `flex:1`), the numeric minutes
+     field (kept as a plain `<input type="number">`, see the file's own doc
+     comment for why), the multi-template checklist layout, and the inline
+     error banners. */
   .ar-explainer {
     margin: 0;
     font-size: 11.5px;
     line-height: 1.5;
   }
-  .ar-empty {
-    margin: 0;
-    font-size: 11.5px;
-  }
   .ar-section-title {
-    margin-top: 6px;
+    margin-top: var(--space-1);
     font-size: 10.5px;
     font-weight: 600;
     letter-spacing: 0.04em;
@@ -371,19 +396,10 @@
     font-size: 10.5px;
     line-height: 1.4;
   }
-  .ar-form {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: 10px;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-  }
   .ar-form-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     flex-wrap: wrap;
     min-width: 0;
   }
@@ -393,43 +409,20 @@
     flex-shrink: 0;
     min-width: 100px;
   }
-  .ar-input,
-  .ar-select {
-    height: 26px;
-    padding: 0 8px;
-    background: var(--input);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    color: var(--foreground);
-    font: inherit;
-    font-size: 11.5px;
+  .ar-field-grow {
     flex: 1;
     min-width: 120px;
   }
   .ar-number {
     width: 90px;
-    height: 26px;
-    padding: 0 8px;
+    height: 28px;
+    padding: 0 var(--space-2);
     background: var(--input);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     color: var(--foreground);
     font: inherit;
     font-size: 11.5px;
-  }
-  .ar-checkbox {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    cursor: pointer;
-    width: fit-content;
-  }
-  .ar-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
   }
   .ar-template-list {
     list-style: none;
@@ -442,95 +435,48 @@
     gap: 2px;
   }
   .ar-template-item {
-    padding: 4px 8px;
+    padding: 4px var(--space-2);
     background: var(--surface);
     border-radius: var(--radius-sm);
-  }
-  .ar-list {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
   }
   .ar-toolbar-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
   }
-  .ar-row {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 8px 10px;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+  .ar-toolbar-spacer {
+    flex: 1;
   }
-  .ar-row-main {
+  .ar-name-cell {
     display: flex;
     flex-direction: column;
     gap: 3px;
     min-width: 0;
-    flex: 1;
-  }
-  .ar-row-header {
-    display: flex;
-    align-items: center;
   }
   .ar-name {
     font-size: 12px;
     font-weight: 600;
   }
-  .ar-detail {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-    font-size: 10.5px;
-    min-width: 0;
-  }
-  .ar-detail-label {
-    color: var(--muted);
-    flex-shrink: 0;
-  }
   .ar-detail-value {
+    display: inline-block;
+    max-width: 260px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    min-width: 0;
+    vertical-align: bottom;
   }
   .ar-row-actions {
     display: flex;
     align-items: center;
-    gap: 6px;
-    flex-shrink: 0;
-  }
-  .btn-sm {
-    height: 24px;
-    padding: 0 8px;
-    font-size: 10.5px;
-  }
-  .btn-danger {
-    background: hsl(0 84% 65% / 0.12);
-    border: 1px solid hsl(0 84% 65% / 0.4);
-    color: var(--neg);
+    gap: var(--space-1);
+    flex-wrap: wrap;
   }
   .ar-error {
-    padding: 6px 10px;
+    padding: var(--space-2) var(--space-3);
     font-size: 10.5px;
     color: var(--neg);
-    background: hsl(0 84% 65% / 0.08);
-    border: 1px solid hsl(0 84% 65% / 0.3);
+    background: var(--neg-bg);
+    border: 1px solid var(--neg-border);
     border-radius: var(--radius-sm);
-  }
-  .ar-footer {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 14px;
-    border-top: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  .ar-footer-spacer {
-    flex: 1;
   }
 </style>

@@ -22,263 +22,195 @@
   ("File > Export to CapCut…"), backed by one shared `capcutStore` instance.
 
   Pure UI over `stores/capcut.svelte.ts`.
+
+  Phase D7b retrofit: the hand-rolled backdrop/dialog/header/footer shell
+  now comes from `Modal`, sections from `Panel`, the target-path/confirm
+  boxes from `Card`, error banners from `ErrorState`, and every button from
+  `Button` (Phase D1 Design System) — every store call, `disabled` gate, and
+  conditional-render expression is unchanged from the original hand-rolled
+  markup. No RadioGroup component exists in the Design System yet, so the
+  Create/Update mode picker stays a hand-rolled `<input type="radio">` pair
+  (functionally identical to before). See this file's own `<style>` block
+  and `STUDIO_PLAN.md`'s Phase D7b section for what else stayed bespoke and
+  why.
 -->
 <script lang="ts">
   import { capcutStore } from "../../stores/capcut.svelte";
   import { timeline } from "../../stores/timeline.svelte";
   import { t } from "../../lib/i18n.svelte";
-
-  function onKeydown(e: KeyboardEvent): void {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      capcutStore.closeExport();
-    }
-  }
+  import Modal from "../ui/Modal.svelte";
+  import Panel from "../ui/Panel.svelte";
+  import Card from "../ui/Card.svelte";
+  import Button from "../ui/Button.svelte";
+  import Input from "../ui/Input.svelte";
+  import EmptyState from "../ui/EmptyState.svelte";
+  import ErrorState from "../ui/ErrorState.svelte";
 
   function basename(path: string): string {
     return path.split(/[\\/]/).pop() || path;
   }
 </script>
 
-{#if capcutStore.exportOpen}
-  <div class="ce-backdrop" role="presentation" onclick={() => capcutStore.closeExport()}>
-    <div
-      class="ce-dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label={t("capcutExport.title")}
-      tabindex="-1"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={onKeydown}
-    >
-      <div class="ce-header">
-        <span class="ce-title">{t("capcutExport.title")}</span>
-        <button class="btn btn-ghost" onclick={() => capcutStore.closeExport()} title={t("capcutExport.close")}>×</button>
+<Modal
+  open={capcutStore.exportOpen}
+  title={t("capcutExport.title")}
+  width={640}
+  onClose={() => capcutStore.closeExport()}
+>
+  {#if !timeline.project}
+    <EmptyState title={t("capcutExport.noProject")} />
+  {:else}
+    <Panel title={t("capcutExport.modeSectionTitle")}>
+      <div class="ce-radio-group">
+        <label class="ce-radio">
+          <input
+            type="radio"
+            name="ce-mode"
+            value="create"
+            checked={capcutStore.mode === "create"}
+            onchange={() => capcutStore.setMode("create")}
+          />
+          {t("capcutExport.modeCreate")}
+        </label>
+        <label class="ce-radio">
+          <input
+            type="radio"
+            name="ce-mode"
+            value="update"
+            checked={capcutStore.mode === "update"}
+            onchange={() => capcutStore.setMode("update")}
+          />
+          {t("capcutExport.modeUpdate")}
+        </label>
       </div>
 
-      <div class="ce-body">
-        {#if !timeline.project}
-          <p class="ce-empty muted-2">{t("capcutExport.noProject")}</p>
-        {:else}
-          <section class="ce-section">
-            <h3 class="ce-section-title">{t("capcutExport.modeSectionTitle")}</h3>
-            <div class="ce-radio-group">
-              <label class="ce-radio">
-                <input
-                  type="radio"
-                  name="ce-mode"
-                  value="create"
-                  checked={capcutStore.mode === "create"}
-                  onchange={() => capcutStore.setMode("create")}
-                />
-                {t("capcutExport.modeCreate")}
-              </label>
-              <label class="ce-radio">
-                <input
-                  type="radio"
-                  name="ce-mode"
-                  value="update"
-                  checked={capcutStore.mode === "update"}
-                  onchange={() => capcutStore.setMode("update")}
-                />
-                {t("capcutExport.modeUpdate")}
-              </label>
-            </div>
+      {#if !capcutStore.effectiveDraftRoot}
+        <div class="ce-warn">
+          {t("capcutExport.noDraftRootKnown")}
+          <Button variant="ghost" size="sm" onclick={() => capcutStore.openSettings()}>
+            {t("capcutExport.openSettingsButton")}
+          </Button>
+        </div>
+      {/if}
 
-            {#if !capcutStore.effectiveDraftRoot}
-              <div class="ce-warn">
-                {t("capcutExport.noDraftRootKnown")}
-                <button class="btn btn-ghost btn-sm" onclick={() => capcutStore.openSettings()}>
-                  {t("capcutExport.openSettingsButton")}
-                </button>
-              </div>
-            {/if}
+      {#if capcutStore.mode === "create"}
+        <Input
+          id="ce-draft-name"
+          label={t("capcutExport.draftNameLabel")}
+          placeholder={t("capcutExport.draftNamePlaceholder")}
+          bind:value={capcutStore.draftName}
+        />
+      {:else}
+        <div class="ce-row">
+          <span class="ce-label">{t("capcutExport.existingDraftLabel")}</span>
+          <Button size="sm" onclick={() => void capcutStore.browseExistingDraft()}>
+            {t("capcutExport.browseButton")}
+          </Button>
+          <span class="ce-path muted-2" title={capcutStore.existingDraftPath ?? undefined}>
+            {capcutStore.existingDraftPath ? basename(capcutStore.existingDraftPath) : t("capcutExport.noExistingDraftChosen")}
+          </span>
+        </div>
+      {/if}
 
-            {#if capcutStore.mode === "create"}
-              <div class="ce-row">
-                <label class="ce-label" for="ce-draft-name">{t("capcutExport.draftNameLabel")}</label>
-                <input
-                  id="ce-draft-name"
-                  class="ce-input"
-                  type="text"
-                  placeholder={t("capcutExport.draftNamePlaceholder")}
-                  bind:value={capcutStore.draftName}
-                />
-              </div>
-            {:else}
-              <div class="ce-row">
-                <label class="ce-label" for="ce-existing-draft">{t("capcutExport.existingDraftLabel")}</label>
-                <button id="ce-existing-draft" class="btn btn-sm" onclick={() => void capcutStore.browseExistingDraft()}>
-                  {t("capcutExport.browseButton")}
-                </button>
-                <span class="ce-path muted-2" title={capcutStore.existingDraftPath ?? undefined}>
-                  {capcutStore.existingDraftPath ? basename(capcutStore.existingDraftPath) : t("capcutExport.noExistingDraftChosen")}
-                </span>
-              </div>
-            {/if}
+      {#if capcutStore.targetPath}
+        <p class="ce-target-label muted-2">{t("capcutExport.targetPathLabel")}:</p>
+        <Card padding="sm"><span class="mono ce-path-text">{capcutStore.targetPath}</span></Card>
+      {/if}
+    </Panel>
 
-            {#if capcutStore.targetPath}
-              <p class="ce-target-path">
-                <span class="muted-2">{t("capcutExport.targetPathLabel")}:</span>
-                {capcutStore.targetPath}
-              </p>
-            {/if}
-          </section>
+    <Panel title={t("capcutExport.warningsSectionTitle")}>
+      {#if capcutStore.compatWarnings.length === 0}
+        <p class="ce-ok">{t("capcutExport.noWarnings")}</p>
+      {:else}
+        <ul class="ce-warn-list">
+          {#each capcutStore.compatWarnings as warning (warning.key)}
+            <li>{t(warning.key, warning.params)}</li>
+          {/each}
+        </ul>
+      {/if}
+      <p class="ce-note muted-2">{t("capcutExport.limitationsNote")}</p>
+    </Panel>
 
-          <section class="ce-section">
-            <h3 class="ce-section-title">{t("capcutExport.warningsSectionTitle")}</h3>
-            {#if capcutStore.compatWarnings.length === 0}
-              <p class="ce-ok muted-2">{t("capcutExport.noWarnings")}</p>
-            {:else}
+    {#if capcutStore.confirmingExport}
+      <div class="ce-confirm">
+        <Panel title={t("capcutExport.confirmTitle")}>
+          <p class="ce-confirm-body">{t("capcutExport.confirmBody")}</p>
+          <Card padding="sm"><span class="mono ce-path-text">{capcutStore.targetPath}</span></Card>
+          <p class="ce-warn-strong">{t("capcutExport.confirmOverwriteWarning")}</p>
+        </Panel>
+      </div>
+    {/if}
+
+    {#if capcutStore.exportError}
+      <ErrorState message={t("capcutExport.exportFailed", { error: capcutStore.exportError })} />
+    {/if}
+
+    {#if capcutStore.exportedPath}
+      <p class="ce-success">{t("capcutExport.exportComplete", { path: capcutStore.exportedPath })}</p>
+
+      <Panel title={t("capcutExport.postExportSectionTitle")}>
+        <div class="ce-row">
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={capcutStore.validating}
+            onclick={() => void capcutStore.validateDraft(capcutStore.exportedPath ?? "")}
+          >
+            {capcutStore.validating ? t("capcutExport.validating") : t("capcutExport.validateButton")}
+          </Button>
+          <Button variant="ghost" size="sm" onclick={() => void capcutStore.revealDraftInExplorer(capcutStore.exportedPath ?? "")}>
+            {t("capcutExport.revealButton")}
+          </Button>
+        </div>
+
+        {#if capcutStore.revealError}
+          <ErrorState message={capcutStore.revealError} />
+        {/if}
+
+        {#if capcutStore.validationError}
+          <ErrorState message={capcutStore.validationError} />
+        {/if}
+
+        {#if capcutStore.validationReport}
+          {#if capcutStore.validationReport.problems.length === 0}
+            <p class="ce-ok">{t("capcutExport.validationHealthy")}</p>
+          {:else}
+            <div class="ce-validation-problems">
+              <p class="ce-warn-strong">{t("capcutExport.validationUnhealthy")}</p>
               <ul class="ce-warn-list">
-                {#each capcutStore.compatWarnings as warning (warning.key)}
-                  <li>{t(warning.key, warning.params)}</li>
+                {#each capcutStore.validationReport.problems as problem (problem)}
+                  <li>{problem}</li>
                 {/each}
               </ul>
-            {/if}
-            <p class="ce-note muted-2">{t("capcutExport.limitationsNote")}</p>
-          </section>
-
-          {#if capcutStore.confirmingExport}
-            <section class="ce-section ce-confirm">
-              <h3 class="ce-section-title">{t("capcutExport.confirmTitle")}</h3>
-              <p class="ce-confirm-body">{t("capcutExport.confirmBody")}</p>
-              <p class="ce-target-path">{capcutStore.targetPath}</p>
-              <p class="ce-warn-strong">{t("capcutExport.confirmOverwriteWarning")}</p>
-            </section>
-          {/if}
-
-          {#if capcutStore.exportError}
-            <div class="ce-error">{t("capcutExport.exportFailed", { error: capcutStore.exportError })}</div>
-          {/if}
-
-          {#if capcutStore.exportedPath}
-            <p class="ce-success">{t("capcutExport.exportComplete", { path: capcutStore.exportedPath })}</p>
-
-            <section class="ce-section">
-              <h3 class="ce-section-title">{t("capcutExport.postExportSectionTitle")}</h3>
-              <div class="ce-row">
-                <button
-                  class="btn btn-ghost btn-sm"
-                  disabled={capcutStore.validating}
-                  onclick={() => void capcutStore.validateDraft(capcutStore.exportedPath ?? "")}
-                >
-                  {capcutStore.validating ? t("capcutExport.validating") : t("capcutExport.validateButton")}
-                </button>
-                <button class="btn btn-ghost btn-sm" onclick={() => void capcutStore.revealDraftInExplorer(capcutStore.exportedPath ?? "")}>
-                  {t("capcutExport.revealButton")}
-                </button>
-              </div>
-
-              {#if capcutStore.revealError}
-                <div class="ce-error">{capcutStore.revealError}</div>
-              {/if}
-
-              {#if capcutStore.validationError}
-                <div class="ce-error">{capcutStore.validationError}</div>
-              {/if}
-
-              {#if capcutStore.validationReport}
-                {#if capcutStore.validationReport.problems.length === 0}
-                  <p class="ce-ok">{t("capcutExport.validationHealthy")}</p>
-                {:else}
-                  <div class="ce-validation-problems">
-                    <p class="ce-warn-strong">{t("capcutExport.validationUnhealthy")}</p>
-                    <ul class="ce-warn-list">
-                      {#each capcutStore.validationReport.problems as problem (problem)}
-                        <li>{problem}</li>
-                      {/each}
-                    </ul>
-                  </div>
-                {/if}
-              {/if}
-            </section>
+            </div>
           {/if}
         {/if}
-      </div>
+      </Panel>
+    {/if}
+  {/if}
 
-      <div class="ce-footer">
-        {#if capcutStore.exportedPath}
-          <button class="btn" onclick={() => capcutStore.startNewExport()}>{t("capcutExport.exportAnotherButton")}</button>
-        {:else if capcutStore.confirmingExport}
-          <button class="btn btn-danger" disabled={capcutStore.exporting} onclick={() => void capcutStore.confirmExport()}>
-            {capcutStore.exporting ? t("capcutExport.exporting") : t("capcutExport.confirmButton")}
-          </button>
-          <button class="btn btn-ghost" disabled={capcutStore.exporting} onclick={() => capcutStore.cancelExportConfirm()}>
-            {t("capcutExport.cancelButton")}
-          </button>
-        {:else}
-          <button class="btn" disabled={!capcutStore.canExport} onclick={() => capcutStore.requestExport()}>
-            {t("capcutExport.exportButton")}
-          </button>
-        {/if}
-        <span class="ce-footer-spacer"></span>
-        <button class="btn btn-ghost" onclick={() => capcutStore.closeExport()}>{t("capcutExport.close")}</button>
-      </div>
-    </div>
-  </div>
-{/if}
+  {#snippet footer()}
+    {#if capcutStore.exportedPath}
+      <Button onclick={() => capcutStore.startNewExport()}>{t("capcutExport.exportAnotherButton")}</Button>
+    {:else if capcutStore.confirmingExport}
+      <Button variant="danger" disabled={capcutStore.exporting} onclick={() => void capcutStore.confirmExport()}>
+        {capcutStore.exporting ? t("capcutExport.exporting") : t("capcutExport.confirmButton")}
+      </Button>
+      <Button variant="ghost" disabled={capcutStore.exporting} onclick={() => capcutStore.cancelExportConfirm()}>
+        {t("capcutExport.cancelButton")}
+      </Button>
+    {:else}
+      <Button disabled={!capcutStore.canExport} onclick={() => capcutStore.requestExport()}>
+        {t("capcutExport.exportButton")}
+      </Button>
+    {/if}
+    <Button variant="ghost" onclick={() => capcutStore.closeExport()}>{t("capcutExport.close")}</Button>
+  {/snippet}
+</Modal>
 
 <style>
-  .ce-backdrop {
-    position: fixed;
-    inset: 0;
-    background: hsl(0 0% 0% / 0.5);
-    display: grid;
-    place-items: center;
-    z-index: 100;
-  }
-  .ce-dialog {
-    width: min(640px, 94vw);
-    max-height: 88vh;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    background: var(--surface);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-lg);
-    box-shadow: 0 20px 60px hsl(0 0% 0% / 0.5);
-    overflow: hidden;
-  }
-  .ce-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  .ce-title {
-    font-size: 13px;
-    font-weight: 600;
-  }
-  .ce-body {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 12px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-  .ce-empty {
-    margin: 0;
-    font-size: 11.5px;
-  }
-  .ce-section {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    min-width: 0;
-  }
-  .ce-section-title {
-    margin: 0;
-    font-size: 10.5px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--muted);
-  }
+  /* No RadioGroup component exists in the Design System yet — kept as
+     hand-rolled radio inputs, unchanged in behavior. */
   .ce-radio-group {
     display: flex;
     gap: 14px;
@@ -293,26 +225,13 @@
   .ce-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     min-width: 0;
   }
   .ce-label {
     font-size: 11.5px;
     color: var(--muted);
     flex-shrink: 0;
-    min-width: 100px;
-  }
-  .ce-input {
-    flex: 1;
-    min-width: 0;
-    height: 28px;
-    padding: 0 8px;
-    background: var(--input);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    color: var(--foreground);
-    font: inherit;
-    font-size: 11.5px;
   }
   .ce-path {
     font-size: 11.5px;
@@ -320,53 +239,56 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .btn-sm {
-    height: 24px;
-    padding: 0 10px;
+  .ce-path-text {
     font-size: 11px;
-  }
-  .ce-target-path {
-    margin: 0;
-    padding: 8px 10px;
-    font-size: 11px;
-    font-family: var(--font-mono, monospace);
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
     overflow-wrap: anywhere;
   }
+  .ce-target-label {
+    margin: 0;
+    font-size: 11px;
+  }
+  /* Compound "text + inline button" warning callout — no single Design
+     System component covers this shape; colors reuse the shared
+     --accent-bg/--accent-border tokens (Phase D1) instead of a per-dialog
+     literal. */
   .ce-warn {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     padding: 8px 10px;
     font-size: 11px;
     color: var(--accent);
-    background: hsl(213 94% 68% / 0.08);
-    border: 1px solid hsl(213 94% 68% / 0.3);
+    background: var(--accent-bg);
+    border: 1px solid var(--accent-border);
     border-radius: var(--radius-sm);
   }
   .ce-ok {
     margin: 0;
     font-size: 11.5px;
-    color: var(--pos, #3fb950);
+    color: var(--pos);
   }
+  /* Compatibility-warning / validation-problem lists — no Design System
+     list component exists for an arbitrary-length bullet list. */
   .ce-warn-list {
     margin: 0;
     padding-left: 18px;
     font-size: 11px;
     line-height: 1.6;
-    color: hsl(45 90% 55%);
+    color: var(--warn);
   }
   .ce-note {
     margin: 0;
     font-size: 10.5px;
     line-height: 1.5;
   }
+  /* Tinted "you're about to overwrite something" callout wrapping the
+     confirm Panel — Panel itself is borderless by design (see its own doc
+     comment), so this scoped/danger-tinted wrapper stays bespoke, now using
+     the shared --neg-bg/--neg-border tokens instead of a literal. */
   .ce-confirm {
     padding: 10px 12px;
-    background: hsl(0 84% 65% / 0.06);
-    border: 1px solid hsl(0 84% 65% / 0.3);
+    background: var(--neg-bg);
+    border: 1px solid var(--neg-border);
     border-radius: var(--radius-sm);
   }
   .ce-confirm-body {
@@ -379,14 +301,6 @@
     font-weight: 600;
     color: var(--neg);
   }
-  .ce-error {
-    padding: 8px 10px;
-    font-size: 11px;
-    color: var(--neg);
-    background: hsl(0 84% 65% / 0.08);
-    border: 1px solid hsl(0 84% 65% / 0.3);
-    border-radius: var(--radius-sm);
-  }
   .ce-validation-problems {
     display: flex;
     flex-direction: column;
@@ -396,26 +310,10 @@
     margin: 0;
     padding: 8px 10px;
     font-size: 11.5px;
-    color: var(--pos, #3fb950);
-    background: hsl(140 60% 50% / 0.08);
-    border: 1px solid hsl(140 60% 50% / 0.3);
+    color: var(--pos);
+    background: var(--pos-bg);
+    border: 1px solid var(--pos-border);
     border-radius: var(--radius-sm);
     word-break: break-all;
-  }
-  .ce-footer {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 14px;
-    border-top: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  .ce-footer-spacer {
-    flex: 1;
-  }
-  .btn-danger {
-    background: hsl(0 84% 65% / 0.12);
-    border: 1px solid hsl(0 84% 65% / 0.4);
-    color: var(--neg);
   }
 </style>
