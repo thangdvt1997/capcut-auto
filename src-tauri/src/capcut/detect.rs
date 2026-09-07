@@ -114,6 +114,30 @@ impl CapCutProduct {
     }
 }
 
+/// Real, launch-ready executable path for a confirmed installation's own
+/// `product`, given its `user_profile` home directory. Real observed
+/// convention (verified against an actual installed international CapCut
+/// Pro, v9.3.0.3970 — `STUDIO_PLAN.md` Phase S1): a stable launcher shim at
+/// `%LOCALAPPDATA%\<Product>\Apps\<Product>.exe`, distinct from the
+/// versioned subdirectory (e.g. `Apps\9.3.0.3970\CapCut.exe`) that changes
+/// on every update — the unversioned launcher is used deliberately so this
+/// keeps working across CapCut's own updates without this app needing to
+/// track version numbers. Returns `None` if that exact file doesn't exist —
+/// never guesses at a versioned path instead. Jianying Pro's own exe naming
+/// is assumed to mirror this pattern (same reasoning as
+/// `draft_root_rel_segments`'s own folder-name convention) but has **not**
+/// been verified against a real Jianying installation (this project's real
+/// hands-on access has only ever been to a real international CapCut).
+pub fn executable_path(product: CapCutProduct, user_profile: &Path) -> Option<PathBuf> {
+    let exe = user_profile
+        .join("AppData")
+        .join("Local")
+        .join(product.appdata_folder_name())
+        .join("Apps")
+        .join(format!("{}.exe", product.appdata_folder_name()));
+    exe.is_file().then_some(exe)
+}
+
 /// One confirmed CapCut/Jianying draft-root installation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct DetectedCapCutInstallation {
@@ -407,6 +431,50 @@ mod tests {
         let dir = product.draft_root_under(&root.join(profile));
         stdfs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn executable_path_finds_a_real_launcher_at_the_expected_location() {
+        let tmp = TempScratch::new("exe-found");
+        let profile = tmp.path.join("Alice");
+        let apps_dir = profile
+            .join("AppData")
+            .join("Local")
+            .join("CapCut")
+            .join("Apps");
+        stdfs::create_dir_all(&apps_dir).unwrap();
+        File::create(apps_dir.join("CapCut.exe")).unwrap();
+
+        let found = executable_path(CapCutProduct::CapCut, &profile);
+        assert_eq!(found, Some(apps_dir.join("CapCut.exe")));
+    }
+
+    #[test]
+    fn executable_path_returns_none_when_no_launcher_exists() {
+        let tmp = TempScratch::new("exe-missing");
+        let profile = tmp.path.join("Bob");
+        stdfs::create_dir_all(&profile).unwrap();
+
+        assert_eq!(executable_path(CapCutProduct::CapCut, &profile), None);
+    }
+
+    #[test]
+    fn executable_path_does_not_fall_back_to_a_versioned_subdirectory() {
+        let tmp = TempScratch::new("exe-versioned-only");
+        let profile = tmp.path.join("Carol");
+        let versioned_dir = profile
+            .join("AppData")
+            .join("Local")
+            .join("CapCut")
+            .join("Apps")
+            .join("9.3.0.3970");
+        stdfs::create_dir_all(&versioned_dir).unwrap();
+        File::create(versioned_dir.join("CapCut.exe")).unwrap();
+
+        // Only the unversioned launcher counts — a versioned-only install
+        // (the launcher shim itself missing/not-yet-created) must not be
+        // silently substituted.
+        assert_eq!(executable_path(CapCutProduct::CapCut, &profile), None);
     }
 
     #[test]

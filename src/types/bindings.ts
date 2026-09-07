@@ -30,6 +30,53 @@ async detectCapcutRegistryHints() : Promise<CapCutRegistryHint[]> {
     return await TAURI_INVOKE("detect_capcut_registry_hints");
 },
 /**
+ * "Open CapCut" (`STUDIO_PLAN.md` Phase S1, `promt.md` §10): launches the
+ * real installed executable for `product`, resolved fresh from `user_profile`
+ * (a `DetectedCapCutInstallation`'s own field — the caller passes back
+ * exactly what `detect_capcut_installations` already returned, never a
+ * user-typed path) via `capcut::detect::executable_path`. Opens CapCut to
+ * its own home screen; jumping straight into a *specific* draft was tried
+ * for real during this feature's own development (a plain draft-folder
+ * path as a launch argument) and confirmed not to work — see
+ * `STUDIO_PLAN.md`'s Phase S1 writeup — so this command does not attempt
+ * to accept or use a draft path at all, rather than silently ignore one.
+ */
+async openCapcut(product: CapCutProduct, userProfile: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_capcut", { product, userProfile }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * "Validate Draft" (`STUDIO_PLAN.md` Phase S1, `promt.md` §10): a real
+ * integrity check against an existing on-disk draft folder — see
+ * `capcut::validate` module doc comment for exactly what's checked. Always
+ * returns a real, fully-populated report, never an error — an unhealthy
+ * draft is a normal, expected result this command reports honestly, not a
+ * failure of the check itself.
+ */
+async validateCapcutDraft(draftDir: string) : Promise<DraftValidationReport> {
+    return await TAURI_INVOKE("validate_capcut_draft", { draftDir });
+},
+/**
+ * Reveals `draft_dir` in Windows Explorer with it pre-selected — a real,
+ * honest substitute for "open this specific draft in CapCut" (which, per
+ * [`open_capcut`]'s own doc comment, does not actually work): this at
+ * least gets the user one click away from the real folder, rather than
+ * shipping a button labeled "Open Current Project" that silently does
+ * nothing more than [`open_capcut`] already does.
+ */
+async revealCapcutDraftInExplorer(draftDir: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reveal_capcut_draft_in_explorer", { draftDir }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Constructs a brand-new, in-memory `ProjectV1` with sensible defaults.
  * Deliberately does not touch the filesystem: wiring this into a real
  * Project Manager UI (recent projects, save/open, `project.json` on disk)
@@ -2274,6 +2321,33 @@ working: boolean }
  * needs to know about.
  */
 export type DiskSpaceInfo = { path: string; total_bytes: number; available_bytes: number }
+export type DraftValidationReport = { draft_dir: string; draft_dir_exists: boolean; has_draft_content_json: boolean; has_draft_info_json: boolean; has_draft_meta_info_json: boolean; 
+/**
+ * `false` whenever any of the three files above exists but fails to
+ * parse as JSON — a corrupt file is reported here, not silently
+ * treated the same as a missing one.
+ */
+json_files_parse_cleanly: boolean; 
+/**
+ * Whether this draft's own `draft_fold_path` was found in its parent
+ * folder's `root_meta_info.json`'s `all_draft_store` array
+ * (`capcut::meta`'s own registry). `false` if the registry file itself
+ * is missing or fails to parse, or if no matching entry exists.
+ */
+registered_in_root_registry: boolean; 
+/**
+ * Every path from `draft_content.json`'s own `materials.videos`/
+ * `materials.audios` that does not currently exist on disk. Empty if
+ * every referenced file was found, or if `draft_content.json` itself
+ * couldn't be read (in which case that's already reflected in
+ * `json_files_parse_cleanly`, not duplicated here).
+ */
+missing_media_files: string[]; 
+/**
+ * Human-readable summary of every problem found, empty iff
+ * [`Self::is_healthy`] is `true`.
+ */
+problems: string[] }
 export type DryRunEditingPlan = { silence_removal: SilenceRemovalPlan; captions: CaptionsPlan }
 export type DryRunExpectedOutput = { 
 /**

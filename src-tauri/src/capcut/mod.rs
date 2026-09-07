@@ -80,6 +80,7 @@ pub mod script;
 pub mod segment;
 pub mod timerange;
 pub mod track;
+pub mod validate;
 
 pub use adapter::CapCutAdapter;
 pub use error::CapCutError;

@@ -68,7 +68,7 @@ fn now_micros() -> i64 {
 /// uses `/`, not `\`) — normalizing here means every path field this module
 /// writes matches that observed convention exactly, regardless of which
 /// separator `Path::to_string_lossy()` would otherwise produce on Windows.
-fn forward_slashes(path: &Path) -> String {
+pub(crate) fn forward_slashes(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 

@@ -53,6 +53,19 @@ pub enum CapCutError {
 
     #[error("failed to write CapCut draft to {path}: {details}")]
     WriteFailed { path: String, details: String },
+
+    /// `capcut::detect::executable_path` found no launcher at the expected
+    /// `%LOCALAPPDATA%\<Product>\Apps\<Product>.exe` location for this
+    /// installation's own `user_profile` (`STUDIO_PLAN.md` Phase S1's
+    /// "Open CapCut" action).
+    #[error("no CapCut/Jianying executable found for this installation")]
+    ExecutableNotFound,
+
+    /// Spawning the resolved executable itself failed (e.g. permissions,
+    /// antivirus interference) — distinct from [`Self::ExecutableNotFound`],
+    /// which means the path resolution itself came up empty.
+    #[error("failed to launch CapCut: {details}")]
+    LaunchFailed { details: String },
 }
 
 impl From<&CapCutError> for AppErrorPayload {
@@ -95,6 +108,21 @@ impl From<&CapCutError> for AppErrorPayload {
                     .with_details(format!("path={path}: {details}"))
                     .recoverable(true)
                     .with_suggestion("Check disk space and folder permissions, then retry export.")
+            }
+            CapCutError::ExecutableNotFound => {
+                AppErrorPayload::new("CAPCUT_EXECUTABLE_NOT_FOUND", message)
+                    .recoverable(true)
+                    .with_suggestion(
+                        "Confirm CapCut/Jianying Pro is installed for this user account.",
+                    )
+            }
+            CapCutError::LaunchFailed { details } => {
+                AppErrorPayload::new("CAPCUT_LAUNCH_FAILED", message)
+                    .with_details(details.clone())
+                    .recoverable(true)
+                    .with_suggestion(
+                        "Try launching CapCut manually to check for an installation problem.",
+                    )
             }
         }
     }
@@ -153,6 +181,16 @@ mod tests {
                     details: "d".into(),
                 },
                 "CAPCUT_WRITE_FAILED",
+            ),
+            (
+                CapCutError::ExecutableNotFound,
+                "CAPCUT_EXECUTABLE_NOT_FOUND",
+            ),
+            (
+                CapCutError::LaunchFailed {
+                    details: "d".into(),
+                },
+                "CAPCUT_LAUNCH_FAILED",
             ),
         ];
         for (err, code) in cases {
