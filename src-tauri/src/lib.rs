@@ -132,6 +132,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::ai::apply_smart_edit_recommendations_to_clip,
         commands::ai::apply_smart_edit_recommendations_to_track,
         commands::ai::generate_template_from_prompt,
+        commands::ai::translate_captions,
         commands::highlights::detect_media_scene_changes,
         commands::highlights::detect_highlights,
         commands::auto_template::suggest_template_for_media,

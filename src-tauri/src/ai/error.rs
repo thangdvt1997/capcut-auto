@@ -381,6 +381,92 @@ impl From<&TemplateGeneratorError> for AppErrorPayload {
     }
 }
 
+/// `ai::translate`'s validation-stage error (`promt.md` §8, subtitle/caption
+/// translation) — same two-stage split as `EditPlanError`/`SmartEditError`/
+/// `AutoTemplateError` above: a provider call can succeed and still return
+/// text that fails `TranslateCaptionsError` validation.
+/// `UnknownCaptionId`/`MissingCaptionId`/`DuplicateCaptionId` are this
+/// module's own real-catalog checks (see `ai::translate` module doc comment,
+/// "Why validation needs the real caption list, not just a schema") — the
+/// same "validate ids against the caller's real data" discipline
+/// `AutoTemplateError::UnknownTemplateId` already established, applied in
+/// both directions since a translation response names *N* ids, not just one.
+#[derive(Debug, Clone, Serialize, Type, Error)]
+#[serde(tag = "variant")]
+pub enum TranslateCaptionsError {
+    #[error("could not parse AI output as JSON: {details}")]
+    MalformedJson { details: String },
+
+    #[error("unsupported translation schema version: {version}")]
+    UnsupportedVersion { version: u32 },
+
+    #[error("AI response references an unknown caption id: {caption_id}")]
+    UnknownCaptionId { caption_id: String },
+
+    #[error("AI response is missing a translation for caption id: {caption_id}")]
+    MissingCaptionId { caption_id: String },
+
+    #[error("AI response contains a duplicate translation for caption id: {caption_id}")]
+    DuplicateCaptionId { caption_id: String },
+
+    #[error("AI response contains an empty translation for caption id: {caption_id}")]
+    EmptyTranslation { caption_id: String },
+}
+
+impl From<&TranslateCaptionsError> for AppErrorPayload {
+    fn from(err: &TranslateCaptionsError) -> Self {
+        let message = err.to_string();
+        match err {
+            TranslateCaptionsError::MalformedJson { details } => {
+                AppErrorPayload::new("TRANSLATE_CAPTIONS_MALFORMED_JSON", message)
+                    .with_details(details.clone())
+                    .recoverable(true)
+                    .with_suggestion(
+                        "The AI response was not valid translation JSON; ask it to try again.",
+                    )
+            }
+            TranslateCaptionsError::UnsupportedVersion { version } => {
+                AppErrorPayload::new("TRANSLATE_CAPTIONS_UNSUPPORTED_VERSION", message)
+                    .with_details(version.to_string())
+                    .recoverable(false)
+                    .with_suggestion("This app only understands translation schema version 1.")
+            }
+            TranslateCaptionsError::UnknownCaptionId { caption_id } => {
+                AppErrorPayload::new("TRANSLATE_CAPTIONS_UNKNOWN_CAPTION_ID", message)
+                    .with_details(caption_id.clone())
+                    .recoverable(true)
+                    .with_suggestion(
+                        "The AI referenced a caption id that doesn't exist; ask it to try again.",
+                    )
+            }
+            TranslateCaptionsError::MissingCaptionId { caption_id } => {
+                AppErrorPayload::new("TRANSLATE_CAPTIONS_MISSING_CAPTION_ID", message)
+                    .with_details(caption_id.clone())
+                    .recoverable(true)
+                    .with_suggestion(
+                        "The AI omitted a translation for one of the real captions; ask it to translate every caption.",
+                    )
+            }
+            TranslateCaptionsError::DuplicateCaptionId { caption_id } => {
+                AppErrorPayload::new("TRANSLATE_CAPTIONS_DUPLICATE_CAPTION_ID", message)
+                    .with_details(caption_id.clone())
+                    .recoverable(true)
+                    .with_suggestion(
+                        "The AI translated the same caption twice; ask it to produce exactly one translation per caption.",
+                    )
+            }
+            TranslateCaptionsError::EmptyTranslation { caption_id } => {
+                AppErrorPayload::new("TRANSLATE_CAPTIONS_EMPTY_TRANSLATION", message)
+                    .with_details(caption_id.clone())
+                    .recoverable(true)
+                    .with_suggestion(
+                        "The AI returned an empty translation for a caption; ask it to produce a real one.",
+                    )
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -588,6 +674,51 @@ mod tests {
                     asset_id: "x".into(),
                 },
                 "TEMPLATE_GENERATOR_UNKNOWN_ASSET",
+            ),
+        ];
+        for (err, code) in cases {
+            let payload = AppErrorPayload::from(&err);
+            assert_eq!(payload.code, code);
+            assert!(!payload.message.is_empty());
+        }
+    }
+
+    #[test]
+    fn every_translate_captions_error_variant_maps_to_a_stable_code() {
+        let cases: Vec<(TranslateCaptionsError, &str)> = vec![
+            (
+                TranslateCaptionsError::MalformedJson {
+                    details: "d".into(),
+                },
+                "TRANSLATE_CAPTIONS_MALFORMED_JSON",
+            ),
+            (
+                TranslateCaptionsError::UnsupportedVersion { version: 2 },
+                "TRANSLATE_CAPTIONS_UNSUPPORTED_VERSION",
+            ),
+            (
+                TranslateCaptionsError::UnknownCaptionId {
+                    caption_id: "x".into(),
+                },
+                "TRANSLATE_CAPTIONS_UNKNOWN_CAPTION_ID",
+            ),
+            (
+                TranslateCaptionsError::MissingCaptionId {
+                    caption_id: "x".into(),
+                },
+                "TRANSLATE_CAPTIONS_MISSING_CAPTION_ID",
+            ),
+            (
+                TranslateCaptionsError::DuplicateCaptionId {
+                    caption_id: "x".into(),
+                },
+                "TRANSLATE_CAPTIONS_DUPLICATE_CAPTION_ID",
+            ),
+            (
+                TranslateCaptionsError::EmptyTranslation {
+                    caption_id: "x".into(),
+                },
+                "TRANSLATE_CAPTIONS_EMPTY_TRANSLATION",
             ),
         ];
         for (err, code) in cases {

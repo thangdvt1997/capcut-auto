@@ -36,11 +36,12 @@ use crate::ai::error::AiProviderError;
 use crate::ai::provider::{AIProvider, AiRequest};
 use crate::ai::{
     anthropic, credentials, edit_plan, gemini, openai_compat, smart_edit, template_generator,
+    translate,
 };
 use crate::assets::io as asset_io;
 use crate::captions::styles;
 use crate::error::AppErrorPayload;
-use crate::project::{Cut, ProjectV1, TranscriptEntry};
+use crate::project::{Caption, Cut, ProjectV1, TranscriptEntry};
 use crate::templates::Template;
 use crate::timeline::session::TimelineState;
 
@@ -469,6 +470,48 @@ pub fn generate_template_from_prompt(
     )
 }
 
+// ---------------------------------------------------------------------------
+// Subtitle/caption translation (`promt.md` §8: TRANSLATION / SCRIPT SETTINGS)
+// ---------------------------------------------------------------------------
+
+/// **Translate**: builds a translation prompt from `captions` +
+/// `source_language`/`target_language`/`settings`
+/// (`ai::translate::build_translate_captions_request`), calls the
+/// configured provider, and validates the response into a strict
+/// `Vec<translate::TranslatedCaption>` — or a clear error, never a
+/// partially-populated result (`ai::translate` module doc comment).
+///
+/// This is a *proposal* the frontend shows the user for review (a later,
+/// separate Accept/Apply pass — no frontend UI for that exists yet). This
+/// command never mutates `project.captions` itself, exactly like every
+/// other AI feature in this crate (`ai::edit_plan`/`ai::smart_edit`'s own
+/// "propose, never auto-apply" discipline).
+#[tauri::command]
+#[specta::specta]
+pub fn translate_captions(
+    captions: Vec<Caption>,
+    source_language: Option<String>,
+    target_language: String,
+    settings: Option<translate::TranslationSettings>,
+    ai_settings: AiProviderSettings,
+) -> Result<Vec<translate::TranslatedCaption>, AppErrorPayload> {
+    let api_key = resolve_api_key(&ai_settings).map_err(|e| AppErrorPayload::from(&e))?;
+    let provider = build_provider(&ai_settings, api_key).map_err(|e| AppErrorPayload::from(&e))?;
+
+    let prompt = translate::build_translate_captions_request(
+        &captions,
+        source_language.as_deref(),
+        &target_language,
+        settings.as_ref(),
+    );
+    let request = prompt.into_request(ai_settings.temperature, ai_settings.timeout_ms, Some(4096));
+    let response = provider
+        .complete(&request)
+        .map_err(|e| AppErrorPayload::from(&e))?;
+
+    translate::parse_and_validate(&response.text, &captions).map_err(|e| AppErrorPayload::from(&e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -831,6 +874,114 @@ mod tests {
             &caption_styles,
             &export_presets,
             &[],
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "AI_PROVIDER_REQUEST_FAILED");
+    }
+
+    // -- Subtitle/caption translation (`promt.md` §8) ------------------------
+
+    fn caption_fixture(id: &str, text: &str) -> Caption {
+        Caption {
+            id: id.to_string(),
+            track_id: "t1".to_string(),
+            start_us: 0,
+            end_us: 1_000_000,
+            text: text.to_string(),
+            words: Vec::new(),
+            style_id: None,
+        }
+    }
+
+    fn translation_response_json(entries: &[(&str, &str)]) -> String {
+        let translations: Vec<serde_json::Value> = entries
+            .iter()
+            .map(|(id, text)| serde_json::json!({"caption_id": id, "translated_text": text}))
+            .collect();
+        serde_json::json!({"version": 1, "translations": translations}).to_string()
+    }
+
+    #[test]
+    fn translate_captions_round_trips_a_well_formed_mock_response_via_real_http() {
+        let response_json = translation_response_json(&[("c1", "xin chào"), ("c2", "thế giới")]);
+        let (base_url, rx) =
+            spawn_one_shot("HTTP/1.1 200 OK", chat_completion_body(&response_json));
+
+        let captions = vec![
+            caption_fixture("c1", "hello"),
+            caption_fixture("c2", "world"),
+        ];
+        let result = translate_captions(
+            captions,
+            Some("en".to_string()),
+            "vi".to_string(),
+            None,
+            settings(AiProviderKind::OpenAi, base_url),
+        )
+        .expect("well-formed response should parse and validate");
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].caption_id, "c1");
+        assert_eq!(result[0].translated_text, "xin chào");
+        assert_eq!(result[1].caption_id, "c2");
+        assert_eq!(result[1].translated_text, "thế giới");
+
+        // The mock server actually received a real HTTP request carrying the
+        // constructed prompt — real captions, not a stubbed call.
+        let captured = rx.recv().expect("mock server captured a request");
+        assert_eq!(captured.method, "POST");
+        assert!(captured.body.contains("hello"));
+        assert!(captured.body.contains("world"));
+    }
+
+    #[test]
+    fn translate_captions_surfaces_a_clear_error_for_a_malformed_mock_response() {
+        let (base_url, _rx) =
+            spawn_one_shot("HTTP/1.1 200 OK", chat_completion_body("not json at all"));
+
+        let captions = vec![caption_fixture("c1", "hello")];
+        let err = translate_captions(
+            captions,
+            Some("en".to_string()),
+            "vi".to_string(),
+            None,
+            settings(AiProviderKind::OpenAi, base_url),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "TRANSLATE_CAPTIONS_MALFORMED_JSON");
+    }
+
+    #[test]
+    fn translate_captions_surfaces_a_clear_error_for_a_response_missing_a_real_caption() {
+        let response_json = translation_response_json(&[("c1", "xin chào")]);
+        let (base_url, _rx) =
+            spawn_one_shot("HTTP/1.1 200 OK", chat_completion_body(&response_json));
+
+        let captions = vec![
+            caption_fixture("c1", "hello"),
+            caption_fixture("c2", "world"),
+        ];
+        let err = translate_captions(
+            captions,
+            Some("en".to_string()),
+            "vi".to_string(),
+            None,
+            settings(AiProviderKind::OpenAi, base_url),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "TRANSLATE_CAPTIONS_MISSING_CAPTION_ID");
+    }
+
+    #[test]
+    fn translate_captions_surfaces_a_clear_error_when_unreachable() {
+        let dead_url = crate::ai::test_http::spawn_connection_refused();
+        let captions = vec![caption_fixture("c1", "hello")];
+        let err = translate_captions(
+            captions,
+            Some("en".to_string()),
+            "vi".to_string(),
+            None,
+            settings(AiProviderKind::OpenAi, dead_url),
         )
         .unwrap_err();
         assert_eq!(err.code, "AI_PROVIDER_REQUEST_FAILED");

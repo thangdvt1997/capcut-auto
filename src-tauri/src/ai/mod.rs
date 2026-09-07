@@ -25,7 +25,12 @@
 //! `crate::broll` modules, since each needs its own non-AI signal/source
 //! machinery of its own (`vad`/`audio`/`media::scene` for highlights;
 //! `crate::db` for B-roll) alongside an optional AI call, not just a prompt
-//! in front of `edit_plan`.
+//! in front of `edit_plan`; `translate` is subtitle/caption translation
+//! (`promt.md` §8, "TRANSLATION / SCRIPT SETTINGS") — given a project's real
+//! `Caption`s plus a source/target language, asks the configured provider to
+//! translate every one, validated against the real caption id list
+//! (`ai::translate` module doc comment) before ever becoming something a
+//! user sees, exactly like every other feature here.
 //!
 //! **Security note (master prompt §53):** the AI layer never mutates the
 //! timeline directly and never executes anything an LLM returns as code —
@@ -51,6 +56,7 @@ pub mod openai_compat;
 pub mod provider;
 pub mod smart_edit;
 pub mod template_generator;
+pub mod translate;
 
 /// Shared one-shot mock HTTP server for adapter tests (`openai_compat`,
 /// `anthropic`, `gemini`), following `transcription::download`'s own

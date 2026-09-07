@@ -873,6 +873,28 @@ async generateTemplateFromPrompt(nlPrompt: string, aiSettings: AiProviderSetting
 }
 },
 /**
+ * **Translate**: builds a translation prompt from `captions` +
+ * `source_language`/`target_language`/`settings`
+ * (`ai::translate::build_translate_captions_request`), calls the
+ * configured provider, and validates the response into a strict
+ * `Vec<translate::TranslatedCaption>` — or a clear error, never a
+ * partially-populated result (`ai::translate` module doc comment).
+ * 
+ * This is a *proposal* the frontend shows the user for review (a later,
+ * separate Accept/Apply pass — no frontend UI for that exists yet). This
+ * command never mutates `project.captions` itself, exactly like every
+ * other AI feature in this crate (`ai::edit_plan`/`ai::smart_edit`'s own
+ * "propose, never auto-apply" discipline).
+ */
+async translateCaptions(captions: Caption[], sourceLanguage: string | null, targetLanguage: string, settings: TranslationSettings | null, aiSettings: AiProviderSettings) : Promise<Result<TranslatedCaption[], AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("translate_captions", { captions, sourceLanguage, targetLanguage, settings, aiSettings }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Real, non-AI scene-change detection on its own (`media::scene`,
  * master prompt §21's "scene changes" signal) — exposed as its own command
  * so a caller can use it independently of the full highlight pipeline
@@ -2679,6 +2701,24 @@ approx_size_bytes: number;
  */
 multilingual: boolean; download_url: string }
 export type ModelId = "tiny" | "base" | "small" | "medium" | "large"
+/**
+ * This module's own closed enum for `promt.md` §8's "Profanity handling"
+ * config item (module doc comment — `promt.md` names the setting but does
+ * not enumerate real values for it).
+ */
+export type ProfanityHandling = 
+/**
+ * Translate profanity naturally, matching the source line's own tone.
+ */
+"preserve" | 
+/**
+ * Keep the meaning, but reduce the intensity of the translated line.
+ */
+"soften" | 
+/**
+ * Neutralize/omit profanity from the translated line entirely.
+ */
+"remove"
 export type ProjectMeta = { id: string; name: string; 
 /**
  * RFC3339 timestamp.
@@ -3243,6 +3283,36 @@ duration_us: number }
  * records *intent* for a future `render::graph` blending pass.
  */
 export type TransitionType = "cut" | "cross_fade"
+/**
+ * One AI-translated caption. Closed, strictly typed, specta-typed for
+ * eventual frontend consumption — a *proposal* (module doc comment), never
+ * applied to `project.captions` by this module or its caller.
+ */
+export type TranslatedCaption = { 
+/**
+ * Always a real id from `known_captions` passed to [`parse_and_validate`]
+ * — never an unvalidated string straight from the model.
+ */
+caption_id: string; translated_text: string }
+/**
+ * `promt.md` §8's own "Genre" list, verbatim.
+ */
+export type TranslationGenre = "drama_romance" | "fantasy_cultivation" | "crime_detective" | "police_bodycam" | "prison_crime" | "survival" | "documentary" | "custom"
+/**
+ * `promt.md` §8's config list, minus source/target language (separate
+ * top-level parameters — module doc comment) and the frontend-only "Prompt
+ * Template Editor". Every field is optional/defaults to `false` — this
+ * whole struct is itself optional to every caller (module doc comment,
+ * "every AI feature is optional").
+ */
+export type TranslationSettings = { genre: TranslationGenre | null; translation_style: string | null; character_context: string | null; preserve_names: boolean; preserve_terminology: boolean; profanity_handling: ProfanityHandling | null; sentence_length_optimization: boolean; voice_friendly_rewrite: boolean; 
+/**
+ * Reuses `templates::AiPromptConfig::system_prompt_prefix`'s exact
+ * existing convention (module doc comment) — prepended ahead of this
+ * module's own generated system prompt in
+ * [`build_translate_captions_request`], unchanged.
+ */
+system_prompt_prefix: string | null }
 /**
  * The three update-check behaviors master prompt §62 requires, named
  * exactly as it lists them ("Automatically check" / "Notify only" /
