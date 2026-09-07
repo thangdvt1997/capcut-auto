@@ -20,12 +20,38 @@
   from the header here, rather than folded into this same dialog — keeps the
   (already fairly tall) config form from permanently pushing the Jobs table
   itself off-screen once a batch is running.
+
+  **Phase D4 Design System retrofit (`STUDIO_PLAN.md`):** the hand-rolled
+  backdrop/dialog shell is now `Modal.svelte` (Phase D1), the plain
+  `<table>` is now `DataTable.svelte` (real client-side sort added on every
+  column with a natural accessor — Name/Status/Progress/Stage/Elapsed/ETA —
+  a genuine, non-fabricated addition the retrofit enables for free, not a
+  behavior change to anything that existed before), the status pill is
+  `Badge.svelte`, the progress track is `ProgressBar.svelte`, the native
+  `<select>` is `Select.svelte`, the two empty-list messages are
+  `EmptyState.svelte`, and every action button is `Button.svelte`. Every
+  real behavior is unchanged: live updates still come from the exact same
+  `batch:progress`-driven `batchStore` state, every per-row Pause/Resume/
+  Cancel/Retry condition (`canPause`/`canResume`/`canCancel`/`canRetry`) and
+  the two-step Cancel confirm are byte-for-byte the same logic, just
+  rendered through Design System primitives instead of hand-rolled markup.
+  Also gained a real, live `WorkerPoolWidget` (Phase D4's own new
+  "Workers: N · Running: R · Queued: Q" snapshot) in the toolbar.
 -->
 <script lang="ts">
   import { batchStore } from "../../stores/batch.svelte";
   import StartBatchDialog from "./StartBatchDialog.svelte";
+  import WorkerPoolWidget from "./WorkerPoolWidget.svelte";
   import { t } from "../../lib/i18n.svelte";
   import { formatTimecode } from "../../timeline/algebra";
+  import Modal from "../ui/Modal.svelte";
+  import DataTable from "../ui/DataTable.svelte";
+  import Badge from "../ui/Badge.svelte";
+  import ProgressBar from "../ui/ProgressBar.svelte";
+  import Button from "../ui/Button.svelte";
+  import Select from "../ui/Select.svelte";
+  import type { SelectOption } from "../ui/Select.svelte";
+  import EmptyState from "../ui/EmptyState.svelte";
   import type { BatchJob, BatchJobStatus } from "../../types/bindings";
 
   function basename(path: string): string {
@@ -58,328 +84,228 @@
     return status === "failed";
   }
 
-  function onKeydown(e: KeyboardEvent): void {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      batchStore.closeJobsDialog();
-    }
-  }
-
   function jobKey(job: BatchJob): string {
     return job.id;
   }
+
+  /** Same status -> Badge-variant mapping as `JobQueuePanel.svelte`'s own
+   * `badgeVariant` (Phase D2+D3) — kept as a local copy rather than a
+   * shared import since both are small, self-contained, and each file's
+   * own `BatchJobStatus` switch is easier to audit inline than a shared
+   * helper module for four lines of logic. */
+  function badgeVariant(status: BatchJobStatus): "neutral" | "pos" | "neg" | "warn" | "accent" {
+    switch (status) {
+      case "completed":
+        return "pos";
+      case "failed":
+      case "cancelled":
+        return "neg";
+      case "paused":
+        return "warn";
+      case "queued":
+        return "neutral";
+      default:
+        return "accent";
+    }
+  }
+
+  let batchOptions = $derived<SelectOption[]>(
+    batchStore.batches.map((b) => ({
+      value: b.id,
+      label: t("batchJobs.batchOption", { count: b.fileCount, time: new Date(b.createdAtMs).toLocaleTimeString() }),
+    })),
+  );
 </script>
 
-{#if batchStore.jobsDialogOpen}
-  <div class="bj-backdrop" role="presentation" onclick={() => batchStore.closeJobsDialog()}>
-    <div
-      class="bj-dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label={t("batchJobs.title")}
-      tabindex="-1"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={onKeydown}
-    >
-      <div class="bj-header">
-        <span class="bj-title">{t("batchJobs.title")}</span>
-        <button class="btn btn-ghost" onclick={() => batchStore.closeJobsDialog()} title={t("batchJobs.close")}>×</button>
-      </div>
-
-      <div class="bj-toolbar">
-        {#if batchStore.batches.length > 0}
-          <select
-            class="bj-batch-select"
-            value={batchStore.selectedBatchId ?? ""}
-            onchange={(e) => batchStore.selectBatch((e.target as HTMLSelectElement).value)}
-          >
-            {#each batchStore.batches as b (b.id)}
-              <option value={b.id}>
-                {t("batchJobs.batchOption", { count: b.fileCount, time: new Date(b.createdAtMs).toLocaleTimeString() })}
-              </option>
-            {/each}
-          </select>
-          <button class="btn btn-ghost" onclick={() => void batchStore.refreshSelectedBatch()}>
-            {t("batchJobs.refreshButton")}
-          </button>
-        {/if}
-        <span class="bj-toolbar-spacer"></span>
-        <button class="btn" onclick={() => batchStore.openStartDialog()}>{t("batchJobs.startNewButton")}</button>
-      </div>
-
-      <div class="bj-body">
-        {#if batchStore.batches.length === 0}
-          <p class="bj-empty muted-2">{t("batchJobs.noBatchesYet")}</p>
-        {:else if batchStore.jobsForSelectedBatch.length === 0}
-          <p class="bj-empty muted-2">{t("batchJobs.noJobsInBatch")}</p>
-        {:else}
-          <div class="bj-table-wrap">
-            <table class="bj-table">
-              <thead>
-                <tr>
-                  <th>{t("batchJobs.colName")}</th>
-                  <th>{t("batchJobs.colStatus")}</th>
-                  <th>{t("batchJobs.colProgress")}</th>
-                  <th>{t("batchJobs.colStage")}</th>
-                  <th>{t("batchJobs.colElapsed")}</th>
-                  <th>{t("batchJobs.colEta")}</th>
-                  <th>{t("batchJobs.colOutput")}</th>
-                  <th>{t("batchJobs.colActions")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each batchStore.jobsForSelectedBatch as job (jobKey(job))}
-                  <tr>
-                    <td class="bj-name" title={job.name}>{job.name}</td>
-                    <td>
-                      <span class="bj-status-badge" data-status={job.status}>{statusLabel(job.status)}</span>
-                    </td>
-                    <td class="bj-progress-cell">
-                      <div class="bj-progress-track">
-                        <div class="bj-progress-fill" style="width:{Math.round(job.progress * 100)}%"></div>
-                      </div>
-                      <span class="bj-progress-label muted-2">{Math.round(job.progress * 100)}%</span>
-                    </td>
-                    <td class="muted-2">{job.stage}</td>
-                    <td>{formatDuration(job.elapsed_us)}</td>
-                    <td>{formatDuration(job.eta_us)}</td>
-                    <td class="bj-output" title={job.output_path ?? undefined}>
-                      {job.output_path ? basename(job.output_path) : "—"}
-                    </td>
-                    <td class="bj-actions">
-                      {#if canPause(job.status)}
-                        <button
-                          class="btn btn-ghost bj-action-btn"
-                          disabled={batchStore.actionPendingByJob[job.id]}
-                          onclick={() => void batchStore.pause(job.id)}
-                        >
-                          {t("batchJobs.pauseButton")}
-                        </button>
-                      {/if}
-                      {#if canResume(job.status)}
-                        <button
-                          class="btn btn-ghost bj-action-btn"
-                          disabled={batchStore.actionPendingByJob[job.id]}
-                          onclick={() => void batchStore.resume(job.id)}
-                        >
-                          {t("batchJobs.resumeButton")}
-                        </button>
-                      {/if}
-                      {#if canCancel(job.status)}
-                        {#if batchStore.pendingCancelId === job.id}
-                          <button
-                            class="btn btn-danger bj-action-btn"
-                            disabled={batchStore.actionPendingByJob[job.id]}
-                            onclick={() => void batchStore.confirmCancel(job.id)}
-                          >
-                            {t("batchJobs.confirmCancelButton")}
-                          </button>
-                          <button class="btn btn-ghost bj-action-btn" onclick={() => batchStore.cancelCancelRequest()}>
-                            {t("batchJobs.keepJobButton")}
-                          </button>
-                        {:else}
-                          <button class="btn btn-ghost bj-action-btn" onclick={() => batchStore.requestCancel(job.id)}>
-                            {t("batchJobs.cancelButton")}
-                          </button>
-                        {/if}
-                      {/if}
-                      {#if canRetry(job.status)}
-                        <button
-                          class="btn btn-ghost bj-action-btn"
-                          disabled={batchStore.actionPendingByJob[job.id]}
-                          onclick={() => void batchStore.retry(job.id)}
-                        >
-                          {t("batchJobs.retryButton")}
-                        </button>
-                      {/if}
-                      {#if batchStore.actionErrorByJob[job.id]}
-                        <div class="bj-row-error">{batchStore.actionErrorByJob[job.id]}</div>
-                      {/if}
-                      {#if job.error}
-                        <div class="bj-row-error" title={job.error}>{job.error}</div>
-                      {/if}
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-        {/if}
-      </div>
-    </div>
+{#snippet nameCell(job: BatchJob)}
+  <span class="bj-name" title={job.name}>{job.name}</span>
+{/snippet}
+{#snippet statusCell(job: BatchJob)}
+  <Badge variant={badgeVariant(job.status)}>{statusLabel(job.status)}</Badge>
+{/snippet}
+{#snippet progressCell(job: BatchJob)}
+  <div class="bj-progress-cell">
+    <ProgressBar value={job.progress} label={`${Math.round(job.progress * 100)}%`} />
   </div>
-{/if}
+{/snippet}
+{#snippet stageCell(job: BatchJob)}
+  <span class="muted-2">{job.stage}</span>
+{/snippet}
+{#snippet elapsedCell(job: BatchJob)}
+  {formatDuration(job.elapsed_us)}
+{/snippet}
+{#snippet etaCell(job: BatchJob)}
+  {formatDuration(job.eta_us)}
+{/snippet}
+{#snippet outputCell(job: BatchJob)}
+  <span class="bj-output" title={job.output_path ?? undefined}>
+    {job.output_path ? basename(job.output_path) : "—"}
+  </span>
+{/snippet}
+{#snippet actionsCell(job: BatchJob)}
+  <div class="bj-actions">
+    {#if canPause(job.status)}
+      <Button
+        variant="ghost"
+        size="sm"
+        disabled={batchStore.actionPendingByJob[job.id]}
+        onclick={() => void batchStore.pause(job.id)}
+      >
+        {t("batchJobs.pauseButton")}
+      </Button>
+    {/if}
+    {#if canResume(job.status)}
+      <Button
+        variant="ghost"
+        size="sm"
+        disabled={batchStore.actionPendingByJob[job.id]}
+        onclick={() => void batchStore.resume(job.id)}
+      >
+        {t("batchJobs.resumeButton")}
+      </Button>
+    {/if}
+    {#if canCancel(job.status)}
+      {#if batchStore.pendingCancelId === job.id}
+        <Button
+          variant="danger"
+          size="sm"
+          disabled={batchStore.actionPendingByJob[job.id]}
+          onclick={() => void batchStore.confirmCancel(job.id)}
+        >
+          {t("batchJobs.confirmCancelButton")}
+        </Button>
+        <Button variant="ghost" size="sm" onclick={() => batchStore.cancelCancelRequest()}>
+          {t("batchJobs.keepJobButton")}
+        </Button>
+      {:else}
+        <Button variant="ghost" size="sm" onclick={() => batchStore.requestCancel(job.id)}>
+          {t("batchJobs.cancelButton")}
+        </Button>
+      {/if}
+    {/if}
+    {#if canRetry(job.status)}
+      <Button
+        variant="ghost"
+        size="sm"
+        disabled={batchStore.actionPendingByJob[job.id]}
+        onclick={() => void batchStore.retry(job.id)}
+      >
+        {t("batchJobs.retryButton")}
+      </Button>
+    {/if}
+    {#if batchStore.actionErrorByJob[job.id]}
+      <div class="bj-row-error">{batchStore.actionErrorByJob[job.id]}</div>
+    {/if}
+    {#if job.error}
+      <div class="bj-row-error" title={job.error}>{job.error}</div>
+    {/if}
+  </div>
+{/snippet}
+
+<Modal open={batchStore.jobsDialogOpen} title={t("batchJobs.title")} onClose={() => batchStore.closeJobsDialog()} width={1000}>
+  <div class="bj-toolbar">
+    {#if batchStore.batches.length > 0}
+      <Select
+        value={batchStore.selectedBatchId ?? ""}
+        options={batchOptions}
+        onchange={(v) => batchStore.selectBatch(v)}
+      />
+      <Button variant="ghost" size="sm" onclick={() => void batchStore.refreshSelectedBatch()}>
+        {t("batchJobs.refreshButton")}
+      </Button>
+    {/if}
+    <span class="bj-toolbar-spacer"></span>
+    <WorkerPoolWidget />
+    <Button size="sm" onclick={() => batchStore.openStartDialog()}>{t("batchJobs.startNewButton")}</Button>
+  </div>
+
+  <div class="bj-body">
+    {#if batchStore.batches.length === 0}
+      <EmptyState title={t("batchJobs.noBatchesYet")} />
+    {:else if batchStore.jobsForSelectedBatch.length === 0}
+      <EmptyState title={t("batchJobs.noJobsInBatch")} />
+    {:else}
+      <DataTable
+        columns={[
+          { key: "name", label: t("batchJobs.colName"), sortable: true, accessor: (j) => j.name, cell: nameCell },
+          { key: "status", label: t("batchJobs.colStatus"), sortable: true, accessor: (j) => j.status, cell: statusCell },
+          {
+            key: "progress",
+            label: t("batchJobs.colProgress"),
+            sortable: true,
+            accessor: (j) => j.progress,
+            cell: progressCell,
+          },
+          { key: "stage", label: t("batchJobs.colStage"), sortable: true, accessor: (j) => j.stage, cell: stageCell },
+          {
+            key: "elapsed",
+            label: t("batchJobs.colElapsed"),
+            sortable: true,
+            accessor: (j) => j.elapsed_us ?? -1,
+            cell: elapsedCell,
+          },
+          { key: "eta", label: t("batchJobs.colEta"), sortable: true, accessor: (j) => j.eta_us ?? -1, cell: etaCell },
+          { key: "output", label: t("batchJobs.colOutput"), cell: outputCell },
+          { key: "actions", label: t("batchJobs.colActions"), cell: actionsCell },
+        ]}
+        rows={batchStore.jobsForSelectedBatch}
+        rowKey={jobKey}
+      />
+    {/if}
+  </div>
+</Modal>
 
 <StartBatchDialog />
 
 <style>
-  .bj-backdrop {
-    position: fixed;
-    inset: 0;
-    background: hsl(0 0% 0% / 0.5);
-    display: grid;
-    place-items: center;
-    z-index: 100;
-  }
-  .bj-dialog {
-    width: min(1000px, 96vw);
-    max-height: 88vh;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    background: var(--surface);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-lg);
-    box-shadow: 0 20px 60px hsl(0 0% 0% / 0.5);
-    overflow: hidden;
-  }
-  .bj-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  .bj-title {
-    font-size: 13px;
-    font-weight: 600;
-  }
+  /* Design System retrofit (Phase D4, `STUDIO_PLAN.md`): the dialog shell
+     (`.bj-backdrop`/`.bj-dialog`/`.bj-header`/`.bj-title`), the plain
+     `<table>` markup (`.bj-table*`), the hand-rolled status pill
+     (`.bj-status-badge*`), the hand-rolled progress track
+     (`.bj-progress-track`/`.bj-progress-fill`/`.bj-progress-label`), the
+     hand-rolled `<select>` (`.bj-batch-select`), the empty-state paragraph
+     (`.bj-empty`), the action-button sizing (`.bj-action-btn`), and the
+     danger-button override (`.btn-danger`) are ALL gone — `Modal`/
+     `DataTable`/`Badge`/`ProgressBar`/`Select`/`EmptyState`/`Button` (Design
+     System, Phase D1) now own that chrome. Only the handful of layout
+     classes with no Design System equivalent remain: the toolbar row, its
+     spacer, and three cell-content tweaks (name/output ellipsis, the
+     progress cell's min-width, the actions cell's column layout, the
+     inline row-error text). */
   .bj-toolbar {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
+    gap: var(--space-2);
   }
-  .bj-toolbar-spacer { flex: 1; }
-  .bj-batch-select {
-    height: 26px;
-    background: var(--input);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    color: var(--foreground);
-    font-size: 11.5px;
-    padding: 0 6px;
-    max-width: 320px;
+  .bj-toolbar-spacer {
+    flex: 1;
   }
   .bj-body {
-    flex: 1;
-    min-height: 0;
-    overflow: auto;
-    padding: 12px 14px;
-  }
-  .bj-empty {
-    margin: 0;
-    font-size: 12px;
-    text-align: center;
-    padding: 24px 0;
-  }
-  .bj-table-wrap {
-    overflow-x: auto;
-  }
-  .bj-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 11.5px;
-  }
-  .bj-table th {
-    text-align: left;
-    padding: 6px 8px;
-    font-size: 10.5px;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
-    color: var(--muted);
-    border-bottom: 1px solid var(--border);
-    white-space: nowrap;
-  }
-  .bj-table td {
-    padding: 8px;
-    border-bottom: 1px solid var(--border);
-    vertical-align: top;
+    min-width: 0;
   }
   .bj-name {
+    display: block;
     max-width: 220px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .bj-output {
+    display: block;
     max-width: 200px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .bj-status-badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 999px;
-    font-size: 10.5px;
-    font-weight: 600;
-    white-space: nowrap;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    color: var(--muted);
-  }
-  .bj-status-badge[data-status="completed"] {
-    color: var(--pos, #3fb950);
-    border-color: hsl(140 60% 50% / 0.4);
-    background: hsl(140 60% 50% / 0.1);
-  }
-  .bj-status-badge[data-status="failed"] {
-    color: var(--neg);
-    border-color: hsl(0 84% 65% / 0.4);
-    background: hsl(0 84% 65% / 0.1);
-  }
-  .bj-status-badge[data-status="cancelled"] {
-    color: var(--muted);
-    border-color: var(--border-strong);
-  }
-  .bj-status-badge[data-status="paused"] {
-    color: hsl(45 90% 60%);
-    border-color: hsl(45 90% 60% / 0.4);
-    background: hsl(45 90% 60% / 0.1);
-  }
-  .bj-status-badge[data-status="analyzing"],
-  .bj-status-badge[data-status="transcribing"],
-  .bj-status-badge[data-status="editing"],
-  .bj-status-badge[data-status="rendering"] {
-    color: var(--accent);
-    border-color: hsl(213 94% 68% / 0.4);
-    background: hsl(213 94% 68% / 0.1);
-  }
   .bj-progress-cell {
     min-width: 140px;
-  }
-  .bj-progress-track {
-    height: 6px;
-    background: var(--surface-2);
-    border-radius: 3px;
-    overflow: hidden;
-  }
-  .bj-progress-fill {
-    height: 100%;
-    background: var(--accent);
-    transition: width 0.15s linear;
-  }
-  .bj-progress-label {
-    display: block;
-    margin-top: 3px;
-    font-size: 10px;
   }
   .bj-actions {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 4px;
-    min-width: 160px;
-  }
-  .bj-action-btn {
-    padding: 3px 8px;
-    font-size: 10.5px;
-    height: auto;
+    gap: var(--space-1);
+    min-width: 140px;
   }
   .bj-row-error {
     font-size: 10px;
@@ -388,10 +314,5 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .btn-danger {
-    background: hsl(0 84% 65% / 0.12);
-    border: 1px solid hsl(0 84% 65% / 0.4);
-    color: var(--neg);
   }
 </style>

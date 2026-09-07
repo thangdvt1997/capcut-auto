@@ -630,7 +630,6 @@
   },
   "batchJobs": {
     "title": "Batch Jobs",
-    "close": "Close",
     "startNewButton": "Start New Batch…",
     "refreshButton": "Refresh",
     "noBatchesYet": "No batches started yet this session — click \"Start New Batch…\" to process several files through one pipeline.",
@@ -1201,11 +1200,39 @@
   "appTabs": {
     "workspace": "Workspace",
     "automationAi": "Automation & AI Settings",
-    "projectAssetLicense": "Project / Asset / License Management",
-    "automationPlaceholderTitle": "Automation & AI Settings",
-    "automationPlaceholderDesc": "Content moves here in Phase D5 — AI/Voice/CapCut/Automation settings are already real today as standalone dialogs from the toolbar above.",
-    "projectsPlaceholderTitle": "Project / Asset / License Management",
-    "projectsPlaceholderDesc": "Content moves here in Phase D6 — Asset Library/History/Template Generator are already real today as standalone dialogs from the toolbar above."
+    "projectAssetLicense": "Project / Asset / License Management"
+  },
+  "projectAssetTab": {
+    "intro": "A real status hub for the project-level tools this app already has — each card below shows real, live data and opens the exact same dialog reachable from the toolbar above. Nothing here is a new subsystem; it's a home for what already exists.",
+    "assetLibrary": {
+      "title": "Asset Library",
+      "description": "The reusable catalog of intro/outro clips, logos, watermarks, and background music this app already manages.",
+      "countLabel": "{{count}} asset(s) registered",
+      "loadingLabel": "Loading…",
+      "loadFailedLabel": "Could not load: {{error}}",
+      "openButton": "Open Asset Library…"
+    },
+    "history": {
+      "title": "Video Processing History",
+      "description": "Every past render job this app has recorded, with re-run, clone-settings, and view-logs actions.",
+      "countLabel": "{{count}} entries recorded",
+      "countLabelMore": "{{count}}+ entries recorded",
+      "loadingLabel": "Loading…",
+      "loadFailedLabel": "Could not load: {{error}}",
+      "openButton": "Open History…"
+    },
+    "templateGenerator": {
+      "title": "AI Template Generator",
+      "description": "Generate a starting Template from a plain-language description, preview it, then save it into the template gallery.",
+      "statusNone": "No template generated this session yet.",
+      "statusGenerated": "Generated, not yet saved: {{name}}",
+      "statusSaved": "Saved to the template gallery: {{name}}",
+      "openButton": "Open Template Generator…"
+    },
+    "license": {
+      "title": "License Management",
+      "description": "No license-management requirement has been defined anywhere in this project's specs yet — this section is a deliberately unscoped, honest gap, not a hidden or faked feature. See STUDIO_PLAN.md's Phase D6 section for the exact wording flagged for product clarification."
+    }
   },
   "workspaceTab": {
     "modeLabel": "View",
@@ -1249,5 +1276,42 @@
       "colStatus": "Status",
       "empty": "No batch jobs yet. Start a batch to see it here."
     }
+  },
+  "automationSettingsTab": {
+    "explainer": "A real hub for settings that already exist as standalone dialogs — each card below shows real, live status and opens the exact same dialog reachable from the toolbar above. Nothing here is simulated.",
+    "ai": {
+      "title": "AI Settings",
+      "providerRowLabel": "Provider",
+      "modelRowLabel": "Model",
+      "keyRowLabel": "API key",
+      "openButton": "Open AI Settings…"
+    },
+    "capcut": {
+      "title": "CapCut Integration",
+      "detectedRowLabel": "Detected installations",
+      "effectivePathRowLabel": "Active draft folder",
+      "openButton": "Open CapCut Settings…"
+    },
+    "automation": {
+      "title": "Automation Rules",
+      "summaryLabel": "Rules",
+      "summary": "{{enabled}} of {{total}} enabled",
+      "openButton": "Open Automation Rules…"
+    },
+    "update": {
+      "title": "Update Settings",
+      "statusRowLabel": "Status",
+      "openButton": "Open Update Settings…"
+    },
+    "gaps": {
+      "title": "Not built yet (honest gap)",
+      "desc": "Translation, Voice, Performance, and Storage don't have real settings dialogs or backend stores yet, so no toggles for them are shown here — adding placeholder switches with nothing real behind them would misrepresent what this app can actually do today. See STUDIO_PLAN.md's Phase D5 section for the full gap-check."
+    }
+  },
+  "workerPool": {
+    "ariaLabel": "Worker pool status",
+    "workers": "Workers: {{count}}",
+    "running": "Running: {{count}}",
+    "queued": "Queued: {{count}}"
   }
 }

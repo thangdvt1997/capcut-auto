@@ -9,9 +9,12 @@
     multi-track editor (LeftPanel|CenterPreview|RightPanel + TimelinePanel —
     this app's single largest engineering investment) one click away via an
     "Advanced" mode toggle inside that same tab; see `WorkspaceTab.svelte`'s
-    own doc comment for the full placement decision. Tab 2/Tab 3 are honest
-    `EmptyState` placeholders this pass — their real content is Phase
-    D5/D6's own separate scope, not faked here.
+    own doc comment for the full placement decision. Tab 2 ("Automation & AI
+    Settings") renders `AutomationSettingsTab.svelte` (Phase D5 — a real
+    status-summary hub over the already-real AI/CapCut/Automation/Update
+    settings dialogs, see that component's own doc comment for the exact
+    scope decision); Tab 3 ("Project/Asset/License Management") renders
+    `ProjectAssetTab.svelte` (Phase D6, built concurrently with this pass).
 
     Every dialog below is mounted exactly as before this pass, unconditionally
     (not gated by which top-level tab is active) — none of their own
@@ -20,8 +23,9 @@
 <script lang="ts">
   import TopBar from "./components/layout/TopBar.svelte";
   import Tabs from "./components/ui/Tabs.svelte";
-  import EmptyState from "./components/ui/EmptyState.svelte";
   import WorkspaceTab from "./components/workspace/WorkspaceTab.svelte";
+  import ProjectAssetTab from "./components/projects/ProjectAssetTab.svelte";
+  import AutomationSettingsTab from "./components/automation/AutomationSettingsTab.svelte";
   import { t } from "./lib/i18n.svelte";
   import ExportDialog from "./components/render/ExportDialog.svelte";
   import ModelManagerDialog from "./components/transcription/ModelManagerDialog.svelte";
@@ -59,17 +63,9 @@
     {#if activeAppTab === "workspace"}
       <WorkspaceTab />
     {:else if activeAppTab === "automation"}
-      <EmptyState
-        fullHeight
-        title={t("appTabs.automationPlaceholderTitle")}
-        description={t("appTabs.automationPlaceholderDesc")}
-      />
+      <AutomationSettingsTab />
     {:else}
-      <EmptyState
-        fullHeight
-        title={t("appTabs.projectsPlaceholderTitle")}
-        description={t("appTabs.projectsPlaceholderDesc")}
-      />
+      <ProjectAssetTab />
     {/if}
   </section>
 

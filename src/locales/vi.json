@@ -630,7 +630,6 @@
   },
   "batchJobs": {
     "title": "Công việc hàng loạt",
-    "close": "Đóng",
     "startNewButton": "Bắt đầu lô mới…",
     "refreshButton": "Làm mới",
     "noBatchesYet": "Chưa có lô nào được bắt đầu trong phiên này — bấm \"Bắt đầu lô mới…\" để xử lý nhiều tệp qua cùng một quy trình.",
@@ -1201,11 +1200,39 @@
   "appTabs": {
     "workspace": "Không gian làm việc",
     "automationAi": "Tự động hóa & Cài đặt AI",
-    "projectAssetLicense": "Quản lý Dự án / Tài nguyên / Giấy phép",
-    "automationPlaceholderTitle": "Tự động hóa & Cài đặt AI",
-    "automationPlaceholderDesc": "Nội dung sẽ được chuyển vào đây ở Phase D5 — các cài đặt AI/Giọng nói/CapCut/Tự động hóa hiện đã hoạt động thật, dưới dạng hộp thoại riêng từ thanh công cụ phía trên.",
-    "projectsPlaceholderTitle": "Quản lý Dự án / Tài nguyên / Giấy phép",
-    "projectsPlaceholderDesc": "Nội dung sẽ được chuyển vào đây ở Phase D6 — Thư viện tài nguyên/Lịch sử/Trình tạo mẫu hiện đã hoạt động thật, dưới dạng hộp thoại riêng từ thanh công cụ phía trên."
+    "projectAssetLicense": "Quản lý Dự án / Tài nguyên / Giấy phép"
+  },
+  "projectAssetTab": {
+    "intro": "Một trung tâm trạng thái thật cho các công cụ ở cấp dự án mà ứng dụng này đã có sẵn — mỗi thẻ bên dưới hiển thị dữ liệu thật, đang hoạt động và mở đúng hộp thoại có thể truy cập từ thanh công cụ phía trên. Không có hệ thống mới nào ở đây — đây chỉ là nơi tập hợp lại những gì đã tồn tại.",
+    "assetLibrary": {
+      "title": "Thư viện Tài nguyên",
+      "description": "Danh mục tài nguyên có thể tái sử dụng — đoạn giới thiệu/kết thúc, logo, watermark và nhạc nền — mà ứng dụng này đã quản lý.",
+      "countLabel": "{{count}} tài nguyên đã đăng ký",
+      "loadingLabel": "Đang tải…",
+      "loadFailedLabel": "Không tải được: {{error}}",
+      "openButton": "Mở Thư viện Tài nguyên…"
+    },
+    "history": {
+      "title": "Lịch sử Xử lý Video",
+      "description": "Mọi tác vụ render đã hoàn tất mà ứng dụng đã ghi lại, kèm các hành động chạy lại, sao chép cài đặt và xem log.",
+      "countLabel": "{{count}} mục đã ghi nhận",
+      "countLabelMore": "{{count}}+ mục đã ghi nhận",
+      "loadingLabel": "Đang tải…",
+      "loadFailedLabel": "Không tải được: {{error}}",
+      "openButton": "Mở Lịch sử…"
+    },
+    "templateGenerator": {
+      "title": "Trình tạo Mẫu bằng AI",
+      "description": "Tạo một Mẫu khởi điểm từ mô tả bằng ngôn ngữ tự nhiên, xem trước rồi lưu vào thư viện mẫu.",
+      "statusNone": "Chưa tạo mẫu nào trong phiên làm việc này.",
+      "statusGenerated": "Đã tạo, chưa lưu: {{name}}",
+      "statusSaved": "Đã lưu vào thư viện mẫu: {{name}}",
+      "openButton": "Mở Trình tạo Mẫu…"
+    },
+    "license": {
+      "title": "Quản lý Giấy phép",
+      "description": "Hiện chưa có yêu cầu nào về quản lý giấy phép được xác định trong bất kỳ tài liệu đặc tả nào của dự án — đây là một khoảng trống được cố tình chưa lên phạm vi, nêu rõ một cách trung thực, không phải tính năng bị ẩn hay giả lập. Xem phần Phase D6 trong STUDIO_PLAN.md để biết nguyên văn ghi chú cần làm rõ thêm với sản phẩm."
+    }
   },
   "workspaceTab": {
     "modeLabel": "Chế độ xem",
@@ -1249,5 +1276,42 @@
       "colStatus": "Trạng thái",
       "empty": "Chưa có công việc lô nào. Hãy bắt đầu một lô để xem tại đây."
     }
+  },
+  "automationSettingsTab": {
+    "explainer": "Trung tâm thật cho các cài đặt đã tồn tại dưới dạng hộp thoại riêng — mỗi thẻ bên dưới hiển thị trạng thái thật, đang hoạt động và mở đúng hộp thoại có thể truy cập từ thanh công cụ phía trên. Không có gì ở đây là giả lập.",
+    "ai": {
+      "title": "Cài đặt AI",
+      "providerRowLabel": "Nhà cung cấp",
+      "modelRowLabel": "Mô hình",
+      "keyRowLabel": "Khóa API",
+      "openButton": "Mở Cài đặt AI…"
+    },
+    "capcut": {
+      "title": "Tích hợp CapCut",
+      "detectedRowLabel": "Số bản cài đặt đã phát hiện",
+      "effectivePathRowLabel": "Thư mục bản nháp đang dùng",
+      "openButton": "Mở Cài đặt CapCut…"
+    },
+    "automation": {
+      "title": "Quy tắc Tự động hóa",
+      "summaryLabel": "Quy tắc",
+      "summary": "Đang bật {{enabled}}/{{total}} quy tắc",
+      "openButton": "Mở Quy tắc Tự động hóa…"
+    },
+    "update": {
+      "title": "Cài đặt Cập nhật",
+      "statusRowLabel": "Trạng thái",
+      "openButton": "Mở Cài đặt Cập nhật…"
+    },
+    "gaps": {
+      "title": "Chưa xây dựng (khoảng trống thật)",
+      "desc": "Dịch thuật, Giọng nói, Hiệu năng và Lưu trữ chưa có hộp thoại cài đặt hay store phía sau thật nào cả, nên không có công tắc nào cho chúng được hiển thị ở đây — thêm các công tắc giả không có chức năng thật phía sau sẽ phản ánh sai những gì ứng dụng này thực sự làm được hôm nay. Xem phần Phase D5 trong STUDIO_PLAN.md để biết đầy đủ việc rà soát khoảng trống này."
+    }
+  },
+  "workerPool": {
+    "ariaLabel": "Trạng thái nhóm worker",
+    "workers": "Worker: {{count}}",
+    "running": "Đang chạy: {{count}}",
+    "queued": "Đang chờ: {{count}}"
   }
 }

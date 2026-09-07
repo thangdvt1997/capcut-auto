@@ -16,6 +16,11 @@
   `batch:progress` event for (`Object.values(jobsById)`), not scoped to one
   "selected" batch — Tab 1 is a dashboard-style glance, not a per-batch
   drill-down (that's what the dialog itself is for).
+
+  **Phase D4 addition:** the header's action row now also shows a real,
+  live `WorkerPoolWidget` (`Workers · Running · Queued`, off Phase D4a's
+  `get_worker_pool_status`) — the same widget instance shape used in
+  `BatchJobsDialog.svelte`'s own toolbar.
 -->
 <script lang="ts">
   import { batchStore } from "../../stores/batch.svelte";
@@ -25,6 +30,7 @@
   import DataTable from "../ui/DataTable.svelte";
   import Badge from "../ui/Badge.svelte";
   import ProgressBar from "../ui/ProgressBar.svelte";
+  import WorkerPoolWidget from "../batch/WorkerPoolWidget.svelte";
   import type { BatchJob, BatchJobStatus } from "../../types/bindings";
 
   function basename(path: string): string {
@@ -65,6 +71,7 @@
 
 <Panel title={t("workspaceTab.jobQueue.title")}>
   {#snippet actions()}
+    <WorkerPoolWidget />
     <Button size="sm" onclick={() => batchStore.openJobsDialog()}>{t("workspaceTab.jobQueue.openButton")}</Button>
   {/snippet}
 

@@ -18,7 +18,22 @@
 
 import { listen } from "@tauri-apps/api/event";
 import { commands } from "../types/bindings";
-import type { BatchJob, BatchPipelineConfig, Result, AppErrorPayload } from "../types/bindings";
+import type {
+  BatchJob,
+  BatchJobStatus,
+  BatchPipelineConfig,
+  Result,
+  AppErrorPayload,
+  WorkerPoolStatus,
+} from "../types/bindings";
+
+/** `BatchJobStatus` values a job never leaves once reached — it will never
+ * claim or hold a worker slot again. Everything else (`queued`, the four
+ * in-progress stages, `paused`) still occupies, or is waiting for, a
+ * worker slot, so `get_worker_pool_status`'s numbers are only worth
+ * re-fetching while at least one known job isn't yet terminal (Phase D4's
+ * own "poll only while there's reason to" requirement). */
+const TERMINAL_JOB_STATUSES = new Set<BatchJobStatus>(["completed", "failed", "cancelled"]);
 
 /**
  * Payload of the `batch:progress` Tauri event
@@ -78,6 +93,12 @@ class BatchStore {
    * at once. */
   pendingCancelId = $state<string | null>(null);
 
+  /** Phase D4 (`STUDIO_PLAN.md`): the real `get_worker_pool_status`
+   * (Phase D4a) "Workers: N · Running: R · Queued: Q" snapshot. `null`
+   * until the first successful fetch (never fabricated as zeroes). */
+  workerPoolStatus = $state<WorkerPoolStatus | null>(null);
+  workerPoolStatusError = $state<string | null>(null);
+
   constructor() {
     // Fire-and-forget, matching `stores/render.svelte.ts`'s
     // `RenderProgressEvent` listener pattern exactly — registered once at
@@ -85,12 +106,23 @@ class BatchStore {
     // for a job this session knows about can ever be missed.
     void listen<BatchProgressEvent>(BATCH_PROGRESS_EVENT, (event) => {
       const { batch_id, job } = event.payload;
+      const previous = this.jobsById[job.id];
       this.jobsById[job.id] = job;
       const order = this.batchJobIds[batch_id];
       if (!order) {
         this.batchJobIds[batch_id] = [job.id];
       } else if (!order.includes(job.id)) {
         this.batchJobIds[batch_id] = [...order, job.id];
+      }
+      // Refresh the worker pool snapshot the instant a job newly reaches a
+      // terminal state — that's exactly when a worker frees up and the
+      // real `running`/`queued` numbers change server-side, worth showing
+      // right away rather than waiting up to the widget's own 2s poll.
+      // Deliberately NOT done on every in-flight progress tick (those fire
+      // far more often, e.g. per percent) — that would defeat the "don't
+      // waste resources" half of the same requirement.
+      if (TERMINAL_JOB_STATUSES.has(job.status) && previous?.status !== job.status) {
+        void this.refreshWorkerPoolStatus();
       }
     });
   }
@@ -104,6 +136,33 @@ class BatchStore {
     const ids = this.batchJobIds[this.selectedBatchId] ?? [];
     return ids.map((id) => this.jobsById[id]).filter((j): j is BatchJob => j !== undefined);
   });
+
+  /** True while any job this session knows about hasn't reached a terminal
+   * state yet — the real gate the Worker/Slot status widget's own `$effect`
+   * uses to start/stop its 2s poll (a plain store class has no lifecycle of
+   * its own to hook a `setInterval` into — see `autoZoom.svelte.ts`'s own
+   * doc comment for this exact precedent — so the widget component owns the
+   * interval, this store only exposes the boolean it polls). */
+  anyJobActive = $derived.by((): boolean =>
+    Object.values(this.jobsById).some((j) => !TERMINAL_JOB_STATUSES.has(j.status)),
+  );
+
+  // -------------------------------------------------------------------
+  // Worker/Slot pool status (Phase D4, `get_worker_pool_status` from
+  // Phase D4a)
+  // -------------------------------------------------------------------
+
+  /** Not a `Result` on the Rust side (nothing fallible before reading the
+   * atomics/queue length — see `commands::batch::get_worker_pool_status`),
+   * so only a real IPC/transport failure throws here. */
+  async refreshWorkerPoolStatus(): Promise<void> {
+    try {
+      this.workerPoolStatus = await commands.getWorkerPoolStatus();
+      this.workerPoolStatusError = null;
+    } catch (err) {
+      this.workerPoolStatusError = String(err);
+    }
+  }
 
   // -------------------------------------------------------------------
   // Dialog lifecycle
@@ -159,6 +218,11 @@ class BatchStore {
       this.selectedBatchId = batchId;
       this.startDialogOpen = false;
       this.jobsDialogOpen = true;
+      // Eager refresh (Phase D4): don't make the Worker/Slot widget wait up
+      // to its own 2s poll interval to reflect a batch that was JUST
+      // started — its jobs already occupy/queue for real worker slots the
+      // instant `start_batch` returns.
+      void this.refreshWorkerPoolStatus();
       return true;
     } catch (err) {
       this.startError = String(err);
@@ -207,6 +271,7 @@ class BatchStore {
       this.selectedBatchId = batchId;
       this.startDialogOpen = false;
       this.jobsDialogOpen = true;
+      void this.refreshWorkerPoolStatus();
       return true;
     } catch (err) {
       this.startError = String(err);
@@ -240,6 +305,7 @@ class BatchStore {
     ];
     this.selectedBatchId = batchId;
     this.jobsDialogOpen = true;
+    void this.refreshWorkerPoolStatus();
   }
 
   /** Manual refresh fallback — live updates via `batch:progress` are the
