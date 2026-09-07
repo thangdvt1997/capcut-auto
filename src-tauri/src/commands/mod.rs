@@ -16,6 +16,7 @@ pub mod diagnostics;
 pub mod highlights;
 pub mod history;
 pub mod media;
+pub mod pan;
 pub mod project;
 pub mod reframe;
 pub mod render;

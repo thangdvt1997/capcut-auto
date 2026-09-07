@@ -1052,6 +1052,24 @@ async applyAutoZoomToClip(clipId: string, triggers: ZoomTrigger[], intensity: Zo
 }
 },
 /**
+ * Pure trigger detection — real still-image clips long enough to pan
+ * across (`pan` module doc comment's trigger-scope decision), against real,
+ * caller-supplied candidate data (a project's own real clip/media/scale
+ * info — never a hardcoded assumption).
+ */
+async generatePanTriggers(candidates: ImageClipCandidate[], canvasWidth: number, canvasHeight: number) : Promise<PanTrigger[]> {
+    return await TAURI_INVOKE("generate_pan_triggers", { candidates, canvasWidth, canvasHeight });
+},
+/**
+ * The pure function this phase's own required shape calls for, exposed
+ * directly (mirrors `commands::zoom::generate_zoom_keyframes`'s own
+ * "preview before committing" rationale) — real `position_x`/`position_y`
+ * keyframes a caller can inspect, and, for now, apply manually.
+ */
+async generatePanKeyframes(triggers: PanTrigger[], intensity: PanIntensity) : Promise<Keyframe[]> {
+    return await TAURI_INVOKE("generate_pan_keyframes", { triggers, intensity });
+},
+/**
  * Direct keyword search against the existing local media library
  * (`broll::provider::LocalLibraryBRollProvider`) — no AI provider involved
  * at all. Useful on its own (a user typing a keyword directly into a B-roll
@@ -2637,6 +2655,34 @@ ended_at: string | null; duration_us: number | null; status: BatchJobStatus; err
  * set directly by a caller (see that function's doc comment).
  */
 retry_count: number }
+/**
+ * Real per-clip candidate info a caller assembles from a project's own
+ * data (real media dimensions, real current scale, real on-timeline
+ * span) — [`image_clip_triggers`]'s input. Never a hardcoded/assumed value:
+ * every field here is meant to come straight from `project::types::Clip`/
+ * `MediaItem`/`ClipSettings`.
+ */
+export type ImageClipCandidate = { clip_id: string; 
+/**
+ * Absolute project-timeline microseconds — the clip's own
+ * `Clip::position_us`.
+ */
+start_us: number; 
+/**
+ * Absolute project-timeline microseconds — `start_us` plus the clip's
+ * own real on-timeline duration (post-speed).
+ */
+end_us: number; 
+/**
+ * The image's own real native pixel dimensions (`MediaItem::width/height`).
+ */
+media_width: number; media_height: number; 
+/**
+ * The clip's own current `ClipSettings::scale_x/y` — real available
+ * headroom depends on how the image is already scaled onto the canvas,
+ * never an assumed `1.0`.
+ */
+scale_x: number; scale_y: number }
 export type ImportResult = { source_path: string; media: MediaItem | null; error: AppErrorPayload | null }
 /**
  * A model found actually installed on disk (master prompt §60 "Installed
@@ -2701,6 +2747,29 @@ approx_size_bytes: number;
  */
 multilingual: boolean; download_url: string }
 export type ModelId = "tiny" | "base" | "small" | "medium" | "large"
+/**
+ * Which way the pan moves. Mapped to `position_x`/`position_y` keyframe
+ * VALUE signs by [`PanDirection::start_end_signs`] — see that function's
+ * own doc comment for the derivation against `render::plan`'s real
+ * `overlay_x`/`overlay_y` pixel formulas (`transform_y` is negated there;
+ * `transform_x` is not).
+ */
+export type PanDirection = "left" | "right" | "up" | "down"
+/**
+ * Mirrors `zoom::ZoomIntensity`'s own shape/naming exactly (`Off`/`Low`/
+ * `Medium`/`High`) for consistency across this codebase's two keyframe-
+ * generator modules.
+ */
+export type PanIntensity = "off" | "low" | "medium" | "high"
+/**
+ * One real, bounds-checkable pan candidate: a still-image clip's own whole
+ * on-timeline span (module doc comment: unlike `zoom::ZoomTrigger`, which
+ * describes a sub-window *within* the single clip a caller already knows
+ * it's generating keyframes for, a pan trigger already means "this whole
+ * clip" — so `clip_id` travels with it here, a real, documented deviation
+ * from `ZoomTrigger`'s shape, not an oversight).
+ */
+export type PanTrigger = { clip_id: string; start_us: number; end_us: number; direction: PanDirection; media_width: number; media_height: number; scale_x: number; scale_y: number; canvas_width: number; canvas_height: number; reason: string }
 /**
  * This module's own closed enum for `promt.md` §8's "Profanity handling"
  * config item (module doc comment — `promt.md` names the setting but does

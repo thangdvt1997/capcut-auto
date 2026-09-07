@@ -36,6 +36,7 @@ pub mod history;
 pub mod jobs;
 pub mod logging;
 pub mod media;
+pub mod pan;
 pub mod project;
 pub mod reframe;
 pub mod render;
@@ -145,6 +146,8 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::zoom::generate_zoom_triggers,
         commands::zoom::generate_zoom_keyframes,
         commands::zoom::apply_auto_zoom_to_clip,
+        commands::pan::generate_pan_triggers,
+        commands::pan::generate_pan_keyframes,
         commands::broll::search_local_broll,
         commands::broll::suggest_broll_from_transcript,
         commands::broll::suggest_and_search_broll,
