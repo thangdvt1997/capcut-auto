@@ -393,14 +393,32 @@ mod tests {
     #[test]
     fn export_project_to_capcut_draft_at_writes_real_files() {
         let project = sample_project();
-        let dir = std::env::temp_dir().join(format!(
+        let root = std::env::temp_dir().join(format!(
             "capcut_export_pipeline_test_{}",
             std::process::id()
         ));
+        let dir = root.join("My Draft");
         export_project_to_capcut_draft_at(&project, &dir).expect("export should succeed");
         assert!(dir.join("draft_content.json").exists());
         assert!(dir.join("draft_info.json").exists());
-        let _ = std::fs::remove_dir_all(&dir);
+        // Real, first-time CapCut-Pro validation (`capcut::meta` module doc
+        // comment): both of these are required for CapCut's own
+        // Projects-list UI to discover the draft at all.
+        assert!(
+            dir.join("draft_meta_info.json").exists(),
+            "draft_meta_info.json is required for CapCut Pro to discover this draft"
+        );
+        let registry: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(root.join("root_meta_info.json"))
+                .expect("export_draft should also write/update the shared root registry"),
+        )
+        .unwrap();
+        let store = registry["all_draft_store"].as_array().unwrap();
+        assert!(
+            store.iter().any(|e| e["draft_name"] == "My Draft"),
+            "this draft should be registered in root_meta_info.json's all_draft_store: {store:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// §88 Windows path edge case: a draft output directory containing
@@ -421,6 +439,14 @@ mod tests {
             .expect("export should succeed under a Unicode/space-containing path");
         assert!(dir.join("draft_content.json").exists());
         assert!(dir.join("draft_info.json").exists());
+        assert!(
+            dir.join("draft_meta_info.json").exists(),
+            "draft_meta_info.json must be written even under a Unicode/space-containing path"
+        );
+        assert!(
+            dir.parent().unwrap().join("root_meta_info.json").exists(),
+            "the shared root registry must be written even under a Unicode/space-containing path"
+        );
         let _ = std::fs::remove_dir_all(dir.parent().unwrap().parent().unwrap());
     }
 

@@ -370,14 +370,20 @@ impl CapCutAdapter {
         })
     }
 
-    /// `export_draft`: creates `draft_dir` if needed and writes both
-    /// `draft_content.json` and `draft_info.json` (dual-file compatibility,
+    /// `export_draft`: creates `draft_dir` if needed and writes
+    /// `draft_content.json` + `draft_info.json` (dual-file compatibility,
     /// matching `ScriptFile.save`'s default `dual_file_compatibility=True`
-    /// in `script_file.py`). Does **not** write a `draft_meta_info.json`
-    /// (unlike `DraftFolder.create_draft`) — that file's template
-    /// (`DRAFT_META_TEMPLATE`) isn't ported this pass, since nothing in this
-    /// app's own draft-content JSON depends on it; a documented gap, not a
-    /// silent one.
+    /// in `script_file.py`), **and** `draft_meta_info.json` plus this
+    /// draft's own entry in the shared `root_meta_info.json` registry
+    /// (`capcut::meta` module doc comment) — real, first-time validation
+    /// against an actual installed CapCut Pro (v9.3.0.3970) proved that
+    /// without both of those, CapCut's own Projects-list UI never discovers
+    /// the draft at all, even though `draft_content.json` alone is fully
+    /// schema-valid and loads correctly once opened directly. `draft_root`
+    /// (`draft_dir`'s parent — the shared `com.lveditor.draft` folder) and
+    /// `draft_name` (`draft_dir`'s own leaf folder name) are derived from
+    /// `draft_dir` itself, matching real CapCut's own "a draft's name is its
+    /// folder's name" convention.
     pub fn export_draft(&self, draft_dir: &Path) -> Result<(), CapCutError> {
         std::fs::create_dir_all(draft_dir).map_err(|e| CapCutError::WriteFailed {
             path: draft_dir.to_string_lossy().to_string(),
@@ -385,6 +391,26 @@ impl CapCutAdapter {
         })?;
         self.save_draft(&draft_dir.join("draft_content.json"))?;
         self.save_draft(&draft_dir.join("draft_info.json"))?;
+
+        let draft_root = draft_dir.parent().unwrap_or(draft_dir);
+        let draft_name = draft_dir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "Untitled".to_string());
+        let draft_id = uuid::Uuid::new_v4().to_string().to_uppercase();
+        crate::capcut::meta::write_draft_meta_info(
+            draft_dir,
+            draft_root,
+            &draft_id,
+            &draft_name,
+            self.script.duration_us,
+        )?;
+        crate::capcut::meta::register_draft_in_root_registry(
+            draft_root,
+            &draft_id,
+            &draft_name,
+            draft_dir,
+        )?;
         Ok(())
     }
 

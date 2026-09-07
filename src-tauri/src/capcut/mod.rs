@@ -75,6 +75,7 @@ pub mod graph;
 pub mod keyframe;
 pub mod mask;
 pub mod material;
+pub mod meta;
 pub mod script;
 pub mod segment;
 pub mod timerange;
