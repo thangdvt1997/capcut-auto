@@ -19,6 +19,58 @@ pub fn all_caption_templates() -> Vec<CaptionStyle> {
     vec![minimal(), tiktok(), podcast(), news(), gaming(), karaoke()]
 }
 
+/// The style used whenever a `Caption` has `style_id: None` (or one that
+/// doesn't resolve against the current catalog) — plain white centered text,
+/// no background/outline/shadow. This is a Rust-side port of the frontend's
+/// own `FALLBACK_CAPTION_STYLE` (`src/captions/styleCatalog.ts`) — same
+/// field values, byte-for-byte — so a caption with no resolvable style burns
+/// in looking exactly like the live preview already renders it, not a
+/// second, independently-invented fallback. Not persisted anywhere; a pure
+/// fallback value, same as its frontend counterpart.
+pub fn fallback_caption_style() -> CaptionStyle {
+    CaptionStyle {
+        id: "__fallback__".to_string(),
+        name: "Default".to_string(),
+        font_family: "system-ui".to_string(),
+        font_size: 32.0,
+        bold: false,
+        italic: false,
+        alignment: CaptionAlignment::Center,
+        position: CaptionPosition {
+            anchor: CaptionAnchor::Bottom,
+            offset_x: 0.0,
+            offset_y: 0.0,
+        },
+        text_color: Color::WHITE,
+        background: None,
+        outline: None,
+        shadow: None,
+        opacity: 1.0,
+        safe_margins: SafeMargins::default(),
+    }
+}
+
+/// Resolves a `Caption::style_id` against a style catalog (built-ins +
+/// current project's own `caption_styles`, in that order — see
+/// `render::graph::build_render_graph`'s call site for how the catalog is
+/// assembled), falling back to [`fallback_caption_style`] for `None` or an
+/// id that isn't found — the exact same two-step resolution the frontend's
+/// `resolveCaptionStyle` (`src/captions/styleCatalog.ts`) already performs
+/// for the live preview. Kept here, next to the catalog it resolves against,
+/// rather than in `render::` — a project can have zero renders and still
+/// want to know "what style does this caption resolve to" (e.g. a future
+/// caption-list UI), so this isn't a render-only concern.
+pub fn resolve_caption_style(catalog: &[CaptionStyle], style_id: Option<&str>) -> CaptionStyle {
+    match style_id {
+        None => fallback_caption_style(),
+        Some(id) => catalog
+            .iter()
+            .find(|s| s.id == id)
+            .cloned()
+            .unwrap_or_else(fallback_caption_style),
+    }
+}
+
 /// Small, no background, subtle — a caption that stays out of the way.
 fn minimal() -> CaptionStyle {
     CaptionStyle {
@@ -332,5 +384,58 @@ mod tests {
             .unwrap();
         assert!(karaoke.outline.is_some());
         assert!(karaoke.shadow.is_some());
+    }
+
+    #[test]
+    fn fallback_style_matches_the_frontends_own_fallback_caption_style() {
+        let fallback = fallback_caption_style();
+        assert_eq!(fallback.id, "__fallback__");
+        assert_eq!(fallback.font_family, "system-ui");
+        assert_eq!(fallback.font_size, 32.0);
+        assert!(!fallback.bold);
+        assert!(!fallback.italic);
+        assert_eq!(fallback.alignment, CaptionAlignment::Center);
+        assert_eq!(fallback.position.anchor, CaptionAnchor::Bottom);
+        assert_eq!(fallback.position.offset_x, 0.0);
+        assert_eq!(fallback.position.offset_y, 0.0);
+        assert_eq!(fallback.text_color, Color::WHITE);
+        assert!(fallback.background.is_none());
+        assert!(fallback.outline.is_none());
+        assert!(fallback.shadow.is_none());
+        assert_eq!(fallback.opacity, 1.0);
+    }
+
+    #[test]
+    fn resolve_caption_style_returns_fallback_for_none() {
+        let catalog = all_caption_templates();
+        let resolved = resolve_caption_style(&catalog, None);
+        assert_eq!(resolved.id, "__fallback__");
+    }
+
+    #[test]
+    fn resolve_caption_style_returns_fallback_for_an_unknown_id() {
+        let catalog = all_caption_templates();
+        let resolved = resolve_caption_style(&catalog, Some("does_not_exist"));
+        assert_eq!(resolved.id, "__fallback__");
+    }
+
+    #[test]
+    fn resolve_caption_style_finds_a_built_in_template_by_id() {
+        let catalog = all_caption_templates();
+        let resolved = resolve_caption_style(&catalog, Some("template_tiktok"));
+        assert_eq!(resolved.id, "template_tiktok");
+        assert_eq!(resolved.name, "TikTok");
+    }
+
+    #[test]
+    fn resolve_caption_style_finds_a_project_custom_style_appended_after_built_ins() {
+        let mut catalog = all_caption_templates();
+        let custom = CaptionStyle {
+            id: "custom_1".to_string(),
+            ..fallback_caption_style()
+        };
+        catalog.push(custom);
+        let resolved = resolve_caption_style(&catalog, Some("custom_1"));
+        assert_eq!(resolved.id, "custom_1");
     }
 }

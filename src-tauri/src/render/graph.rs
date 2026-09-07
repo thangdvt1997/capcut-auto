@@ -12,19 +12,31 @@
 //! this is what keeps the UI (and any future render backend) from ever
 //! constructing FFmpeg commands directly.
 //!
-//! **Honesty about `Caption`/`Effect`** (per this phase's task brief): there
-//! is no caption burn-in system yet (Phase 8) and no effect catalog at all
-//! (`Effect::params` is opaque JSON with no defined shapes). `CaptionNode`
-//! and `EffectNode` below exist so this schema does not need to change shape
-//! when those phases land, but `render::plan` treats every node in
-//! `caption_nodes`/`effect_nodes` as a documented no-op today — see that
-//! module's doc comment. Nothing here fabricates a burn-in or visual effect.
+//! **Honesty about `Effect`** (per Phase 6's original task brief, still true
+//! today): no effect catalog exists at all (`Effect::params` is opaque JSON
+//! with no defined shapes). `EffectNode` below exists so this schema does
+//! not need to change shape once one does, but `render::plan` treats every
+//! node in `effect_nodes` as a documented no-op today — see that module's
+//! doc comment. Nothing here fabricates a visual effect.
+//!
+//! **`Caption` nodes are real** (`STUDIO_PLAN.md` Phase S4): each
+//! `CaptionNode` below carries its own fully-resolved [`CaptionStyle`] —
+//! resolved here (once, while `ProjectV1` is still in scope) against a
+//! catalog of the built-in templates
+//! (`captions::styles::all_caption_templates`) plus this project's own
+//! `caption_styles`, exactly the same two-step resolution
+//! (`captions::styles::resolve_caption_style`) the frontend's own
+//! `resolveCaptionStyle` (`src/captions/styleCatalog.ts`) already performs
+//! for the live preview — so `render::plan` never has to look back at
+//! `ProjectV1`/the style catalog itself, same reasoning as every other
+//! resolved field on `VideoClipNode`/`AudioClipNode`.
 
 use std::collections::HashMap;
 
+use crate::captions::styles::{all_caption_templates, resolve_caption_style};
 use crate::project::{
-    AudioRole, CanvasV1, Clip, ClipSettings, DuckingSettings, MediaItem, MediaKind, ProjectV1,
-    Track, TrackKind,
+    AudioRole, CanvasV1, CaptionStyle, Clip, ClipSettings, DuckingSettings, MediaItem, MediaKind,
+    ProjectV1, Track, TrackKind,
 };
 use crate::timeline::ops::effective_track_mute_state;
 
@@ -114,9 +126,10 @@ pub struct AudioLayer {
     pub ducking: Option<DuckingSettings>,
 }
 
-/// A `Caption` (`project.captions`) placed on a `Caption`-kind track.
-/// Represented so the schema is stable across Phase 8, but `render::plan`
-/// does not burn these in — see module doc comment.
+/// A `Caption` (`project.captions`) placed on a `Caption`-kind track, with
+/// its `style_id` already resolved to a real, owned [`CaptionStyle`] (module
+/// doc comment) — `render::plan` burns this in as a real `drawtext` filter
+/// (`render::captions::caption_drawtext_filter`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CaptionNode {
     pub caption_id: String,
@@ -124,6 +137,7 @@ pub struct CaptionNode {
     pub start_us: i64,
     pub end_us: i64,
     pub text: String,
+    pub style: CaptionStyle,
 }
 
 /// An `Effect` (`project.effects`) attached to a clip. Represented so the
@@ -282,6 +296,13 @@ pub fn build_render_graph(project: &ProjectV1) -> Result<RenderGraph, RenderErro
 
     video_layers.sort_by_key(|l| l.render_index);
 
+    // Built-ins first, then this project's own custom styles — same order
+    // (and same "built-ins are always offered even with an empty project
+    // catalog" property) as the frontend's own `buildStyleCatalog`
+    // (`src/captions/styleCatalog.ts`).
+    let mut style_catalog = all_caption_templates();
+    style_catalog.extend(project.caption_styles.iter().cloned());
+
     let caption_nodes = project
         .captions
         .iter()
@@ -291,6 +312,7 @@ pub fn build_render_graph(project: &ProjectV1) -> Result<RenderGraph, RenderErro
             start_us: c.start_us,
             end_us: c.end_us,
             text: c.text.clone(),
+            style: resolve_caption_style(&style_catalog, c.style_id.as_deref()),
         })
         .collect();
 
@@ -537,11 +559,91 @@ mod tests {
         let graph = build_render_graph(&p).expect("graph builds");
         assert_eq!(graph.caption_nodes.len(), 1);
         assert_eq!(graph.effect_nodes.len(), 1);
-        // No video/audio content at all -> duration stays 0, proving
-        // captions/effects are represented but not load-bearing for output
-        // duration (that's plan.rs's no-op guarantee, exercised here at the
-        // graph level too).
+        // A `style_id: None` caption resolves to the fallback style, same as
+        // the frontend's own `resolveCaptionStyle(_, null)`.
+        assert_eq!(graph.caption_nodes[0].style.id, "__fallback__");
+        // No video/audio content at all -> duration stays 0 (captions do not
+        // extend the render's own output duration — a caption's `end_us`
+        // simply stops mattering to `enable=` past that point; this is
+        // unrelated to whether the caption itself now burns in for real, see
+        // `render::plan`).
         assert_eq!(graph.duration_us, 0);
+    }
+
+    #[test]
+    fn caption_style_id_resolves_against_the_built_in_template_catalog() {
+        let mut p = base_project();
+        p.tracks.push(track("cap1", TrackKind::Caption, 0, vec![]));
+        p.captions.push(crate::project::Caption {
+            id: "cap_a".into(),
+            track_id: "cap1".into(),
+            start_us: 0,
+            end_us: 1_000_000,
+            text: "hello".into(),
+            words: vec![],
+            style_id: Some("template_tiktok".into()),
+        });
+
+        let graph = build_render_graph(&p).expect("graph builds");
+        assert_eq!(graph.caption_nodes[0].style.id, "template_tiktok");
+        assert_eq!(graph.caption_nodes[0].style.name, "TikTok");
+    }
+
+    #[test]
+    fn caption_style_id_resolves_against_the_projects_own_custom_styles() {
+        let mut p = base_project();
+        p.tracks.push(track("cap1", TrackKind::Caption, 0, vec![]));
+        p.caption_styles.push(crate::project::CaptionStyle {
+            id: "my_custom_style".into(),
+            name: "Mine".into(),
+            font_family: "Comic Sans MS".into(),
+            font_size: 22.0,
+            bold: false,
+            italic: false,
+            alignment: crate::project::CaptionAlignment::Left,
+            position: crate::project::CaptionPosition {
+                anchor: crate::project::CaptionAnchor::Top,
+                offset_x: 0.0,
+                offset_y: 0.0,
+            },
+            text_color: crate::project::Color::BLACK,
+            background: None,
+            outline: None,
+            shadow: None,
+            opacity: 1.0,
+            safe_margins: crate::project::SafeMargins::default(),
+        });
+        p.captions.push(crate::project::Caption {
+            id: "cap_a".into(),
+            track_id: "cap1".into(),
+            start_us: 0,
+            end_us: 1_000_000,
+            text: "hello".into(),
+            words: vec![],
+            style_id: Some("my_custom_style".into()),
+        });
+
+        let graph = build_render_graph(&p).expect("graph builds");
+        assert_eq!(graph.caption_nodes[0].style.id, "my_custom_style");
+        assert_eq!(graph.caption_nodes[0].style.font_family, "Comic Sans MS");
+    }
+
+    #[test]
+    fn an_unknown_caption_style_id_resolves_to_the_fallback_rather_than_erroring() {
+        let mut p = base_project();
+        p.tracks.push(track("cap1", TrackKind::Caption, 0, vec![]));
+        p.captions.push(crate::project::Caption {
+            id: "cap_a".into(),
+            track_id: "cap1".into(),
+            start_us: 0,
+            end_us: 1_000_000,
+            text: "hello".into(),
+            words: vec![],
+            style_id: Some("does_not_exist".into()),
+        });
+
+        let graph = build_render_graph(&p).expect("graph builds");
+        assert_eq!(graph.caption_nodes[0].style.id, "__fallback__");
     }
 
     #[test]

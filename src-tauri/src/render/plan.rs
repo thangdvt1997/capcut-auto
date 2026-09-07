@@ -28,12 +28,22 @@
 //!   otherwise), respecting the effectively-muted/hidden exclusions already
 //!   applied when the `RenderGraph` was built.
 //!
-//! **`Caption`/`Effect` no-op, honestly**: `graph.caption_nodes` and
-//! `graph.effect_nodes` are *not* touched by this module at all — no caption
-//! burn-in filter, no effect filter, is ever emitted for them. See
-//! `render::graph` module doc comment for why (no caption-rendering system
-//! or effect catalog exists yet). This is a deliberate, documented gap, not
-//! an oversight — the day Phase 8 lands a caption burn-in filter, or an
+//! **`Caption` burn-in is real** (`STUDIO_PLAN.md` Phase S4, closing this
+//! module's own former documented no-op): after every video track has
+//! composited (the last `overlay=` in z-order), each `graph.caption_nodes`
+//! entry chains one more real `drawtext=` filter on top (`render::captions::
+//! caption_drawtext_filter`), time-windowed with the same `enable=
+//! 'between(t,start,end)'` convention every other node here already uses. No
+//! captions at all -> no `drawtext` filter is ever added (purely additive —
+//! an existing project with no captions renders byte-for-byte the same plan
+//! as before this phase). See `render::captions`'s own module doc comment
+//! for the `drawtext`-vs-`.ass` design call, the style-field mapping, and
+//! this phase's honest scope notes (font resolution, shadow blur).
+//!
+//! **`Effect` no-op, honestly**: `graph.effect_nodes` is *not* touched by
+//! this module at all — no effect filter is ever emitted for them. See
+//! `render::graph` module doc comment for why (no effect catalog exists
+//! yet). This is a deliberate, documented gap, not an oversight — the day an
 //! effect catalog exists, this is the one place a filter needs to be added
 //! per node kind.
 //!
@@ -54,8 +64,9 @@ use crate::vad::provider::SpeechSegment;
 use super::audio_filters::{
     ducking_filter_chain, FfmpegNoiseReductionProvider, NoiseReductionProvider,
 };
+use super::captions::caption_drawtext_filter;
 use super::error::RenderError;
-use super::graph::{AudioClipNode, RenderGraph, VideoClipNode};
+use super::graph::{AudioClipNode, CaptionNode, RenderGraph, VideoClipNode};
 use super::hwaccel::{resolve_video_encoder, EncoderBackend};
 use super::presets::{AudioCodec, RenderSettings, VideoCodec};
 
@@ -466,7 +477,32 @@ pub fn build_ffmpeg_plan(
             input_index += 1;
         }
     }
-    let final_video_label = current_base;
+    let mut final_video_label = current_base;
+
+    // --- Captions: one `drawtext=` per caption, chained on top of the fully
+    // composited video (i.e. captions always draw above every video/image/
+    // overlay track, never behind one) — sorted by `(start_us, caption_id)`
+    // for a deterministic, reproducible filter graph regardless of
+    // `ProjectV1::captions`' own storage order. Purely additive: zero
+    // captions means this loop runs zero times and `final_video_label` is
+    // left exactly as the video-compositing loop above produced it.
+    let mut ordered_captions: Vec<&CaptionNode> = graph.caption_nodes.iter().collect();
+    ordered_captions.sort_by(|a, b| (a.start_us, &a.caption_id).cmp(&(b.start_us, &b.caption_id)));
+    let mut caption_count = 0usize;
+    for caption in ordered_captions {
+        let drawtext = caption_drawtext_filter(
+            &caption.text,
+            &caption.style,
+            graph.canvas.width,
+            graph.canvas.height,
+            caption.start_us,
+            caption.end_us,
+        );
+        caption_count += 1;
+        let next_label = format!("cap{caption_count}");
+        filter_parts.push(format!("[{final_video_label}]{drawtext}[{next_label}]"));
+        final_video_label = next_label;
+    }
 
     // --- Audio: per-clip volume/mute/fade/normalize/noise-reduction/ducking,
     // delay, then amix (volume-compensated) ---
@@ -551,7 +587,7 @@ pub fn build_ffmpeg_plan(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project::{CanvasRatioPreset, CanvasV1, Rational};
+    use crate::project::{CanvasRatioPreset, CanvasV1, CaptionStyle, Rational};
     use crate::render::graph::{AudioLayer, VideoLayer};
     use crate::render::presets::{find_preset, Container};
 
@@ -925,6 +961,310 @@ mod tests {
         assert!(
             b > 150 && r < 100,
             "expected the real rendered output to be blue (crop kept only the right/blue half), got rgb({r},{g},{b})"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- Captions (STUDIO_PLAN.md Phase S4) ---
+
+    fn caption_style_fixture() -> CaptionStyle {
+        crate::captions::styles::fallback_caption_style()
+    }
+
+    fn caption_node(id: &str, text: &str, start_us: i64, end_us: i64) -> CaptionNode {
+        CaptionNode {
+            caption_id: id.into(),
+            track_id: "cap1".into(),
+            start_us,
+            end_us,
+            text: text.into(),
+            style: caption_style_fixture(),
+        }
+    }
+
+    #[test]
+    fn no_captions_produces_no_drawtext_filter_at_all() {
+        // The exact "purely additive, no existing render changes" guarantee
+        // this codebase's own established convention already applies to
+        // `no_crop_set_produces_no_crop_filter_at_all` above — an existing
+        // project with no captions must render the identical plan as before
+        // this phase.
+        let graph = RenderGraph {
+            canvas: canvas(),
+            duration_us: 2_000_000,
+            video_layers: vec![VideoLayer {
+                track_id: "v1".into(),
+                render_index: 0,
+                clips: vec![video_clip("c1", "D:/in.mp4", 0, 2_000_000, 0)],
+            }],
+            audio_layers: vec![],
+            caption_nodes: vec![],
+            effect_nodes: vec![],
+        };
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
+        let s = args_string(&plan);
+        assert!(!s.contains("drawtext="), "{s}");
+        // The video's own final compositing label is mapped directly — no
+        // extra `cap*` label is ever introduced when there are no captions.
+        assert!(s.contains("-map [base1]"), "{s}");
+    }
+
+    #[test]
+    fn a_single_caption_chains_a_drawtext_filter_on_top_of_the_composited_video_and_is_mapped() {
+        let graph = RenderGraph {
+            canvas: canvas(),
+            duration_us: 5_000_000,
+            video_layers: vec![VideoLayer {
+                track_id: "v1".into(),
+                render_index: 0,
+                clips: vec![video_clip("c1", "D:/in.mp4", 0, 5_000_000, 0)],
+            }],
+            audio_layers: vec![],
+            caption_nodes: vec![caption_node("cap_a", "hello world", 1_000_000, 3_000_000)],
+            effect_nodes: vec![],
+        };
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
+        let s = args_string(&plan);
+        // Chained on top of the video compositing's own final base label
+        // (`base1` — one video clip means exactly one `overlay=`).
+        assert!(s.contains("[base1]drawtext="), "{s}");
+        assert!(s.contains("text=hello world"), "{s}");
+        assert!(s.contains("enable='between(t,1.000000,3.000000)'"), "{s}");
+        // The final `-map` targets the caption's own output label, not the
+        // video-only `base1` — the caption is genuinely part of what gets
+        // encoded, not merely computed and discarded.
+        assert!(s.contains("-map [cap1]"), "{s}");
+        assert!(!s.contains("-map [base1]"), "{s}");
+    }
+
+    #[test]
+    fn multiple_captions_each_get_their_own_independently_time_windowed_drawtext_filter() {
+        let graph = RenderGraph {
+            canvas: canvas(),
+            duration_us: 10_000_000,
+            video_layers: vec![VideoLayer {
+                track_id: "v1".into(),
+                render_index: 0,
+                clips: vec![video_clip("c1", "D:/in.mp4", 0, 10_000_000, 0)],
+            }],
+            audio_layers: vec![],
+            caption_nodes: vec![
+                caption_node("cap_b", "second", 5_000_000, 8_000_000),
+                caption_node("cap_a", "first", 0, 2_000_000),
+            ],
+            effect_nodes: vec![],
+        };
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
+        let s = args_string(&plan);
+        assert_eq!(s.matches("drawtext=").count(), 2, "{s}");
+        // Sorted by `start_us` regardless of `caption_nodes`' own storage
+        // order (`cap_b` was pushed first above, but starts later) — chained
+        // `[base1]drawtext=...(first, 0..2s)...[cap1]` then
+        // `[cap1]drawtext=...(second, 5..8s)...[cap2]`, each with its own,
+        // non-overlapping `enable=` window.
+        assert!(s.contains("[base1]drawtext="), "{s}");
+        assert!(s.contains("text=first"), "{s}");
+        assert!(s.contains("enable='between(t,0.000000,2.000000)'"), "{s}");
+        assert!(s.contains("[cap1]drawtext="), "{s}");
+        assert!(s.contains("text=second"), "{s}");
+        assert!(s.contains("enable='between(t,5.000000,8.000000)'"), "{s}");
+        assert!(s.contains("-map [cap2]"), "{s}");
+        let first_pos = s.find("text=first").unwrap();
+        let second_pos = s.find("text=second").unwrap();
+        assert!(
+            first_pos < second_pos,
+            "expected the earlier-starting caption's filter to appear first in the chain: {s}"
+        );
+    }
+
+    #[test]
+    fn a_caption_with_special_characters_produces_a_well_formed_escaped_drawtext_filter() {
+        let graph = RenderGraph {
+            canvas: canvas(),
+            duration_us: 2_000_000,
+            video_layers: vec![VideoLayer {
+                track_id: "v1".into(),
+                render_index: 0,
+                clips: vec![video_clip("c1", "D:/in.mp4", 0, 2_000_000, 0)],
+            }],
+            audio_layers: vec![],
+            caption_nodes: vec![caption_node(
+                "cap_a",
+                "5:00 PM - it's a test,\nline two!",
+                0,
+                2_000_000,
+            )],
+            effect_nodes: vec![],
+        };
+        let plan =
+            build_ffmpeg_plan(&graph, &settings_1080p(), Path::new("D:/out.mp4"), &[]).unwrap();
+        let s = args_string(&plan);
+        // Exactly one drawtext filter (the caption text's own colon/quote/
+        // comma did not get misparsed into extra bogus filter stages) and
+        // the real newline survives verbatim (a genuine line break, not
+        // escaped away) inside the single ffmpeg argv element `args_string`
+        // joins with spaces — proving the whole caption text stayed inside
+        // one `text=` option value.
+        assert_eq!(s.matches("drawtext=").count(), 1, "{s}");
+        assert!(
+            s.contains("text=5\\\\:00 PM - it\\\\\\'s a test\\,\nline two!"),
+            "{s}"
+        );
+    }
+
+    /// Real end-to-end proof (this codebase's own established convention,
+    /// mirroring `a_real_render_with_manual_crop_keeps_only_the_cropped_regions_real_visible_content`
+    /// above): a solid-color background, one caption whose style gives it a
+    /// large, solid, opaque background box covering most of the frame. If
+    /// the caption filter didn't really reach ffmpeg — or wasn't really
+    /// composited on top of the video — the rendered output would still be
+    /// the plain background color; comparing the real rendered output's own
+    /// average color (captioned) against a real baseline render of the
+    /// identical graph with the caption removed is a direct, non-synthetic
+    /// proof the caption actually changed the real visible pixels, not just
+    /// that the render command didn't error.
+    #[test]
+    fn a_real_render_with_a_caption_actually_changes_the_real_rendered_pixels() {
+        let ffmpeg =
+            crate::ffmpeg::binaries::ffmpeg_path(None).expect("ffmpeg resolvable in test env");
+        let dir = std::env::temp_dir().join(format!(
+            "ave-render-caption-burn-in-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let source = dir.join("green.mp4");
+        let synth_args = crate::ffmpeg::command::FfmpegArgs::new()
+            .args([
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=0x00FF00:size=200x120:rate=10:duration=1",
+            ])
+            .path(&source);
+        crate::ffmpeg::command::run_checked(&ffmpeg, &synth_args)
+            .expect("synthesizing a real solid-green source");
+
+        let canvas = CanvasV1 {
+            width: 200,
+            height: 120,
+            fps: Rational::new(10, 1),
+            ratio_preset: CanvasRatioPreset::Custom,
+        };
+        let mut clip = video_clip("c1", &source.to_string_lossy(), 0, 1_000_000, 0);
+        clip.media_width = 200;
+        clip.media_height = 120;
+
+        let mut settings = find_preset("fast_preview").unwrap().settings;
+        settings.width = Some(200);
+        settings.height = Some(120);
+        settings.fps = Some(Rational::new(10, 1));
+
+        // Baseline: identical graph, zero captions.
+        let baseline_graph = RenderGraph {
+            canvas: canvas.clone(),
+            duration_us: 1_000_000,
+            video_layers: vec![VideoLayer {
+                track_id: "v1".into(),
+                render_index: 0,
+                clips: vec![clip.clone()],
+            }],
+            audio_layers: vec![],
+            caption_nodes: vec![],
+            effect_nodes: vec![],
+        };
+        let baseline_out = dir.join("baseline.mp4");
+        let baseline_plan =
+            build_ffmpeg_plan(&baseline_graph, &settings, &baseline_out, &[]).expect("plan builds");
+        crate::render::job::run_render_job(&ffmpeg, &baseline_plan, &baseline_out, None, |_| {})
+            .expect("real baseline render succeeds");
+
+        // Captioned: one caption with a large, opaque, solid-red background
+        // box (font/box padding deliberately large relative to the small
+        // canvas so the box covers most of the frame).
+        let mut style = caption_style_fixture();
+        style.font_size = 60.0;
+        style.position.anchor = crate::project::CaptionAnchor::Center;
+        style.background = Some(crate::project::CaptionBackground {
+            color: crate::project::Color {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            opacity: 1.0,
+        });
+        let captioned_graph = RenderGraph {
+            canvas,
+            duration_us: 1_000_000,
+            video_layers: vec![VideoLayer {
+                track_id: "v1".into(),
+                render_index: 0,
+                clips: vec![clip],
+            }],
+            audio_layers: vec![],
+            caption_nodes: vec![CaptionNode {
+                caption_id: "cap_a".into(),
+                track_id: "cap1".into(),
+                start_us: 0,
+                end_us: 1_000_000,
+                text: "HI".into(),
+                style,
+            }],
+            effect_nodes: vec![],
+        };
+        let captioned_out = dir.join("captioned.mp4");
+        let captioned_plan = build_ffmpeg_plan(&captioned_graph, &settings, &captioned_out, &[])
+            .expect("plan builds");
+        crate::render::job::run_render_job(&ffmpeg, &captioned_plan, &captioned_out, None, |_| {})
+            .expect("real captioned render succeeds");
+
+        let avg_color = |path: &Path| -> (u8, u8, u8) {
+            let probe_args = crate::ffmpeg::command::FfmpegArgs::new()
+                .args(["-y", "-v", "error"])
+                .input(path)
+                .args([
+                    "-vframes",
+                    "1",
+                    "-vf",
+                    "scale=1:1",
+                    "-f",
+                    "rawvideo",
+                    "-pix_fmt",
+                    "rgb24",
+                ])
+                .path(Path::new("-"));
+            let output = crate::ffmpeg::command::run_checked(&ffmpeg, &probe_args)
+                .expect("extracting a real rendered output's average pixel color");
+            assert_eq!(output.stdout.len(), 3);
+            (output.stdout[0], output.stdout[1], output.stdout[2])
+        };
+
+        let (base_r, base_g, _base_b) = avg_color(&baseline_out);
+        let (cap_r, cap_g, _cap_b) = avg_color(&captioned_out);
+
+        // Baseline is real solid green: negligible red, strong green.
+        assert!(
+            base_r < 20 && base_g > 200,
+            "baseline should be solid green, got rgb({base_r},{base_g},_)"
+        );
+        // The captioned render's real average pixel color must show a
+        // clear, real shift toward red and away from green versus the real
+        // baseline — proof the caption's background box actually reached
+        // the real rendered frame, not just that the command succeeded.
+        assert!(
+            cap_r > base_r + 40,
+            "expected the captioned render's real average red channel to be clearly higher than baseline's ({base_r}), got {cap_r}"
+        );
+        assert!(
+            cap_g < base_g - 40,
+            "expected the captioned render's real average green channel to be clearly lower than baseline's ({base_g}), got {cap_g}"
         );
 
         std::fs::remove_dir_all(&dir).ok();
