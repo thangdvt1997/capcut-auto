@@ -1197,5 +1197,57 @@
       "default": "Đã xảy ra lỗi",
       "retryButton": "Thử lại"
     }
+  },
+  "appTabs": {
+    "workspace": "Không gian làm việc",
+    "automationAi": "Tự động hóa & Cài đặt AI",
+    "projectAssetLicense": "Quản lý Dự án / Tài nguyên / Giấy phép",
+    "automationPlaceholderTitle": "Tự động hóa & Cài đặt AI",
+    "automationPlaceholderDesc": "Nội dung sẽ được chuyển vào đây ở Phase D5 — các cài đặt AI/Giọng nói/CapCut/Tự động hóa hiện đã hoạt động thật, dưới dạng hộp thoại riêng từ thanh công cụ phía trên.",
+    "projectsPlaceholderTitle": "Quản lý Dự án / Tài nguyên / Giấy phép",
+    "projectsPlaceholderDesc": "Nội dung sẽ được chuyển vào đây ở Phase D6 — Thư viện tài nguyên/Lịch sử/Trình tạo mẫu hiện đã hoạt động thật, dưới dạng hộp thoại riêng từ thanh công cụ phía trên."
+  },
+  "workspaceTab": {
+    "modeLabel": "Chế độ xem",
+    "modeSimple": "Đơn giản",
+    "modeAdvanced": "Nâng cao",
+    "modeDescription": "Chế độ Nâng cao hiển thị đầy đủ Timeline đa track, Thư viện Media và bảng Inspector.",
+    "stepper": {
+      "ariaLabel": "Quy trình xử lý",
+      "subtitle": "Phụ đề",
+      "translate": "Dịch",
+      "voice": "Giọng nói",
+      "sync": "Đồng bộ",
+      "render": "Kết xuất"
+    },
+    "script": {
+      "title": "Biên tập Kịch bản / Phụ đề",
+      "noProjectTitle": "Chưa có dự án nào được mở",
+      "noProjectDesc": "Hãy tạo hoặc mở một dự án để chỉnh sửa kịch bản và phụ đề.",
+      "colTime": "Thời gian",
+      "colOriginal": "Gốc",
+      "colTranslation": "Bản dịch",
+      "empty": "Chưa có phụ đề nào. Hãy tạo phụ đề từ bản chép lời để bắt đầu.",
+      "translating": "Đang dịch…",
+      "generateButton": "Tạo phụ đề",
+      "generatingButton": "Đang tạo…",
+      "targetLanguagePlaceholder": "Ngôn ngữ đích (vd: vi, en)",
+      "translateButton": "Dịch",
+      "translatingButton": "Đang dịch…",
+      "generateVoiceButton": "Tạo giọng nói",
+      "voiceNotWiredTooltip": "Tạo giọng nói chưa được kết nối với lệnh thực thi nào — lớp trừu tượng nhà cung cấp giọng nói đã có ở backend, nhưng chưa có bước synthesize_speech trong pipeline.",
+      "syncTimelineButton": "Đồng bộ Timeline",
+      "syncNotWiredTooltip": "Đồng bộ Timeline chưa phải là một phần của pipeline này.",
+      "noTranscriptHint": "Hãy chạy Speech-to-Text từ tab Bản chép lời (chế độ Nâng cao) trước."
+    },
+    "jobQueue": {
+      "title": "Hàng đợi công việc",
+      "openButton": "Mở hàng đợi công việc",
+      "colVideo": "Video",
+      "colStage": "Giai đoạn",
+      "colProgress": "Tiến độ",
+      "colStatus": "Trạng thái",
+      "empty": "Chưa có công việc lô nào. Hãy bắt đầu một lô để xem tại đây."
+    }
   }
 }

@@ -1197,5 +1197,57 @@
       "default": "Something went wrong",
       "retryButton": "Retry"
     }
+  },
+  "appTabs": {
+    "workspace": "Workspace",
+    "automationAi": "Automation & AI Settings",
+    "projectAssetLicense": "Project / Asset / License Management",
+    "automationPlaceholderTitle": "Automation & AI Settings",
+    "automationPlaceholderDesc": "Content moves here in Phase D5 — AI/Voice/CapCut/Automation settings are already real today as standalone dialogs from the toolbar above.",
+    "projectsPlaceholderTitle": "Project / Asset / License Management",
+    "projectsPlaceholderDesc": "Content moves here in Phase D6 — Asset Library/History/Template Generator are already real today as standalone dialogs from the toolbar above."
+  },
+  "workspaceTab": {
+    "modeLabel": "View",
+    "modeSimple": "Simple",
+    "modeAdvanced": "Advanced",
+    "modeDescription": "Advanced mode shows the full multi-track Timeline, Media Library and Inspector.",
+    "stepper": {
+      "ariaLabel": "Processing pipeline",
+      "subtitle": "Subtitle",
+      "translate": "Translate",
+      "voice": "Voice",
+      "sync": "Sync",
+      "render": "Render"
+    },
+    "script": {
+      "title": "Script / Subtitle Editor",
+      "noProjectTitle": "No project open",
+      "noProjectDesc": "Create or open a project to edit its script and captions.",
+      "colTime": "Time",
+      "colOriginal": "Original",
+      "colTranslation": "Translation",
+      "empty": "No captions yet. Generate captions from the transcript to get started.",
+      "translating": "Translating…",
+      "generateButton": "Generate Captions",
+      "generatingButton": "Generating…",
+      "targetLanguagePlaceholder": "Target language (e.g. vi, en)",
+      "translateButton": "Translate",
+      "translatingButton": "Translating…",
+      "generateVoiceButton": "Generate Voice",
+      "voiceNotWiredTooltip": "Voice synthesis isn't wired to a command yet (the backend provider abstraction exists, but no synthesize_speech pipeline stage does).",
+      "syncTimelineButton": "Sync Timeline",
+      "syncNotWiredTooltip": "Timeline sync isn't part of this pipeline yet.",
+      "noTranscriptHint": "Run Speech-to-Text from the Transcript tab (Advanced mode) first."
+    },
+    "jobQueue": {
+      "title": "Job Queue",
+      "openButton": "Open Job Queue",
+      "colVideo": "Video",
+      "colStage": "Stage",
+      "colProgress": "Progress",
+      "colStatus": "Status",
+      "empty": "No batch jobs yet. Start a batch to see it here."
+    }
   }
 }

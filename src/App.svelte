@@ -1,18 +1,28 @@
 <!--
-  App shell (master-prompt §48 layout):
-    Menu/toolbar (TopBar) on top; below it, a three-pane workspace
-    (Left tabs | Center preview | Right tabs) over a docked Timeline, all
-    built from real, working ResizableSplit panes with localStorage-
-    persisted ratios. Panel *contents* are Phase 2 placeholders — the
-    resizing/layout persistence is the part that actually works.
+  App shell (Phase D2+D3, `STUDIO_PLAN.md`'s "3-tab shell + Tab 1
+  (Workspace) content" section, promt.md §2's "3 TAB" architecture):
+    Menu/toolbar (TopBar) on top; below it, a real 3-top-level-tab strip
+    (Workspace | Automation & AI Settings | Project/Asset/License
+    Management) built from the Design System's real `Tabs` component.
+    "Workspace" (Tab 1) renders `WorkspaceTab.svelte` — promt.md §3/§28's own
+    simple pipeline-stepper mockup by default, with the pre-existing full
+    multi-track editor (LeftPanel|CenterPreview|RightPanel + TimelinePanel —
+    this app's single largest engineering investment) one click away via an
+    "Advanced" mode toggle inside that same tab; see `WorkspaceTab.svelte`'s
+    own doc comment for the full placement decision. Tab 2/Tab 3 are honest
+    `EmptyState` placeholders this pass — their real content is Phase
+    D5/D6's own separate scope, not faked here.
+
+    Every dialog below is mounted exactly as before this pass, unconditionally
+    (not gated by which top-level tab is active) — none of their own
+    opening logic changed.
 -->
 <script lang="ts">
   import TopBar from "./components/layout/TopBar.svelte";
-  import LeftPanel from "./components/layout/LeftPanel.svelte";
-  import CenterPreview from "./components/layout/CenterPreview.svelte";
-  import RightPanel from "./components/layout/RightPanel.svelte";
-  import TimelinePanel from "./components/layout/TimelinePanel.svelte";
-  import ResizableSplit from "./components/layout/ResizableSplit.svelte";
+  import Tabs from "./components/ui/Tabs.svelte";
+  import EmptyState from "./components/ui/EmptyState.svelte";
+  import WorkspaceTab from "./components/workspace/WorkspaceTab.svelte";
+  import { t } from "./lib/i18n.svelte";
   import ExportDialog from "./components/render/ExportDialog.svelte";
   import ModelManagerDialog from "./components/transcription/ModelManagerDialog.svelte";
   import CapCutSettingsDialog from "./components/capcut/CapCutSettingsDialog.svelte";
@@ -26,52 +36,41 @@
   import HistoryDialog from "./components/history/HistoryDialog.svelte";
   import TemplateGeneratorDialog from "./components/templates/TemplateGeneratorDialog.svelte";
   import AutomationRulesDialog from "./components/automation/AutomationRulesDialog.svelte";
+
+  let activeAppTab = $state("workspace");
 </script>
 
 <main class="shell">
   <TopBar />
 
+  <div class="app-tabs">
+    <Tabs
+      tabs={[
+        { id: "workspace", label: t("appTabs.workspace") },
+        { id: "automation", label: t("appTabs.automationAi") },
+        { id: "projects", label: t("appTabs.projectAssetLicense") },
+      ]}
+      active={activeAppTab}
+      onChange={(id) => (activeAppTab = id)}
+    />
+  </div>
+
   <section class="workspace">
-    <ResizableSplit
-      direction="vertical"
-      initial={0.72}
-      min={0.4}
-      max={0.88}
-      storageKey="ave:split:main-timeline"
-    >
-      {#snippet a()}
-        <ResizableSplit
-          direction="horizontal"
-          initial={0.2}
-          min={0.12}
-          max={0.34}
-          storageKey="ave:split:left"
-        >
-          {#snippet a()}
-            <LeftPanel />
-          {/snippet}
-          {#snippet b()}
-            <ResizableSplit
-              direction="horizontal"
-              initial={0.76}
-              min={0.5}
-              max={0.9}
-              storageKey="ave:split:right"
-            >
-              {#snippet a()}
-                <CenterPreview />
-              {/snippet}
-              {#snippet b()}
-                <RightPanel />
-              {/snippet}
-            </ResizableSplit>
-          {/snippet}
-        </ResizableSplit>
-      {/snippet}
-      {#snippet b()}
-        <TimelinePanel />
-      {/snippet}
-    </ResizableSplit>
+    {#if activeAppTab === "workspace"}
+      <WorkspaceTab />
+    {:else if activeAppTab === "automation"}
+      <EmptyState
+        fullHeight
+        title={t("appTabs.automationPlaceholderTitle")}
+        description={t("appTabs.automationPlaceholderDesc")}
+      />
+    {:else}
+      <EmptyState
+        fullHeight
+        title={t("appTabs.projectsPlaceholderTitle")}
+        description={t("appTabs.projectsPlaceholderDesc")}
+      />
+    {/if}
   </section>
 
   <!-- Mounted once here (not inside TopBar/Timeline) since the Export
@@ -167,9 +166,13 @@
 <style>
   .shell {
     display: grid;
-    grid-template-rows: auto 1fr;
+    grid-template-rows: auto auto 1fr;
     height: 100vh;
     overflow: hidden;
+  }
+  .app-tabs {
+    padding: 6px 8px 0;
+    border-bottom: 1px solid var(--border);
   }
   .workspace {
     min-height: 0;
