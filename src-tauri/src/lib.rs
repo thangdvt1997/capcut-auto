@@ -20,6 +20,7 @@
 pub mod ai;
 pub mod assets;
 pub mod audio;
+pub mod automation;
 pub mod batch;
 pub mod broll;
 pub mod capcut;
@@ -147,6 +148,11 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::assets::add_asset,
         commands::assets::remove_asset,
         commands::assets::update_asset,
+        commands::automation::list_automation_rules,
+        commands::automation::create_automation_rule,
+        commands::automation::update_automation_rule,
+        commands::automation::set_automation_rule_enabled,
+        commands::automation::delete_automation_rule,
         commands::templates::list_templates,
         commands::templates::save_as_template,
         commands::templates::save_generated_template,
@@ -328,6 +334,24 @@ pub fn run() {
             // `BatchJobManager` for the whole app, tracking every in-flight
             // batch job by id — see `batch::manager` module doc comment.
             tauri::Manager::manage(app, crate::batch::BatchJobManager::default());
+            // Smart Automation (upgrade spec §27, `UPGRADE_PLAN.md` Phase
+            // U4): one `RuleWatcherManager` for the whole app, tracking a
+            // real live `notify` watcher per currently-enabled `WatchFolder`
+            // rule — see `automation::manager` module doc comment. Managed
+            // first, then immediately re-hydrated from whatever rules are
+            // already persisted on disk (mirrors how `init_media_library`
+            // above opens the same real database file every run) —
+            // best-effort per rule, never fails app startup itself.
+            {
+                let rule_watchers = crate::automation::RuleWatcherManager::default();
+                match crate::commands::automation::automation_dir(app.handle()) {
+                    Ok(dir) => rule_watchers.hydrate(app.handle(), &dir),
+                    Err(e) => tracing::warn!(
+                        "failed to resolve automation rules directory at startup: {e}"
+                    ),
+                }
+                tauri::Manager::manage(app, rule_watchers);
+            }
             Ok(())
         })
         .build(tauri::generate_context!())

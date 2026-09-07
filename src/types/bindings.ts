@@ -1084,6 +1084,92 @@ async updateAsset(assetId: string, name: string | null, filePath: string | null,
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Lists every persisted automation rule.
+ */
+async listAutomationRules() : Promise<Result<AutomationRule[], AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_automation_rules") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Creates a new automation rule (`enabled: true` by default,
+ * `automation::new_rule`'s own doc comment) and, since it starts enabled,
+ * immediately starts its real `WatchFolder` watcher
+ * (`RuleWatcherManager::start_watch`). If starting that watcher fails (a
+ * real OS-level watch error, distinct from an invalid/nonexistent path,
+ * which `automation::new_rule` already rejects before ever reaching here),
+ * the just-saved rule file is removed again — this command never leaves a
+ * rule persisted on disk that looks "enabled" but has no real watcher
+ * behind it.
+ */
+async createAutomationRule(name: string, trigger: AutomationTrigger, condition: AutomationCondition | null, action: AutomationAction) : Promise<Result<AutomationRule, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_automation_rule", { name, trigger, condition, action }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Updates an existing rule's `name`/`trigger`/`condition`/`action` in place
+ * (`None` = leave that field unchanged). A new `trigger` is re-validated
+ * the same way `create_automation_rule` validates one (real folder
+ * existence) — never silently accepted.
+ * 
+ * Honest scope note: `condition` here can only be left-unchanged (`None`)
+ * or replaced with a new configured condition (`Some(c)`) — there is no way
+ * to explicitly clear an existing condition back to "always proceed"
+ * through this command alone (that would need a second, separate flag to
+ * disambiguate from "leave unchanged" without an ambiguous nested
+ * `Option<Option<_>>` across the Tauri IPC boundary, where both would
+ * arrive as a bare JSON `null`). Not needed by any caller in this pass
+ * (there is no frontend yet); a caller wanting that today deletes and
+ * recreates the rule.
+ * 
+ * Always restarts this rule's live watcher (stop then, if still `enabled`,
+ * start again) — see `RuleWatcherManager` module doc comment for why: the
+ * running watcher's callback closure captured a snapshot of the *whole*
+ * rule when it was started, so any field change here (not just `trigger`)
+ * needs a fresh watcher to actually take effect.
+ */
+async updateAutomationRule(ruleId: string, name: string | null, trigger: AutomationTrigger | null, condition: AutomationCondition | null, action: AutomationAction | null) : Promise<Result<AutomationRule, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_automation_rule", { ruleId, name, trigger, condition, action }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Toggles a rule on/off — starts or stops its real `WatchFolder` watcher to
+ * match (`RuleWatcherManager::start_watch`/`stop_watch`), on top of
+ * persisting the new `enabled` value.
+ */
+async setAutomationRuleEnabled(ruleId: string, enabled: boolean) : Promise<Result<AutomationRule, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_automation_rule_enabled", { ruleId, enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Deletes a rule: stops its live watcher first (if any), then removes it
+ * (and its fire log, `automation::io::delete_rule`'s own doc comment) from
+ * disk.
+ */
+async deleteAutomationRule(ruleId: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_automation_rule", { ruleId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async listTemplates() : Promise<Result<TemplateCatalog, AppErrorPayload>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_templates") };
@@ -1702,6 +1788,79 @@ export type AudioRole = "standard" | "music" | "voice"
  * independently.
  */
 export type AutoReframeResult = { raw_positions: SubjectPosition[]; smoothed_positions: SubjectPosition[]; keyframes: Keyframe[]; crop_windows: CropWindow[]; source_width: number; source_height: number }
+/**
+ * Closed action enum (module doc comment) — exactly one variant today. The
+ * entire action *sequence* §27's worked example describes (AI analyze ->
+ * create shorts -> apply template -> CapCut edit -> export) collapses into
+ * this one real, already-existing pipeline call — see module doc comment.
+ */
+export type AutomationAction = 
+/**
+ * Runs the arrived file through the real batch pipeline. `template_ids`
+ * mirrors `commands::batch::start_multi_template_batch`'s own shape
+ * exactly: `Some(ids)` (1+ entries) fans this single file out across
+ * every listed template via `batch::manager::create_multi_template_batch`
+ * (one job per template, §11's own N x M naming convention, here with
+ * N = 1); `None` runs the plain single-template `batch::manager::start_batch`
+ * path using whatever `config.template_id` already carries (or none at
+ * all). Never a third, automation-specific render path.
+ */
+{ kind: "run_pipeline"; config: BatchPipelineConfig; template_ids: string[] | null }
+/**
+ * Closed condition enum (module doc comment) — exactly one variant today.
+ * `AutomationRule::condition` being `None` (no condition configured at all)
+ * always proceeds — this enum only ever represents a *configured* check.
+ */
+export type AutomationCondition = 
+/**
+ * Real ffprobe duration (`media::probe`), not an estimate — passes when
+ * the arrived file's real duration is `>=` this many seconds (upgrade
+ * spec §27's own worked example: "duration > 5 minutes"; this checks
+ * `>=`, matching this codebase's existing inclusive-threshold
+ * convention elsewhere, e.g. `SmartEditCategory` scoring).
+ * 
+ * A struct variant (`{ min_seconds: f64 }`), not a tuple variant
+ * (`(f64)`) — serde's internally-tagged representation (`tag = "kind"`,
+ * matching `AutomationTrigger`/`AutomationAction`'s own convention)
+ * cannot serialize a newtype variant wrapping a bare, non-self-describing
+ * value like `f64` (there's no JSON object to embed the tag field
+ * into); a real `cargo test` run surfaced this exact serialization
+ * failure before this doc comment was written. A named field sidesteps
+ * it entirely and is more self-documenting at every call site besides.
+ */
+{ kind: "min_duration_seconds"; min_seconds: number }
+/**
+ * One persisted automation rule (module doc comment).
+ */
+export type AutomationRule = { id: string; name: string; 
+/**
+ * Whether this rule's trigger is currently live-watching. Toggling this
+ * (via `set_automation_rule_enabled`) starts/stops the real
+ * `notify` watcher for this rule's `trigger`
+ * (`RuleWatcherManager::start_watch`/`stop_watch`) — a rule saved with
+ * `enabled: false` is inert: persisted, listed, editable, but not
+ * actually watching anything.
+ */
+enabled: boolean; trigger: AutomationTrigger; 
+/**
+ * `None` means "always proceed" — this rule has no configured
+ * condition at all, not merely a condition that always evaluates true.
+ */
+condition: AutomationCondition | null; action: AutomationAction; 
+/**
+ * RFC3339, when this rule was created.
+ */
+created_at: string }
+/**
+ * Closed trigger enum (module doc comment) — exactly one variant today.
+ */
+export type AutomationTrigger = 
+/**
+ * Fires once per new video file that appears in `path` (upgrade spec
+ * §27's own worked example: "new video added to folder X"). Real
+ * implementation: `automation::watcher::watch_folder`.
+ */
+{ kind: "watch_folder"; path: string }
 /**
  * Catalog entry cross-referenced with what's actually on disk / actively
  * downloading (master prompt §60 "Available models").

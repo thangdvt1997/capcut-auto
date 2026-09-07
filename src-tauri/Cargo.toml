@@ -114,6 +114,20 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 # models/templates/project-adjacent free-space checks; `network`/`component`/
 # `user` left off since nothing here needs them.
 sysinfo = { version = "0.36.1", default-features = false, features = ["system", "disk"] }
+# Smart Automation / watch-folder trigger (upgrade spec §27, `UPGRADE_PLAN.md`
+# Phase U4): the standard, actively-maintained cross-platform file-system
+# notification crate (inotify on Linux, `ReadDirectoryChangesW` on Windows —
+# this app's actual target) — nothing in this codebase watches the
+# filesystem today, so this is a genuinely new dependency, not a
+# reimplementation of an existing one. Debounce (a copied/still-being-
+# written file must not be treated as "arrived" the instant its `Create`
+# event fires) is implemented by hand via a short file-size-stability poll
+# (`automation::watcher::wait_until_stable`) rather than pulling in
+# `notify-debouncer-full`/`-mini` as a second dependency — see that module's
+# doc comment for why a few lines of manual polling was simpler and
+# sufficient here than a whole extra debounce crate tied to a specific
+# `notify` minor version.
+notify = "6.1"
 
 [features]
 default = ["custom-protocol"]

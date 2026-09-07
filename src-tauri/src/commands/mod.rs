@@ -7,6 +7,7 @@
 pub mod ai;
 pub mod assets;
 pub mod auto_template;
+pub mod automation;
 pub mod batch;
 pub mod broll;
 pub mod capcut;
