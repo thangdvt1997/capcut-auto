@@ -417,7 +417,11 @@
     "browseButton": "Browse…",
     "clearButton": "Clear override",
     "effectivePathLabel": "Export to CapCut will use",
-    "effectivePathNone": "No draft directory known yet — detect one above or set a manual override."
+    "effectivePathNone": "No draft directory known yet — detect one above or set a manual override.",
+    "openCapcutButton": "Open CapCut",
+    "openingCapcut": "Opening…",
+    "openCapcutTooltip": "Launches the real installed CapCut/Jianying app to its own Home screen",
+    "openCapcutFailed": "Could not open CapCut: {{error}}"
   },
   "capcutExport": {
     "title": "Export to CapCut",
@@ -449,7 +453,13 @@
     "exporting": "Exporting…",
     "exportFailed": "Export failed: {{error}}",
     "exportComplete": "Draft written to {{path}}",
-    "exportAnotherButton": "Export another"
+    "exportAnotherButton": "Export another",
+    "postExportSectionTitle": "After export",
+    "validateButton": "Validate Draft",
+    "validating": "Validating…",
+    "revealButton": "Reveal in Explorer",
+    "validationHealthy": "This draft is healthy — CapCut Pro should discover and open it correctly.",
+    "validationUnhealthy": "This draft has real problems:"
   },
   "aiSettings": {
     "title": "AI Settings",

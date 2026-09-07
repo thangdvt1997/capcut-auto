@@ -154,6 +154,45 @@
 
           {#if capcutStore.exportedPath}
             <p class="ce-success">{t("capcutExport.exportComplete", { path: capcutStore.exportedPath })}</p>
+
+            <section class="ce-section">
+              <h3 class="ce-section-title">{t("capcutExport.postExportSectionTitle")}</h3>
+              <div class="ce-row">
+                <button
+                  class="btn btn-ghost btn-sm"
+                  disabled={capcutStore.validating}
+                  onclick={() => void capcutStore.validateDraft(capcutStore.exportedPath ?? "")}
+                >
+                  {capcutStore.validating ? t("capcutExport.validating") : t("capcutExport.validateButton")}
+                </button>
+                <button class="btn btn-ghost btn-sm" onclick={() => void capcutStore.revealDraftInExplorer(capcutStore.exportedPath ?? "")}>
+                  {t("capcutExport.revealButton")}
+                </button>
+              </div>
+
+              {#if capcutStore.revealError}
+                <div class="ce-error">{capcutStore.revealError}</div>
+              {/if}
+
+              {#if capcutStore.validationError}
+                <div class="ce-error">{capcutStore.validationError}</div>
+              {/if}
+
+              {#if capcutStore.validationReport}
+                {#if capcutStore.validationReport.problems.length === 0}
+                  <p class="ce-ok">{t("capcutExport.validationHealthy")}</p>
+                {:else}
+                  <div class="ce-validation-problems">
+                    <p class="ce-warn-strong">{t("capcutExport.validationUnhealthy")}</p>
+                    <ul class="ce-warn-list">
+                      {#each capcutStore.validationReport.problems as problem (problem)}
+                        <li>{problem}</li>
+                      {/each}
+                    </ul>
+                  </div>
+                {/if}
+              {/if}
+            </section>
           {/if}
         {/if}
       </div>
@@ -347,6 +386,11 @@
     background: hsl(0 84% 65% / 0.08);
     border: 1px solid hsl(0 84% 65% / 0.3);
     border-radius: var(--radius-sm);
+  }
+  .ce-validation-problems {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
   .ce-success {
     margin: 0;

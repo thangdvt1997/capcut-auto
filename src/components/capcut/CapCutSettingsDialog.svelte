@@ -88,6 +88,9 @@
           {#if capcutStore.detectError}
             <div class="cs-error">{t("capcutSettings.detectFailed", { error: capcutStore.detectError })}</div>
           {/if}
+          {#if capcutStore.openCapcutError}
+            <div class="cs-error">{t("capcutSettings.openCapcutFailed", { error: capcutStore.openCapcutError })}</div>
+          {/if}
 
           {#if capcutStore.installations.length === 0 && !capcutStore.detectLoading && !capcutStore.detectError}
             <p class="cs-empty muted-2">{t("capcutSettings.noneDetected")}</p>
@@ -119,6 +122,16 @@
                         {t("capcutSettings.useThisPathButton")}
                       </button>
                     {/if}
+                    <button
+                      class="btn btn-ghost btn-sm"
+                      disabled={capcutStore.openingCapcutFor === inst.draft_root}
+                      onclick={() => void capcutStore.openCapcutApp(inst)}
+                      title={t("capcutSettings.openCapcutTooltip")}
+                    >
+                      {capcutStore.openingCapcutFor === inst.draft_root
+                        ? t("capcutSettings.openingCapcut")
+                        : t("capcutSettings.openCapcutButton")}
+                    </button>
                   </div>
                 </div>
               </div>

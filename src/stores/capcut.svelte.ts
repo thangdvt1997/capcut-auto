@@ -65,7 +65,12 @@
 
 import { open } from "@tauri-apps/plugin-dialog";
 import { commands } from "../types/bindings";
-import type { CapCutRegistryHint, DetectedCapCutInstallation, ProjectV1 } from "../types/bindings";
+import type {
+  CapCutRegistryHint,
+  DetectedCapCutInstallation,
+  DraftValidationReport,
+  ProjectV1,
+} from "../types/bindings";
 import { computeCapcutCompatWarnings, type CapcutCompatWarning } from "../capcut/compat";
 import { timeline } from "./timeline.svelte";
 
@@ -208,6 +213,76 @@ class CapCutStore {
   }
 
   // -------------------------------------------------------------------
+  // Open CapCut (`STUDIO_PLAN.md` Phase S1, `promt.md` §10) — launches the
+  // real installed executable for one detected installation. Per-row state
+  // (not a single global one) since the Settings panel can list more than
+  // one real installation at once.
+  // -------------------------------------------------------------------
+
+  openingCapcutFor = $state<string | null>(null);
+  openCapcutError = $state<string | null>(null);
+
+  async openCapcutApp(installation: DetectedCapCutInstallation): Promise<void> {
+    if (this.openingCapcutFor) return;
+    this.openingCapcutFor = installation.draft_root;
+    this.openCapcutError = null;
+    try {
+      const result = await commands.openCapcut(installation.product, installation.user_profile);
+      if (result.status === "error") {
+        this.openCapcutError = result.error.message;
+      }
+    } catch (err) {
+      this.openCapcutError = String(err);
+    } finally {
+      this.openingCapcutFor = null;
+    }
+  }
+
+  // -------------------------------------------------------------------
+  // Validate Draft + Reveal in Explorer (`STUDIO_PLAN.md` Phase S1) —
+  // both act on a specific draft folder path, so they're wired wherever
+  // this store already has one in hand: right after a successful export
+  // (`exportedPath`) in `CapCutExportDialog.svelte`.
+  // -------------------------------------------------------------------
+
+  validating = $state(false);
+  validationReport = $state<DraftValidationReport | null>(null);
+  validationError = $state<string | null>(null);
+
+  async validateDraft(draftDir: string): Promise<void> {
+    if (this.validating) return;
+    this.validating = true;
+    this.validationError = null;
+    this.validationReport = null;
+    try {
+      this.validationReport = await commands.validateCapcutDraft(draftDir);
+    } catch (err) {
+      this.validationError = String(err);
+    } finally {
+      this.validating = false;
+    }
+  }
+
+  clearValidation(): void {
+    this.validationReport = null;
+    this.validationError = null;
+  }
+
+  revealError = $state<string | null>(null);
+
+  async revealDraftInExplorer(draftDir: string): Promise<void> {
+    this.revealError = null;
+    try {
+      const result = await commands.revealCapcutDraftInExplorer(draftDir);
+      if (result.status === "error") {
+        this.revealError = result.error.message;
+      }
+    } catch (err) {
+      this.revealError = String(err);
+    }
+  }
+
+  // -------------------------------------------------------------------
   // Export to CapCut (master prompt §31)
   // -------------------------------------------------------------------
 
@@ -238,6 +313,8 @@ class CapCutStore {
     this.exportError = null;
     this.exportedPath = null;
     this.confirmingExport = false;
+    this.clearValidation();
+    this.revealError = null;
     void this.ensureDetected();
 
     const lastPath = timeline.project?.export.last_capcut_draft_path ?? null;
@@ -335,6 +412,8 @@ class CapCutStore {
   startNewExport(): void {
     this.exportedPath = null;
     this.exportError = null;
+    this.clearValidation();
+    this.revealError = null;
   }
 }
 

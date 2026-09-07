@@ -417,7 +417,11 @@
     "browseButton": "Duyệt…",
     "clearButton": "Bỏ ghi đè",
     "effectivePathLabel": "Xuất sang CapCut sẽ dùng",
-    "effectivePathNone": "Chưa biết thư mục bản nháp nào — hãy dò tìm ở trên hoặc đặt đường dẫn ghi đè thủ công."
+    "effectivePathNone": "Chưa biết thư mục bản nháp nào — hãy dò tìm ở trên hoặc đặt đường dẫn ghi đè thủ công.",
+    "openCapcutButton": "Mở CapCut",
+    "openingCapcut": "Đang mở…",
+    "openCapcutTooltip": "Khởi chạy ứng dụng CapCut/Jianying thật đã cài, mở về màn hình Home của nó",
+    "openCapcutFailed": "Không mở được CapCut: {{error}}"
   },
   "capcutExport": {
     "title": "Xuất sang CapCut",
@@ -449,7 +453,13 @@
     "exporting": "Đang xuất…",
     "exportFailed": "Xuất thất bại: {{error}}",
     "exportComplete": "Đã ghi bản nháp vào {{path}}",
-    "exportAnotherButton": "Xuất bản khác"
+    "exportAnotherButton": "Xuất bản khác",
+    "postExportSectionTitle": "Sau khi xuất",
+    "validateButton": "Kiểm tra bản nháp",
+    "validating": "Đang kiểm tra…",
+    "revealButton": "Mở trong Explorer",
+    "validationHealthy": "Bản nháp này lành mạnh — CapCut Pro sẽ nhận diện và mở đúng.",
+    "validationUnhealthy": "Bản nháp này có vấn đề thật:"
   },
   "aiSettings": {
     "title": "Cài đặt AI",
