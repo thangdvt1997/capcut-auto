@@ -1182,5 +1182,20 @@
     "savedNote": "Đã lưu \"{{name}}\" — mẫu này giờ đã xuất hiện trong thư viện mẫu, sẵn sàng để dùng lại.",
     "resetButton": "Đặt lại",
     "closeButton": "Đóng"
+  },
+  "ui": {
+    "modal": {
+      "close": "Đóng"
+    },
+    "toast": {
+      "dismiss": "Bỏ qua"
+    },
+    "loadingState": {
+      "default": "Đang tải…"
+    },
+    "errorState": {
+      "default": "Đã xảy ra lỗi",
+      "retryButton": "Thử lại"
+    }
   }
 }

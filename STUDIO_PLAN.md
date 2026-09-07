@@ -245,3 +245,48 @@ Read-only audit, no code written — mirrors the same audit-before-code discipli
 ### Honest size estimate
 
 The whole project stands at 60 commits, ~53 Svelte files (~15.8k lines), ~166 Rust files (~55.8k lines). The just-completed Studio S1-S5 slice was 5 commits of contained, mostly-backend, non-conflicting pipeline-wiring work. This redesign is a different order of magnitude: it touches the app's top-level shell (nothing in S1-S5 did), requires an ~20-component design system from zero while 18 existing dialogs keep working, and carries two real architecture-level product questions that each individually rival the CapCut RPA decision — meaning it needs its own Phase D0 decision round before implementation can start honestly, unlike S1-S5's individually-scoped, already-unblocked phases. Phase D1+D2+D3 alone likely exceeds the combined size of S1-S5. Should be greenlit as a multi-phase initiative with Phase D0 resolved explicitly first, not attempted as one continuous pass.
+
+---
+
+## Phase D1 — Design System foundation (promt.md §19/§20)
+
+Frontend-only (nothing in `src-tauri/` touched). Builds a real `src/components/ui/` component library on top of the existing `globals.css` token set — no existing dialog touched or retrofitted yet (that's Phase D2/D3/D7, deliberately out of scope here per the task brief).
+
+### Components built
+
+**Tier 1 (all built, all solid)**: `Button` (real `variant` prop: primary/secondary/danger/ghost, `size`, `disabled`, `loading` with a real spinner), `IconButton` (square, icon-only, mandatory `ariaLabel`), `Badge` (neutral/pos/neg/warn/accent), `ProgressBar` (determinate + `indeterminate`), `Tooltip` (real hover/focus-triggered, pure-CSS positioning, 4 placements), `EmptyState`/`LoadingState`/`ErrorState` (matching the existing `muted-2`/`.xx-error` visual language sampled from `CapCutSettingsDialog`/`AutomationRulesDialog`/`BatchJobsDialog`, generalized with icon/action slots and a retry callback), `Input`/`Select`/`Checkbox`/`Switch`/`Slider` (real form primitives on new shared `.ui-field`/`.ui-input`/`.ui-select`/`.ui-checkbox` classes in `globals.css` — `Switch` is the one genuinely new visual pattern, confirmed via grep that no toggle-switch exists anywhere in the app today), `Card`/`Panel` (bordered box vs. borderless titled section — sampled `.cs-card`/`.ar-row`/`.hc-card` and `.cs-section`/`.ar-section-title` respectively before designing both).
+
+**Tier 2 (all built)**: `Modal` (the real backdrop/dialog/header/close/footer shell, sampled from `CapCutSettingsDialog`/`AutomationRulesDialog`/`BatchJobsDialog`'s own near-identical hand-rolled markup — a future retrofit can delete each dialog's own ~40-60 lines of this chrome and swap in `<Modal>` + slotted content), `Tabs` (reuses the existing global `.panel-tabs`/`.panel-tab`/`.active` classes verbatim — sampled from `LeftPanel`/`RightPanel`'s own internal tab strips, which already use those exact classes, so this is a genuine drop-in replacement for both, not a new visual system), `Toast` + `stores/toast.svelte.ts` (confirmed via grep: no toast mechanism existed anywhere before this pass; the store mirrors this codebase's own established singleton-class-with-`$state` convention, e.g. `stores/history.svelte.ts`), `DataTable` (real, honestly-scoped v1: sortable columns via an `accessor`, custom cell content via a `cell` render-snippet, Svelte 5 generic component (`generics="T"`) for real per-column typing — explicitly does NOT do pagination, column resizing, multi-column sort, or row selection this pass; client-side sort only, fine for every existing in-memory table-shaped view in this app today).
+
+**Deferred**: `ContextMenu` — not built. Time this pass went to making sure `DataTable` (the most structurally complex of the whole list) and Toast's store convention were solid rather than rushing a 20th component shallowly, exactly the trade-off the task brief invited ("build the ones you have real time to finish well over rushing all 20"). Real, honest gap — not silently dropped.
+
+### `globals.css` additions
+
+- **Spacing scale** (promt.md's own explicit 4/8/12/16/24/32 list, confirmed not already present before adding): `--space-1` through `--space-8` (units of 4px, Tailwind's own naming convention, so an in-between value can be added later without renumbering).
+- **Semantic tint tokens** (promt.md §20): `--pos-bg`/`--pos-border`, `--neg-bg`/`--neg-border`, `--warn-bg`/`--warn-border`, `--accent-bg`/`--accent-border` — reuse the existing `--pos`/`--neg`/`--warn`/`--accent` hues verbatim (never renamed/duplicated), replacing the slightly-different-every-time inline `hsl(... / 0.1)` literals every existing dialog's own `.xx-error`/`.xx-status-*` currently hardcodes.
+- **Button variant tokens + classes**: `--btn-primary-bg`/`--btn-primary-fg`/`--btn-primary-hover-bg`, `--btn-danger-bg`/`--btn-danger-border`/`--btn-danger-fg`/`--btn-danger-hover-bg`, plus new `.btn-primary`/`.btn-danger` modifier classes meant to combine with the existing `.btn` (e.g. `class="btn btn-primary"`). The pre-existing bare `.btn` class IS kept as the Secondary tier (not renamed/duplicated into a new `.btn-secondary`), and `.btn-ghost` already covered Ghost — only Primary/Danger were genuinely missing, exactly as the task brief identified.
+- **Form field primitives**: `.ui-field`/`.ui-label`/`.ui-input`/`.ui-select`/`.ui-field-error`/`.ui-hint`/`.ui-checkbox`/`.ui-checkbox-disabled` — one shared 28px-row-height recipe for `Input`/`Select`/`Checkbox`/`Slider` to use instead of each hand-rolling its own copy, matching (not reinventing) the sizing every existing dialog's own `.cs-input`/`.ar-input`/`.ar-select` already converged on independently.
+
+None of `.btn`/`.btn-ghost`/`--background`/`--surface`/etc. were renamed, removed, or duplicated — every new class/token is additive.
+
+### i18n parity
+
+New `"ui"` top-level namespace in both `en.json`/`vi.json` (`ui.modal.close`, `ui.toast.dismiss`, `ui.loadingState.default`, `ui.errorState.default`, `ui.errorState.retryButton` — the only component-owned strings that needed real defaults; every other component's text is caller-supplied via `t()` at the call site, same as every existing dialog). Hand-written Vietnamese, not machine-transliterated. Verified zero mismatch with a standalone Node key-diff script (flattens both catalogs, diffs the key sets): **1097 keys in each of `en.json`/`vi.json`** (up from the audit's recorded ~1092 — exactly the 5 new `ui.*` keys, present in both files, zero one-sided keys).
+
+### Verification
+
+- `pnpm run check`: **0 errors, 0 warnings, 261 files** (up from 240 pre-Phase-D1 — the 19 new `ui/` components + `stores/toast.svelte.ts` + one demo file, 21 new files, 240+21=261, exact). The pre-existing `vendor/capcut-mate/...vite.config.js` config-load error in the console output is unrelated/pre-existing (present identically in the pre-Phase-D1 baseline run) — not something this pass introduced or needs to fix.
+- `pnpm run lint`: **0 problems**. One narrowly-scoped exception needed: `DataTable.svelte`'s Svelte 5 `generics="T"` type parameter isn't threaded into this repo's installed `svelte-eslint-parser@0.43.0`'s scope analysis for the core `no-undef` rule (even though `svelte-check`/`tsc` both resolve `T` correctly) — fixed with a tightly-scoped `eslint-disable`/`eslint-enable no-undef` around exactly the 4 real uses, documented inline, not a blanket rule change.
+- `pnpm run build`: **succeeds** (`vite build`, 260 modules transformed — the throwaway demo file, described below, is correctly excluded since nothing imports it; one pre-existing "chunk larger than 500kB" advisory warning, unrelated to this pass and present before it too).
+
+### Demo/verification aid
+
+`src/components/ui/__demo/UiDemo.svelte`: a throwaway page exercising every component's real props/types in one place (not a shipped feature, not imported anywhere in the live app — confirmed by `vite build`'s own 260-vs-261-file module count above). **Kept** (not deleted) as a live reference for whoever does the Phase D2/D3/D7 retrofit, clearly marked as throwaway in its own header comment.
+
+### Files created/changed
+
+New: `src/components/ui/{Button,IconButton,Badge,ProgressBar,Tooltip,EmptyState,LoadingState,ErrorState,Input,Select,Checkbox,Switch,Slider,Card,Panel,Modal,Tabs,Toast,DataTable}.svelte`, `src/components/ui/__demo/UiDemo.svelte`, `src/stores/toast.svelte.ts`. Changed: `src/styles/globals.css` (additive tokens/classes only, see above), `src/locales/en.json`/`src/locales/vi.json` (new `"ui"` namespace, 5 keys each), `STUDIO_PLAN.md` (this section).
+
+### Not done / left for later phases
+
+No existing dialog was touched or retrofitted onto these components (explicitly out of scope this pass, per the task brief — Phase D2/D3/D7). `ContextMenu` deferred (see above). No new backend/Rust surface of any kind (frontend-only task, `src-tauri/` untouched — confirmed via `git status` before finishing).

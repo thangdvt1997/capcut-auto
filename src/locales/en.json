@@ -1182,5 +1182,20 @@
     "savedNote": "Saved \"{{name}}\" — it now appears in your template gallery, ready to reuse.",
     "resetButton": "Reset",
     "closeButton": "Close"
+  },
+  "ui": {
+    "modal": {
+      "close": "Close"
+    },
+    "toast": {
+      "dismiss": "Dismiss"
+    },
+    "loadingState": {
+      "default": "Loading…"
+    },
+    "errorState": {
+      "default": "Something went wrong",
+      "retryButton": "Retry"
+    }
   }
 }
