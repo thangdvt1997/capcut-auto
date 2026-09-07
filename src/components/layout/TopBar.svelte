@@ -79,6 +79,14 @@
   doesn't fit `Timeline.svelte`'s toolbar either, unlike its sibling AI Auto
   Template dialog (which does need one, and lives there instead — see
   `Timeline.svelte`'s own doc comment).
+
+  Upgrade U4 pass: added an "Automation…" button next to "Assets…" (opens
+  `AutomationRulesDialog.svelte` / `stores/automation.svelte.ts`, upgrade
+  spec §27 Smart Automation) — same no-Settings-surface-yet placement
+  rationale as every other standalone dialog above; Automation rules are
+  app-level (a watch-folder rule keeps running regardless of whatever
+  project happens to be open), same reasoning `AssetLibraryDialog`/
+  `BatchJobsDialog` already established.
 -->
 <script lang="ts">
   import { commands } from "../../types/bindings";
@@ -96,6 +104,7 @@
   import { firstRunWizardStore } from "../../stores/firstRunWizard.svelte";
   import { assetsStore } from "../../stores/assets.svelte";
   import { templateGenerator } from "../../stores/templateGenerator.svelte";
+  import { automationStore } from "../../stores/automation.svelte";
 
   let shellInfo: ShellInfo | null = $state(null);
   let shellInfoError: string | null = $state(null);
@@ -225,6 +234,17 @@
     title={t("topBar.assetLibraryTooltip")}
   >
     {t("topBar.assetLibraryButton")}
+  </button>
+
+  <!-- Upgrade U4 Smart Automation entry point (upgrade spec §27) — same
+       no-Settings-surface-yet placement rationale as "Assets…" just above
+       (see AutomationRulesDialog.svelte's own doc comment). -->
+  <button
+    class="btn btn-ghost"
+    onclick={() => automationStore.openDialog()}
+    title={t("topBar.automationTooltip")}
+  >
+    {t("topBar.automationButton")}
   </button>
 
   <!-- Phase 9 CapCut/Jianying Settings entry point (master prompt §30) —

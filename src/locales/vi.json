@@ -40,7 +40,9 @@
     "systemInfoButton": "Thông tin hệ thống…",
     "systemInfoTooltip": "Xem thông tin chẩn đoán ứng dụng/hệ thống (FFmpeg, bộ mã hóa phần cứng, CapCut, mô hình) — hữu ích khi báo lỗi",
     "wizardButton": "Trình thiết lập…",
-    "wizardTooltip": "Chạy lại trình thiết lập lần đầu (kiểm tra hệ thống, FFmpeg, GPU, CapCut, nhà cung cấp AI, mô hình chuyển giọng nói thành văn bản, thư mục dự án)"
+    "wizardTooltip": "Chạy lại trình thiết lập lần đầu (kiểm tra hệ thống, FFmpeg, GPU, CapCut, nhà cung cấp AI, mô hình chuyển giọng nói thành văn bản, thư mục dự án)",
+    "automationButton": "Tự động hóa…",
+    "automationTooltip": "Tạo quy tắc theo dõi một thư mục và tự động chạy các video mới qua một pipeline xử lý hàng loạt (Tự động hóa thông minh)"
   },
   "leftPanel": {
     "tabMedia": "Thư viện",
@@ -869,6 +871,54 @@
       "subtitle_style": "Kiểu phụ đề",
       "transition_preset": "Cấu hình chuyển cảnh",
       "background": "Nền"
+    }
+  },
+  "automationRules": {
+    "title": "Quy tắc tự động hóa",
+    "close": "Đóng",
+    "explainer": "Các quy tắc theo dõi một thư mục để phát hiện video mới và tự động chạy chúng qua một pipeline xử lý hàng loạt (Tự động hóa thông minh, mục §27) — \"khi có video mới xuất hiện trong thư mục X, nếu video dài ít nhất N phút, áp dụng mẫu Y rồi xuất.\"",
+    "loading": "Đang tải danh sách quy tắc…",
+    "loadFailed": "Không tải được danh sách quy tắc tự động hóa: {{error}}",
+    "newRuleButton": "Quy tắc mới…",
+    "noRules": "Chưa có quy tắc tự động hóa nào — thêm một quy tắc để bắt đầu theo dõi một thư mục.",
+    "list": {
+      "watchedFolderLabel": "Thư mục theo dõi",
+      "conditionLabel": "Điều kiện",
+      "conditionNone": "Không có điều kiện — mọi video mới đều chạy",
+      "conditionMinDuration": "Dài ít nhất {{minutes}} phút",
+      "actionLabel": "Hành động",
+      "actionNoTemplate": "Không dùng mẫu",
+      "actionPresetSuffix": "· xuất: {{preset}}",
+      "enabledLabel": "Đang bật",
+      "toggleFailed": "Không cập nhật được quy tắc này: {{error}}",
+      "deleteButton": "Xóa",
+      "deleteConfirmButton": "Bấm lần nữa để xác nhận xóa",
+      "deleteCancelButton": "Hủy",
+      "deleting": "Đang xóa…"
+    },
+    "form": {
+      "title": "Quy tắc tự động hóa mới",
+      "nameLabel": "Tên",
+      "namePlaceholder": "Tên (ví dụ: \"Xuất TikTok\")",
+      "folderLabel": "Thư mục theo dõi",
+      "chooseFolderButton": "Chọn thư mục…",
+      "noFolderChosen": "Chưa chọn thư mục.",
+      "conditionSectionTitle": "Điều kiện",
+      "conditionCheckboxLabel": "Chỉ xử lý video dài ít nhất khoảng thời gian này",
+      "minDurationSuffix": "phút",
+      "actionSectionTitle": "Hành động",
+      "multiTemplateToggle": "Áp dụng nhiều mẫu (tách thành một job riêng cho mỗi mẫu)",
+      "multiTemplateHint": "Mỗi video mới sẽ được chạy một lần cho mỗi mẫu được chọn bên dưới.",
+      "noTemplatesYet": "Chưa có mẫu nào — hãy tạo một mẫu trong bảng Mẫu trước.",
+      "templateLabel": "Mẫu",
+      "noTemplateOption": "(không dùng mẫu — chỉ dùng cấu hình xuất)",
+      "exportPresetLabel": "Cấu hình xuất",
+      "useTemplateDefaultPreset": "Dùng cấu hình xuất mặc định của mẫu",
+      "scopeHint": "Xóa khoảng lặng và tạo phụ đề chưa thể cấu hình riêng cho từng quy tắc — phiên bản đầu tiên này tập trung vào bước áp dụng mẫu + xuất. Khi tệp đã xuất hiện, hãy dùng hộp thoại Bắt đầu xử lý hàng loạt của mục Hàng loạt để có toàn quyền kiểm soát.",
+      "createButton": "Tạo quy tắc",
+      "creating": "Đang tạo…",
+      "cancelButton": "Hủy",
+      "createFailed": "Không tạo được quy tắc này: {{error}}"
     }
   },
   "templatesPanel": {

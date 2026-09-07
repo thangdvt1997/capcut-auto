@@ -40,7 +40,9 @@
     "systemInfoButton": "System Info…",
     "systemInfoTooltip": "View application/system diagnostics (FFmpeg, hardware encoders, CapCut, models) — useful for bug reports",
     "wizardButton": "Setup Wizard…",
-    "wizardTooltip": "Re-run the first-run setup wizard (system check, FFmpeg, GPU, CapCut, AI provider, transcription model, project folder)"
+    "wizardTooltip": "Re-run the first-run setup wizard (system check, FFmpeg, GPU, CapCut, AI provider, transcription model, project folder)",
+    "automationButton": "Automation…",
+    "automationTooltip": "Create rules that watch a folder and automatically run new videos through a batch pipeline (Smart Automation)"
   },
   "leftPanel": {
     "tabMedia": "Media",
@@ -869,6 +871,54 @@
       "subtitle_style": "Subtitle Style",
       "transition_preset": "Transition Preset",
       "background": "Background"
+    }
+  },
+  "automationRules": {
+    "title": "Automation Rules",
+    "close": "Close",
+    "explainer": "Rules that watch a folder for new videos and automatically run them through a batch pipeline (Smart Automation, upgrade spec §27) — \"when a new video appears in folder X, if it's at least N minutes long, apply template Y and export.\"",
+    "loading": "Loading automation rules…",
+    "loadFailed": "Couldn't load automation rules: {{error}}",
+    "newRuleButton": "New Rule…",
+    "noRules": "No automation rules yet — add one to start watching a folder.",
+    "list": {
+      "watchedFolderLabel": "Watched folder",
+      "conditionLabel": "Condition",
+      "conditionNone": "No condition — every new video runs",
+      "conditionMinDuration": "At least {{minutes}} min long",
+      "actionLabel": "Action",
+      "actionNoTemplate": "No template",
+      "actionPresetSuffix": "· export: {{preset}}",
+      "enabledLabel": "Enabled",
+      "toggleFailed": "Couldn't update this rule: {{error}}",
+      "deleteButton": "Delete",
+      "deleteConfirmButton": "Click again to confirm delete",
+      "deleteCancelButton": "Cancel",
+      "deleting": "Deleting…"
+    },
+    "form": {
+      "title": "New Automation Rule",
+      "nameLabel": "Name",
+      "namePlaceholder": "Name (e.g. \"TikTok exports\")",
+      "folderLabel": "Watch folder",
+      "chooseFolderButton": "Choose Folder…",
+      "noFolderChosen": "No folder chosen yet.",
+      "conditionSectionTitle": "Condition",
+      "conditionCheckboxLabel": "Only process videos at least this long",
+      "minDurationSuffix": "minutes",
+      "actionSectionTitle": "Action",
+      "multiTemplateToggle": "Apply multiple templates (fan out one job per template)",
+      "multiTemplateHint": "Every new video will be run once per checked template below.",
+      "noTemplatesYet": "No templates available yet — create one in the Templates panel first.",
+      "templateLabel": "Template",
+      "noTemplateOption": "(no template — export preset only)",
+      "exportPresetLabel": "Export preset",
+      "useTemplateDefaultPreset": "Use template's default preset",
+      "scopeHint": "Silence removal and captions aren't configurable per rule yet — this v1 focuses on the template + export step. Use Batch's own Start Batch dialog for full control once the file has arrived.",
+      "createButton": "Create Rule",
+      "creating": "Creating…",
+      "cancelButton": "Cancel",
+      "createFailed": "Couldn't create this rule: {{error}}"
     }
   },
   "templatesPanel": {

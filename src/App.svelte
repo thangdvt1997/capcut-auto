@@ -25,6 +25,7 @@
   import AssetLibraryDialog from "./components/assets/AssetLibraryDialog.svelte";
   import HistoryDialog from "./components/history/HistoryDialog.svelte";
   import TemplateGeneratorDialog from "./components/templates/TemplateGeneratorDialog.svelte";
+  import AutomationRulesDialog from "./components/automation/AutomationRulesDialog.svelte";
 </script>
 
 <main class="shell">
@@ -153,6 +154,14 @@
        since it needs that toolbar's source track/clip picker context — see
        that component's own doc comment. -->
   <TemplateGeneratorDialog />
+
+  <!-- Upgrade U4: Smart Automation rules dialog (upgrade spec §27) — same
+       "one shared store-backed dialog, reachable from a TopBar button"
+       reason as the dialogs above — see AutomationRulesDialog.svelte's own
+       doc comment. Its Create Rule form reads the same shared
+       `templatesStore.allTemplates` catalog `StartBatchDialog.svelte`
+       already reads from, so nothing else needs mounting here. -->
+  <AutomationRulesDialog />
 </main>
 
 <style>
