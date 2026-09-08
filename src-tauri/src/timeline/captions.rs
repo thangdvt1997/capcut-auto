@@ -32,6 +32,7 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use crate::ai::translate::TranslatedCaption;
 use crate::project::{Caption, ProjectV1, Word};
 
 use super::command::{
@@ -402,6 +403,64 @@ pub fn bulk_set_caption_style(
         }
         let mut new_caption = caption.clone();
         new_caption.style_id = style_id.clone();
+        commands.push(Command::SetCaption(SetCaptionCommand {
+            old: caption.clone(),
+            new: new_caption,
+        }));
+    }
+    Ok(Command::Batch(BatchCommand { commands }))
+}
+
+// ---------------------------------------------------------------------------
+// Translation apply (`STUDIO_PLAN.md` Phase D12 — the frontend "Accept and
+// Apply" half of `ai::translate`)
+// ---------------------------------------------------------------------------
+
+/// Applies a caller-accepted subset of AI-proposed translations
+/// (`ai::translate::TranslatedCaption` — `caption_id`/`translated_text`,
+/// already validated by `ai::translate::parse_and_validate` against a real
+/// caption list) to the matching real captions' `text` — a `Batch` of
+/// `SetCaption`, exactly the same "pure builder over `&ProjectV1`, real
+/// mutation happens through `Command::apply`/undo history" discipline
+/// [`bulk_set_caption_style`]/[`find_replace_captions`] above already
+/// follow. This is the **only** place a translation proposal ever becomes a
+/// real project mutation — `ai::translate`'s own module doc comment is
+/// explicit that neither it nor its caller ever mutates `project.captions`
+/// itself; this function is that separate, explicit step, called only once
+/// a human has reviewed and accepted each entry (never wired to run
+/// automatically after `translate_captions` — that would violate this
+/// crate's "propose, never auto-apply" discipline every other AI feature
+/// here already follows).
+///
+/// Every `caption_id` in `translations` must name a real caption in
+/// `project` (`TimelineError::CaptionNotFound`) — the caller is responsible
+/// for only ever passing ids it actually knows about (the same "caller
+/// passes the exact real thing it asked to have translated" contract
+/// `ai::translate::parse_and_validate` already established on the propose
+/// side). A caption whose text already matches the proposed translation
+/// exactly produces no command (same "already-matching entries are a no-op"
+/// precedent as [`bulk_set_caption_style`]).
+///
+/// `words` is always cleared, unconditionally — a translation always
+/// changes the caption's *language*, so the old per-word timestamps (tied to
+/// the original-language text) are meaningless for the new text; this is
+/// the same "changed text invalidates old word timing" policy
+/// [`find_replace_captions`] already applies for a word-count change, made
+/// unconditional here since a translation is never merely a word-count-
+/// preserving edit of the same language.
+pub fn apply_caption_translations(
+    project: &ProjectV1,
+    translations: &[TranslatedCaption],
+) -> Result<Command, TimelineError> {
+    let mut commands = Vec::with_capacity(translations.len());
+    for translation in translations {
+        let caption = find_caption(project, &translation.caption_id)?;
+        if caption.text == translation.translated_text {
+            continue;
+        }
+        let mut new_caption = caption.clone();
+        new_caption.text = translation.translated_text.clone();
+        new_caption.words = Vec::new();
         commands.push(Command::SetCaption(SetCaptionCommand {
             old: caption.clone(),
             new: new_caption,
@@ -876,5 +935,89 @@ mod tests {
             session.project.captions[0].style_id.as_deref(),
             Some("template_tiktok")
         );
+    }
+
+    // -- translation apply (Phase D12) ----------------------------------
+
+    fn translated(caption_id: &str, translated_text: &str) -> TranslatedCaption {
+        TranslatedCaption {
+            caption_id: caption_id.to_string(),
+            translated_text: translated_text.to_string(),
+        }
+    }
+
+    #[test]
+    fn apply_caption_translations_updates_text_and_clears_word_timing() {
+        let words = vec![word("hello", 0, 300_000), word("world", 300_000, 600_000)];
+        let mut project =
+            project_with_captions(vec![caption_with_words("c1", "t1", words.clone())]);
+        let cmd =
+            apply_caption_translations(&project, &[translated("c1", "xin chào thế giới")]).unwrap();
+        apply(&mut project, cmd);
+
+        assert_eq!(project.captions[0].text, "xin chào thế giới");
+        assert!(project.captions[0].words.is_empty());
+    }
+
+    #[test]
+    fn apply_caption_translations_only_touches_accepted_ids() {
+        let c1 = caption_with_words("c1", "t1", vec![word("hello", 0, 300_000)]);
+        let c2 = caption_with_words("c2", "t1", vec![word("world", 300_000, 600_000)]);
+        let mut project = project_with_captions(vec![c1, c2]);
+        // Only c1 is "accepted" — c2 must be left completely untouched, even
+        // though a real translation proposal for it might exist elsewhere.
+        let cmd = apply_caption_translations(&project, &[translated("c1", "xin chào")]).unwrap();
+        apply(&mut project, cmd);
+
+        assert_eq!(project.captions[0].text, "xin chào");
+        assert_eq!(project.captions[1].text, "world");
+        assert_eq!(
+            project.captions[1].words,
+            vec![word("world", 300_000, 600_000)]
+        );
+    }
+
+    #[test]
+    fn apply_caption_translations_rejects_an_unknown_caption_id() {
+        let project = project_with_captions(vec![caption_with_words(
+            "c1",
+            "t1",
+            vec![word("hi", 0, 100)],
+        )]);
+        assert!(matches!(
+            apply_caption_translations(&project, &[translated("does_not_exist", "x")])
+                .unwrap_err(),
+            TimelineError::CaptionNotFound { caption_id } if caption_id == "does_not_exist"
+        ));
+    }
+
+    #[test]
+    fn apply_caption_translations_skips_a_translation_identical_to_the_original() {
+        let mut c = caption_with_words("c1", "t1", vec![word("hi", 0, 100)]);
+        c.text = "same text".to_string();
+        let project = project_with_captions(vec![c]);
+        let cmd = apply_caption_translations(&project, &[translated("c1", "same text")]).unwrap();
+        match cmd {
+            Command::Batch(b) => assert!(b.commands.is_empty()),
+            _ => panic!("expected an (empty) batch"),
+        }
+    }
+
+    #[test]
+    fn apply_caption_translations_undo_redo_round_trips_through_session() {
+        let mut c = caption_with_words("c1", "t1", vec![word("hi", 0, 100)]);
+        c.text = "hello".to_string();
+        let mut session = TimelineSession::new(project_with_captions(vec![c]));
+        let before = serde_json::to_value(&session.project).unwrap();
+
+        let cmd =
+            apply_caption_translations(&session.project, &[translated("c1", "xin chào")]).unwrap();
+        session.apply(cmd).unwrap();
+        assert_eq!(session.project.captions[0].text, "xin chào");
+
+        session.undo().unwrap();
+        assert_eq!(serde_json::to_value(&session.project).unwrap(), before);
+        session.redo().unwrap();
+        assert_eq!(session.project.captions[0].text, "xin chào");
     }
 }

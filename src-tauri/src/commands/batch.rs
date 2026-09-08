@@ -1,14 +1,37 @@
 //! Batch Processing Tauri command surface (master prompt §42/§43). Thin per
 //! master prompt §66 — all real logic lives in `crate::batch::{manager,
-//! pipeline}`.
+//! pipeline, settings}`.
 
-use tauri::{AppHandle, State};
+use std::path::PathBuf;
+
+use tauri::{AppHandle, Manager, State};
 
 use crate::batch::{
-    self, BatchJob, BatchJobManager, BatchPipelineConfig, DryRunResult, WorkerPoolStatus,
+    self, BatchError, BatchJob, BatchJobManager, BatchPipelineConfig, DryRunResult,
+    MaxConcurrentJobsSetting, WorkerPoolStatus,
 };
 use crate::commands::ai::AiProviderSettings;
 use crate::error::AppErrorPayload;
+
+/// `$APPLOCALDATA/batch_settings.json` — the on-disk home of the persisted
+/// `max_concurrent_jobs` worker-pool-size setting (Phase D11,
+/// `STUDIO_PLAN.md`). The exact same this-app's-own-data-directory
+/// convention `commands::assets::assets_dir`/`commands::templates::templates_dir`/
+/// `commands::automation::automation_dir` all use elsewhere, just one flat
+/// file instead of a subdirectory of many items.
+///
+/// `pub(crate)`, not private: `lib.rs`'s own `setup` hook resolves this exact
+/// same path to read the persisted value at startup, before spawning the
+/// real worker pool (`batch::manager::spawn_worker_pool`) — never a second,
+/// parallel resolution of where this file lives.
+pub(crate) fn batch_settings_file(app: &AppHandle) -> Result<PathBuf, BatchError> {
+    app.path()
+        .app_local_data_dir()
+        .map(|p| p.join("batch_settings.json"))
+        .map_err(|e| BatchError::SettingsStorageUnavailable {
+            details: format!("resolving app local data dir: {e}"),
+        })
+}
 
 /// Starts a new batch: one `BatchJob` per `media_paths` entry, all `config`.
 /// Returns the batch id immediately; per-job progress arrives via
@@ -130,6 +153,54 @@ pub fn retry_batch_job(
 #[specta::specta]
 pub fn get_worker_pool_status(manager: State<'_, BatchJobManager>) -> WorkerPoolStatus {
     manager.worker_pool_status()
+}
+
+/// Reads the persisted `max_concurrent_jobs` worker-pool-size setting (Phase
+/// D11, `STUDIO_PLAN.md`) alongside the currently-*active* pool size the
+/// running app was actually started with (`WorkerPoolStatus::workers`), so
+/// the frontend can tell whether a just-saved change is still waiting for a
+/// restart to take effect. See `batch::settings` module doc comment for why
+/// this is a real, deliberately-chosen restart-to-apply setting rather than
+/// a live-resizable one.
+#[tauri::command]
+#[specta::specta]
+pub fn get_max_concurrent_jobs(
+    app: AppHandle,
+    manager: State<'_, BatchJobManager>,
+) -> Result<MaxConcurrentJobsSetting, AppErrorPayload> {
+    let path = batch_settings_file(&app).map_err(|e| AppErrorPayload::from(&e))?;
+    Ok(MaxConcurrentJobsSetting {
+        persisted: batch::settings::load_max_concurrent_jobs(&path),
+        active: manager.worker_pool_status().workers,
+        min: batch::settings::MIN_MAX_CONCURRENT_JOBS,
+        max: batch::settings::MAX_MAX_CONCURRENT_JOBS,
+    })
+}
+
+/// Validates and persists a new `max_concurrent_jobs` value. Does **not**
+/// resize the currently-running worker pool — a real, deliberate choice (see
+/// `batch::settings` module doc comment): it only takes effect the next time
+/// the app starts, when `lib.rs`'s own `setup` hook reads this same
+/// persisted file before calling `batch::manager::spawn_worker_pool`. The
+/// returned snapshot's `active` field will still show the pool's current
+/// (unchanged) size, so the frontend can honestly show "restart to apply"
+/// exactly when `persisted != active`.
+#[tauri::command]
+#[specta::specta]
+pub fn set_max_concurrent_jobs(
+    app: AppHandle,
+    manager: State<'_, BatchJobManager>,
+    value: usize,
+) -> Result<MaxConcurrentJobsSetting, AppErrorPayload> {
+    let path = batch_settings_file(&app).map_err(|e| AppErrorPayload::from(&e))?;
+    batch::settings::save_max_concurrent_jobs(&path, value)
+        .map_err(|e| AppErrorPayload::from(&e))?;
+    Ok(MaxConcurrentJobsSetting {
+        persisted: value,
+        active: manager.worker_pool_status().workers,
+        min: batch::settings::MIN_MAX_CONCURRENT_JOBS,
+        max: batch::settings::MAX_MAX_CONCURRENT_JOBS,
+    })
 }
 
 #[tauri::command]

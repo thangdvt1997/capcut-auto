@@ -28,11 +28,15 @@
   boxes from `Card`, error banners from `ErrorState`, and every button from
   `Button` (Phase D1 Design System) — every store call, `disabled` gate, and
   conditional-render expression is unchanged from the original hand-rolled
-  markup. No RadioGroup component exists in the Design System yet, so the
-  Create/Update mode picker stays a hand-rolled `<input type="radio">` pair
-  (functionally identical to before). See this file's own `<style>` block
-  and `STUDIO_PLAN.md`'s Phase D7b section for what else stayed bespoke and
-  why.
+  markup. See this file's own `<style>` block and `STUDIO_PLAN.md`'s Phase
+  D7b section for what else stayed bespoke and why.
+
+  **Phase D9 gap-fill retrofit (`STUDIO_PLAN.md`):** the Create/Update mode
+  picker now uses the new `RadioGroup.svelte` (same `name`/`checked`/
+  `onchange` semantics as the hand-rolled pair it replaces, via
+  `capcutStore.setMode`), and the export-complete/no-warnings/
+  validation-healthy success messages now use the new `SuccessBanner.svelte`
+  — the two real gaps Phase D7b's own retrofit documented for this file.
 -->
 <script lang="ts">
   import { capcutStore } from "../../stores/capcut.svelte";
@@ -45,6 +49,8 @@
   import Input from "../ui/Input.svelte";
   import EmptyState from "../ui/EmptyState.svelte";
   import ErrorState from "../ui/ErrorState.svelte";
+  import RadioGroup from "../ui/RadioGroup.svelte";
+  import SuccessBanner from "../ui/SuccessBanner.svelte";
 
   function basename(path: string): string {
     return path.split(/[\\/]/).pop() || path;
@@ -61,28 +67,15 @@
     <EmptyState title={t("capcutExport.noProject")} />
   {:else}
     <Panel title={t("capcutExport.modeSectionTitle")}>
-      <div class="ce-radio-group">
-        <label class="ce-radio">
-          <input
-            type="radio"
-            name="ce-mode"
-            value="create"
-            checked={capcutStore.mode === "create"}
-            onchange={() => capcutStore.setMode("create")}
-          />
-          {t("capcutExport.modeCreate")}
-        </label>
-        <label class="ce-radio">
-          <input
-            type="radio"
-            name="ce-mode"
-            value="update"
-            checked={capcutStore.mode === "update"}
-            onchange={() => capcutStore.setMode("update")}
-          />
-          {t("capcutExport.modeUpdate")}
-        </label>
-      </div>
+      <RadioGroup
+        name="ce-mode"
+        value={capcutStore.mode}
+        options={[
+          { value: "create", label: t("capcutExport.modeCreate") },
+          { value: "update", label: t("capcutExport.modeUpdate") },
+        ]}
+        onchange={(v) => capcutStore.setMode(v as "create" | "update")}
+      />
 
       {#if !capcutStore.effectiveDraftRoot}
         <div class="ce-warn">
@@ -120,7 +113,7 @@
 
     <Panel title={t("capcutExport.warningsSectionTitle")}>
       {#if capcutStore.compatWarnings.length === 0}
-        <p class="ce-ok">{t("capcutExport.noWarnings")}</p>
+        <SuccessBanner message={t("capcutExport.noWarnings")} />
       {:else}
         <ul class="ce-warn-list">
           {#each capcutStore.compatWarnings as warning (warning.key)}
@@ -146,7 +139,7 @@
     {/if}
 
     {#if capcutStore.exportedPath}
-      <p class="ce-success">{t("capcutExport.exportComplete", { path: capcutStore.exportedPath })}</p>
+      <SuccessBanner message={t("capcutExport.exportComplete", { path: capcutStore.exportedPath })} />
 
       <Panel title={t("capcutExport.postExportSectionTitle")}>
         <div class="ce-row">
@@ -173,7 +166,7 @@
 
         {#if capcutStore.validationReport}
           {#if capcutStore.validationReport.problems.length === 0}
-            <p class="ce-ok">{t("capcutExport.validationHealthy")}</p>
+            <SuccessBanner message={t("capcutExport.validationHealthy")} />
           {:else}
             <div class="ce-validation-problems">
               <p class="ce-warn-strong">{t("capcutExport.validationUnhealthy")}</p>
@@ -209,19 +202,6 @@
 </Modal>
 
 <style>
-  /* No RadioGroup component exists in the Design System yet — kept as
-     hand-rolled radio inputs, unchanged in behavior. */
-  .ce-radio-group {
-    display: flex;
-    gap: 14px;
-  }
-  .ce-radio {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 11.5px;
-    cursor: pointer;
-  }
   .ce-row {
     display: flex;
     align-items: center;
@@ -262,11 +242,6 @@
     border: 1px solid var(--accent-border);
     border-radius: var(--radius-sm);
   }
-  .ce-ok {
-    margin: 0;
-    font-size: 11.5px;
-    color: var(--pos);
-  }
   /* Compatibility-warning / validation-problem lists — no Design System
      list component exists for an arbitrary-length bullet list. */
   .ce-warn-list {
@@ -305,15 +280,5 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
-  }
-  .ce-success {
-    margin: 0;
-    padding: 8px 10px;
-    font-size: 11.5px;
-    color: var(--pos);
-    background: var(--pos-bg);
-    border: 1px solid var(--pos-border);
-    border-radius: var(--radius-sm);
-    word-break: break-all;
   }
 </style>

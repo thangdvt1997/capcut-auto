@@ -1,13 +1,16 @@
 //! Caption Tauri command surface: generation from the current project's
-//! transcript, the built-in style template catalog, and the correction
-//! operations (split/merge/retime/find-replace/bulk-style). Thin per master
-//! prompt §66 — all real logic lives in `crate::captions::{generate, styles}`
-//! and `crate::timeline::captions`; this module only translates between
-//! Tauri's IPC boundary and those pure functions/command-builders, the same
-//! shape `commands::timeline` already uses.
+//! transcript, the built-in style template catalog, the correction
+//! operations (split/merge/retime/find-replace/bulk-style), and the real
+//! "Accept and Apply" step for AI-proposed translations
+//! ([`apply_caption_translations`], `STUDIO_PLAN.md` Phase D12). Thin per
+//! master prompt §66 — all real logic lives in `crate::captions::{generate,
+//! styles}` and `crate::timeline::captions`; this module only translates
+//! between Tauri's IPC boundary and those pure functions/command-builders,
+//! the same shape `commands::timeline` already uses.
 
 use tauri::State;
 
+use crate::ai::translate::TranslatedCaption;
 use crate::captions::generate::{self, CaptionGenerationSettings};
 use crate::captions::styles;
 use crate::error::AppErrorPayload;
@@ -166,6 +169,32 @@ pub fn bulk_set_caption_style(
     with_session(&state, |session| {
         let command =
             caption_ops::bulk_set_caption_style(&session.project, &caption_ids, style_id)?;
+        session.apply(command)?;
+        Ok(session.project.clone())
+    })
+}
+
+/// **Apply** (`STUDIO_PLAN.md` Phase D12): the real, explicit "Accept and
+/// Apply" step `ai::translate`'s own module doc comment says is a separate
+/// frontend action — writes a caller-accepted subset of AI-proposed
+/// translations (`ai::translate::translate_captions`'s own
+/// `Vec<TranslatedCaption>` output, unchanged) into the matching real
+/// captions' `text`, through the exact same `Command::Batch` of
+/// `SetCaption` + undo-history path [`bulk_set_caption_style`]/
+/// [`find_replace_captions`] above already use — one atomic undo step,
+/// never a second mutation path. This is the only command in this crate
+/// that ever turns a translation proposal into a real project mutation; the
+/// frontend is responsible for only ever passing entries a human has
+/// actually reviewed and accepted (never wiring this to run automatically
+/// after `translate_captions`).
+#[tauri::command]
+#[specta::specta]
+pub fn apply_caption_translations(
+    state: State<'_, TimelineState>,
+    translations: Vec<TranslatedCaption>,
+) -> Result<ProjectV1, AppErrorPayload> {
+    with_session(&state, |session| {
+        let command = caption_ops::apply_caption_translations(&session.project, &translations)?;
         session.apply(command)?;
         Ok(session.project.clone())
     })

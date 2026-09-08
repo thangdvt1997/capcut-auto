@@ -24,6 +24,7 @@ import type {
   BatchPipelineConfig,
   Result,
   AppErrorPayload,
+  MaxConcurrentJobsSetting,
   WorkerPoolStatus,
 } from "../types/bindings";
 
@@ -99,6 +100,20 @@ class BatchStore {
   workerPoolStatus = $state<WorkerPoolStatus | null>(null);
   workerPoolStatusError = $state<string | null>(null);
 
+  /** Phase D11 (`STUDIO_PLAN.md`): the persisted `max_concurrent_jobs`
+   * worker-pool-size setting, plus the currently-*active* pool size the
+   * running app was actually started with — `null` until the first
+   * successful fetch (never fabricated). See
+   * `src-tauri/src/batch/settings.rs` module doc comment for why this one
+   * setting is backend-persisted (unlike every other app-level preference
+   * in this codebase, which is `localStorage`-only) and why it's a real,
+   * deliberately-chosen restart-to-apply setting rather than a live one:
+   * `persisted !== active` is exactly the signal a "restart to apply" UI
+   * hint should key off. */
+  maxConcurrentJobsSetting = $state<MaxConcurrentJobsSetting | null>(null);
+  maxConcurrentJobsError = $state<string | null>(null);
+  savingMaxConcurrentJobs = $state(false);
+
   constructor() {
     // Fire-and-forget, matching `stores/render.svelte.ts`'s
     // `RenderProgressEvent` listener pattern exactly — registered once at
@@ -161,6 +176,51 @@ class BatchStore {
       this.workerPoolStatusError = null;
     } catch (err) {
       this.workerPoolStatusError = String(err);
+    }
+  }
+
+  // -------------------------------------------------------------------
+  // Max concurrent jobs setting (Phase D11, `STUDIO_PLAN.md`) — persisted,
+  // restart-to-apply (see `maxConcurrentJobsSetting`'s own doc comment above
+  // for why).
+  // -------------------------------------------------------------------
+
+  async refreshMaxConcurrentJobsSetting(): Promise<void> {
+    try {
+      const result = await commands.getMaxConcurrentJobs();
+      if (result.status === "ok") {
+        this.maxConcurrentJobsSetting = result.data;
+        this.maxConcurrentJobsError = null;
+      } else {
+        this.maxConcurrentJobsError = result.error.message;
+      }
+    } catch (err) {
+      this.maxConcurrentJobsError = String(err);
+    }
+  }
+
+  /** Validates + persists `value` (real bounds enforced on the Rust side
+   * too, never trusted from the frontend alone). Returns `true` on success.
+   * Deliberately does **not** touch `workerPoolStatus`/the running pool —
+   * only the next app restart's `spawn_worker_pool` call ever reads this
+   * (`batch::settings` module doc comment) — so `maxConcurrentJobsSetting`'s
+   * own `active` field is expected to keep showing the old size until then. */
+  async setMaxConcurrentJobs(value: number): Promise<boolean> {
+    this.savingMaxConcurrentJobs = true;
+    this.maxConcurrentJobsError = null;
+    try {
+      const result = await commands.setMaxConcurrentJobs(value);
+      if (result.status === "ok") {
+        this.maxConcurrentJobsSetting = result.data;
+        return true;
+      }
+      this.maxConcurrentJobsError = result.error.message;
+      return false;
+    } catch (err) {
+      this.maxConcurrentJobsError = String(err);
+      return false;
+    } finally {
+      this.savingMaxConcurrentJobs = false;
     }
   }
 

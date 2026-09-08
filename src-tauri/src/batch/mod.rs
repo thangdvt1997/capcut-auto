@@ -37,14 +37,21 @@
 //!   U3) — runs `pipeline`'s own real resolution/decision logic for one
 //!   media file without ever rendering, returning a structured
 //!   [`dry_run::DryRunResult`].
+//! - `settings`: persistence for `max_concurrent_jobs` (Phase D11,
+//!   `STUDIO_PLAN.md`) — a real, on-disk-backed, restart-to-apply setting;
+//!   see that module's own doc comment for why this one setting needs real
+//!   backend storage when every other app-level preference in this codebase
+//!   is `localStorage`-only.
 
 pub mod dry_run;
 pub mod error;
 pub mod manager;
 pub mod pipeline;
+pub mod settings;
 pub mod types;
 
 pub use dry_run::DryRunResult;
 pub use error::BatchError;
 pub use manager::{BatchJobManager, BatchProgressEvent, WorkerPoolStatus};
+pub use settings::MaxConcurrentJobsSetting;
 pub use types::{BatchJob, BatchJobStatus, BatchPipelineConfig};

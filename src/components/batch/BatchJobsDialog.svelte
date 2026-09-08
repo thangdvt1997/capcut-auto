@@ -37,11 +37,19 @@
   rendered through Design System primitives instead of hand-rolled markup.
   Also gained a real, live `WorkerPoolWidget` (Phase D4's own new
   "Workers: N · Running: R · Queued: Q" snapshot) in the toolbar.
+
+  **Phase D11 (`STUDIO_PLAN.md`):** the toolbar also gained
+  `WorkerPoolSizeControl` — a real, persisted `max_concurrent_jobs` setting
+  control, right next to `WorkerPoolWidget`. It's a real, deliberately-chosen
+  restart-to-apply setting, not a live-resizable one (see that component's
+  own doc comment, and `src-tauri/src/batch/settings.rs`'s, for why) — it
+  never touches this dialog's own live `workerPoolStatus`.
 -->
 <script lang="ts">
   import { batchStore } from "../../stores/batch.svelte";
   import StartBatchDialog from "./StartBatchDialog.svelte";
   import WorkerPoolWidget from "./WorkerPoolWidget.svelte";
+  import WorkerPoolSizeControl from "./WorkerPoolSizeControl.svelte";
   import { t } from "../../lib/i18n.svelte";
   import { formatTimecode } from "../../timeline/algebra";
   import Modal from "../ui/Modal.svelte";
@@ -216,6 +224,7 @@
     {/if}
     <span class="bj-toolbar-spacer"></span>
     <WorkerPoolWidget />
+    <WorkerPoolSizeControl />
     <Button size="sm" onclick={() => batchStore.openStartDialog()}>{t("batchJobs.startNewButton")}</Button>
   </div>
 

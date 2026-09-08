@@ -36,10 +36,11 @@
   every store call, every `disabled`/gating condition, the two-step delete
   confirm, the optimistic-progress-row download flow — is unchanged, only
   the markup underneath it. Left bespoke: the explainer paragraph (plain
-  text, no component needed) and the "download complete" success line (a
-  full-sentence banner, not a small pill — no Design System "success banner"
-  primitive exists yet, same honest gap `ExportDialog.svelte`'s own retrofit
-  documents for its own render-complete message).
+  text, no component needed).
+
+  **Phase D9 gap-fill retrofit (`STUDIO_PLAN.md`):** the "download complete"
+  success line now uses the new `SuccessBanner.svelte` — the real "no success
+  banner primitive exists" gap this file's own Phase D7a retrofit documented.
 -->
 <script lang="ts">
   import { modelManagerStore, type ModelView } from "../../stores/modelManager.svelte";
@@ -51,6 +52,7 @@
   import Button from "../ui/Button.svelte";
   import ErrorState from "../ui/ErrorState.svelte";
   import LoadingState from "../ui/LoadingState.svelte";
+  import SuccessBanner from "../ui/SuccessBanner.svelte";
 
   const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB"];
 
@@ -160,7 +162,7 @@
                 {t("modelManager.dismissButton")}
               </Button>
             {:else if m.progress.done}
-              <p class="mm-success">{t("modelManager.downloadComplete")}</p>
+              <SuccessBanner message={t("modelManager.downloadComplete")} />
             {:else}
               <ProgressBar
                 value={progressFraction(m)}
@@ -184,13 +186,13 @@
 </Modal>
 
 <style>
-  /* Design System retrofit (Phase D7a, `STUDIO_PLAN.md`): the dialog shell,
-     status pills, buttons, error banners, loading message, and progress
-     track are all gone from here — `Modal`/`Card`/`Badge`/`Button`/
-     `ErrorState`/`LoadingState`/`ProgressBar` (Design System) own that chrome
-     now. Only what has no Design System equivalent remains: the explainer
-     paragraph, the per-card internal layout (info/actions row), and the
-     success banner. */
+  /* Design System retrofit (Phase D7a/D9, `STUDIO_PLAN.md`): the dialog
+     shell, status pills, buttons, error banners, loading message, progress
+     track, and success message are all gone from here — `Modal`/`Card`/
+     `Badge`/`Button`/`ErrorState`/`LoadingState`/`ProgressBar`/
+     `SuccessBanner` (Design System) own that chrome now. Only what has no
+     Design System equivalent remains: the explainer paragraph and the
+     per-card internal layout (info/actions row). */
   .mm-explainer {
     margin: 0;
     font-size: 11.5px;
@@ -235,11 +237,6 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-  }
-  .mm-success {
-    margin: 0;
-    font-size: 11px;
-    color: var(--pos, #3fb950);
   }
   .mm-footer-spacer {
     flex: 1;

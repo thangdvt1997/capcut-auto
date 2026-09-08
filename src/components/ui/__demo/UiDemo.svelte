@@ -27,6 +27,11 @@
   import DataTable from "../DataTable.svelte";
   import type { DataTableColumn } from "../DataTable.svelte";
   import { toastStore } from "../../../stores/toast.svelte";
+  import NumberInput from "../NumberInput.svelte";
+  import RadioGroup from "../RadioGroup.svelte";
+  import SuccessBanner from "../SuccessBanner.svelte";
+  import ContextMenu from "../ContextMenu.svelte";
+  import type { ContextMenuItem } from "../ContextMenu.svelte";
 
   let inputValue = $state("hello");
   let selectValue = $state("b");
@@ -35,6 +40,21 @@
   let sliderValue = $state(35);
   let modalOpen = $state(false);
   let activeTab = $state("one");
+  let numberValue = $state(1920);
+  let radioValue = $state("crf");
+  let contextMenuOpen = $state(false);
+  let contextMenuPos = $state({ x: 0, y: 0 });
+  const contextMenuItems: ContextMenuItem[] = [
+    { id: "rename", label: "Rename", onSelect: () => {} },
+    { id: "duplicate", label: "Duplicate", onSelect: () => {} },
+    { id: "delete", label: "Delete", danger: true, onSelect: () => {} },
+  ];
+
+  function openDemoContextMenu(e: MouseEvent): void {
+    e.preventDefault();
+    contextMenuPos = { x: e.clientX, y: e.clientY };
+    contextMenuOpen = true;
+  }
 
   type Row = { id: string; name: string; score: number };
   const rows: Row[] = [
@@ -97,6 +117,39 @@
     <Checkbox bind:checked>Enabled</Checkbox>
     <Switch bind:checked={switchOn} ariaLabel="Toggle" />
     <Slider bind:value={sliderValue} label="Volume" formatValue={(v) => `${v}%`} />
+    <NumberInput bind:value={numberValue} label="Width" min={2} step={2} />
+    <RadioGroup
+      bind:value={radioValue}
+      name="demo-radio"
+      label="Quality mode"
+      options={[
+        { value: "crf", label: "Constant quality (CRF)" },
+        { value: "bitrate", label: "Target bitrate" },
+      ]}
+    />
+  </Panel>
+
+  <Panel title="Success banner">
+    <SuccessBanner message="Render complete: C:\output\video.mp4" />
+  </Panel>
+
+  <Panel title="Context menu">
+    <div
+      class="demo-context-target"
+      oncontextmenu={openDemoContextMenu}
+      role="group"
+      aria-label="Right-click this area to open a demo context menu"
+    >
+      Right-click here
+    </div>
+    <ContextMenu
+      open={contextMenuOpen}
+      x={contextMenuPos.x}
+      y={contextMenuPos.y}
+      items={contextMenuItems}
+      ariaLabel="Demo context menu"
+      onClose={() => (contextMenuOpen = false)}
+    />
   </Panel>
 
   <Panel title="Card">
@@ -145,5 +198,16 @@
     flex-wrap: wrap;
     gap: var(--space-2);
     align-items: center;
+  }
+  .demo-context-target {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 60px;
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--muted);
+    font-size: 11.5px;
+    user-select: none;
   }
 </style>

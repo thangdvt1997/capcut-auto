@@ -7,14 +7,17 @@
   pre-existing full editor (`WorkspaceAdvanced.svelte`) via a mode toggle
   rather than replacing it.
 
-  Owns the one piece of state `ScriptEditor.svelte` and `PipelineStepper
-  .svelte` both need — the real (never mutates `project.captions` itself,
-  per `ai::translate::translate_captions`'s own doc comment) translation
-  proposal this pass wires in as the "Translate" column/step, backed by the
-  real, already-existing `translate_captions` command + `aiSettingsStore`
-  (no new backend surface, frontend-only). Lifted here (not owned by either
-  child alone) since the stepper needs to reflect the same translate-in-
-  flight/success/error state the editor's own Translate button drives.
+  Translation ("Translate" column/step) is now a real review/apply flow
+  (`STUDIO_PLAN.md` Phase D12), not an inline propose-only call with no
+  review UI behind it: `ScriptEditor.svelte`'s "Translate…" button opens
+  `TranslationReviewDialog.svelte` (mounted here, once), which owns the
+  `translate_captions` call, per-caption Accept/Reject, and the real
+  `apply_caption_translations` write-back — all backed by
+  `stores/translationReview.svelte.ts`. `PipelineStepper.svelte` reads that
+  same store directly (no props threaded through this component) for its
+  "Translate" step state, matching how it already reads
+  `stores/captions.svelte.ts`/`stores/batch.svelte.ts` directly for the
+  Subtitle/Render steps.
 -->
 <script lang="ts">
   import ResizableSplit from "../layout/ResizableSplit.svelte";
@@ -22,40 +25,7 @@
   import ScriptEditor from "./ScriptEditor.svelte";
   import PipelineStepper from "./PipelineStepper.svelte";
   import JobQueuePanel from "./JobQueuePanel.svelte";
-  import { captionsStore } from "../../stores/captions.svelte";
-  import { aiSettingsStore } from "../../stores/aiSettings.svelte";
-  import { commands } from "../../types/bindings";
-
-  let targetLanguage = $state("vi");
-  let translating = $state(false);
-  let translateError = $state<string | null>(null);
-  let translations = $state<Record<string, string>>({});
-
-  async function translateAll(): Promise<void> {
-    if (translating || captionsStore.captions.length === 0) return;
-    translating = true;
-    translateError = null;
-    try {
-      const result = await commands.translateCaptions(
-        captionsStore.captions,
-        null,
-        targetLanguage.trim() || "vi",
-        null,
-        aiSettingsStore.settingsSnapshot(),
-      );
-      if (result.status === "ok") {
-        const map: Record<string, string> = {};
-        for (const tc of result.data) map[tc.caption_id] = tc.translated_text;
-        translations = map;
-      } else {
-        translateError = result.error.message;
-      }
-    } catch (err) {
-      translateError = String(err);
-    } finally {
-      translating = false;
-    }
-  }
+  import TranslationReviewDialog from "../captions/TranslationReviewDialog.svelte";
 </script>
 
 <div class="simple">
@@ -71,21 +41,17 @@
         <CenterPreview />
       {/snippet}
       {#snippet b()}
-        <ScriptEditor
-          bind:targetLanguage
-          {translating}
-          {translateError}
-          {translations}
-          onTranslate={translateAll}
-        />
+        <ScriptEditor />
       {/snippet}
     </ResizableSplit>
   </div>
 
-  <PipelineStepper {translating} {translateError} hasTranslated={Object.keys(translations).length > 0} />
+  <PipelineStepper />
 
   <JobQueuePanel />
 </div>
+
+<TranslationReviewDialog />
 
 <style>
   .simple {

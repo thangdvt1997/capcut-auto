@@ -22,14 +22,20 @@
   `Slider`/`Badge`/`Button`/`ErrorState`, Phase D1). Every store call
   (`setProvider`/`setBaseUrl`/`setModel`/`setTemperature`/`saveApiKey`/
   `deleteApiKey`/`testConnection`) and every `disabled`/conditional-render
-  expression is unchanged. Two fields deliberately stayed hand-rolled — the
-  Timeout number field (`Input.svelte` has no numeric variant, and
-  `Slider.svelte` needs a bounded `max` the original unbounded-timeout field
-  never had) and the API key field (`Input.svelte` has no `autocomplete`
-  passthrough, and dropping `autocomplete="off"` here would be a real
-  behavior change, not just chrome — a browser could start offering to save/
-  autofill the secret). See this file's own `<style>` block and
-  `STUDIO_PLAN.md`'s Phase D7b section for details.
+  expression is unchanged. The API key field deliberately stays hand-rolled
+  — `Input.svelte` has no `autocomplete` passthrough, and dropping
+  `autocomplete="off"` here would be a real behavior change, not just chrome
+  — a browser could start offering to save/autofill the secret. See this
+  file's own `<style>` block and `STUDIO_PLAN.md`'s Phase D7b section for
+  details.
+
+  **Phase D9 gap-fill retrofit (`STUDIO_PLAN.md`):** the Timeout field now
+  uses the new `NumberInput.svelte` (the real "no numeric Input variant" gap
+  Phase D7b documented — `Slider.svelte` was never a fit here since Timeout
+  has no upper bound the way Temperature does), and the test-connection
+  success message now uses the new `SuccessBanner.svelte`. Same
+  `setTimeoutMs`/clamping logic, same `testResult.message` text — only the
+  markup changed.
 -->
 <script lang="ts">
   import {
@@ -48,6 +54,8 @@
   import Badge from "../ui/Badge.svelte";
   import Button from "../ui/Button.svelte";
   import ErrorState from "../ui/ErrorState.svelte";
+  import NumberInput from "../ui/NumberInput.svelte";
+  import SuccessBanner from "../ui/SuccessBanner.svelte";
   import type { SelectOption } from "../ui/Select.svelte";
 
   function providerLabel(kind: AiProviderKind): string {
@@ -127,15 +135,15 @@
     />
     <div class="as-row">
       <label class="as-label" for="as-timeout">{t("aiSettings.timeoutLabel")}</label>
-      <input
-        id="as-timeout"
-        class="ui-input as-input-narrow"
-        type="number"
-        min="1000"
-        step="1000"
-        value={aiSettingsStore.timeoutMs}
-        onchange={(e) => aiSettingsStore.setTimeoutMs(Math.max(1000, Number((e.target as HTMLInputElement).value) || 1000))}
-      />
+      <div class="as-timeout-wrap">
+        <NumberInput
+          id="as-timeout"
+          min={1000}
+          step={1000}
+          value={aiSettingsStore.timeoutMs}
+          onchange={(v) => aiSettingsStore.setTimeoutMs(Math.max(1000, v || 1000))}
+        />
+      </div>
       <span class="as-hint muted-2">ms</span>
     </div>
   </Panel>
@@ -182,7 +190,7 @@
     </div>
     {#if aiSettingsStore.testResult}
       {#if aiSettingsStore.testResult.success}
-        <p class="as-test-ok">{aiSettingsStore.testResult.message}</p>
+        <SuccessBanner message={aiSettingsStore.testResult.message} />
       {:else}
         <ErrorState message={aiSettingsStore.testResult.message} />
       {/if}
@@ -218,24 +226,13 @@
     color: var(--muted);
     flex-shrink: 0;
   }
-  /* No numeric-field Design System component exists yet (Input.svelte's own
-     doc comment: "Slider.svelte is this pass's numeric primitive" — not a
-     fit here, since Timeout has no upper bound the way Temperature does) —
-     kept as a plain number input, reusing the shared .ui-input class for
-     visual consistency with every other text field on this dialog. */
-  .as-input-narrow {
+  /* Fixed-width wrapper around NumberInput (Phase D9) — NumberInput's own
+     `.ui-input` fills its container (width: 100%), so this small,
+     layout-only wrapper div reproduces the original `.as-input-narrow`'s
+     110px field width without needing a size prop on the shared component
+     itself. */
+  .as-timeout-wrap {
     flex: none;
     width: 110px;
-  }
-  /* A short "Connection OK" message reusing the shared --pos token — no
-     "success state" component exists to pair with ErrorState above. */
-  .as-test-ok {
-    margin: 0;
-    padding: 8px 10px;
-    font-size: 11.5px;
-    color: var(--pos);
-    background: var(--pos-bg);
-    border: 1px solid var(--pos-border);
-    border-radius: var(--radius-sm);
   }
 </style>

@@ -24,15 +24,19 @@
   are `LoadingState.svelte`, and the render-progress track is
   `ProgressBar.svelte`. Every real behavior — every store call, every
   `disabled`/gating condition, every conditional branch — is unchanged, only
-  the markup underneath it. Left deliberately bespoke (no Design System
-  primitive covers either shape yet): the numeric fields (resolution/CRF/
-  bitrate — `Input.svelte` only supports text-like `type`s, not `number`,
-  per its own doc comment) and the CRF-vs-bitrate radio-button pair (no
-  `Radio` component exists in the library). The preset-card grid also stays
-  bespoke: `Card.svelte`'s `interactive` variant has no "currently selected"
-  visual state to key off without changing that shared component, and the
+  the markup underneath it. The preset-card grid stays bespoke:
+  `Card.svelte`'s `interactive` variant has no "currently selected" visual
+  state to key off without changing that shared component, and the
   selected/unselected distinction here is a real, load-bearing piece of the
   preset-picker's own affordance, not just chrome.
+
+  **Phase D9 gap-fill retrofit (`STUDIO_PLAN.md`):** the numeric fields
+  (resolution width/height, CRF, video/audio bitrate) now use the new
+  `NumberInput.svelte`, the CRF-vs-bitrate pair now uses the new
+  `RadioGroup.svelte`, and the render-complete message now uses the new
+  `SuccessBanner.svelte` — the three real gaps Phase D7a's own retrofit
+  documented for this file. Every `bind:value`/`onchange`/gating condition on
+  these fields is unchanged; only the markup underneath changed.
 -->
 <script lang="ts">
   import { renderStore, X264_PRESETS } from "../../stores/render.svelte";
@@ -45,6 +49,9 @@
   import ProgressBar from "../ui/ProgressBar.svelte";
   import ErrorState from "../ui/ErrorState.svelte";
   import LoadingState from "../ui/LoadingState.svelte";
+  import NumberInput from "../ui/NumberInput.svelte";
+  import RadioGroup from "../ui/RadioGroup.svelte";
+  import SuccessBanner from "../ui/SuccessBanner.svelte";
   import type { AudioCodec, Container, EncoderBackend, VideoCodec } from "../../types/bindings";
 
   function formatPercent(fraction: number | null): string {
@@ -121,9 +128,13 @@
   <Panel title={t("exportDialog.settingsSectionTitle")}>
     <div class="rd-row">
       <label class="rd-label" for="rd-width">{t("exportDialog.resolutionLabel")}</label>
-      <input id="rd-width" class="rd-number rd-number-sm" type="number" min="2" step="2" bind:value={renderStore.width} />
+      <div class="rd-number-wrap-sm">
+        <NumberInput id="rd-width" min={2} step={2} bind:value={renderStore.width} />
+      </div>
       <span class="rd-x muted-2">×</span>
-      <input aria-label={t("exportDialog.heightLabel")} class="rd-number rd-number-sm" type="number" min="2" step="2" bind:value={renderStore.height} />
+      <div class="rd-number-wrap-sm">
+        <NumberInput ariaLabel={t("exportDialog.heightLabel")} min={2} step={2} bind:value={renderStore.height} />
+      </div>
     </div>
 
     <div class="rd-row">
@@ -173,40 +184,31 @@
 
     <div class="rd-row">
       <span class="rd-label">{t("exportDialog.qualityModeLabel")}</span>
-      <div class="rd-radio-group">
-        <label class="rd-radio">
-          <input
-            type="radio"
-            name="rd-bitrate-mode"
-            value="crf"
-            checked={renderStore.bitrateMode === "crf"}
-            onchange={() => (renderStore.bitrateMode = "crf")}
-          />
-          {t("exportDialog.qualityModeCrf")}
-        </label>
-        <label class="rd-radio">
-          <input
-            type="radio"
-            name="rd-bitrate-mode"
-            value="bitrate"
-            checked={renderStore.bitrateMode === "bitrate"}
-            onchange={() => (renderStore.bitrateMode = "bitrate")}
-          />
-          {t("exportDialog.qualityModeBitrate")}
-        </label>
-      </div>
+      <RadioGroup
+        name="rd-bitrate-mode"
+        value={renderStore.bitrateMode}
+        options={[
+          { value: "crf", label: t("exportDialog.qualityModeCrf") },
+          { value: "bitrate", label: t("exportDialog.qualityModeBitrate") },
+        ]}
+        onchange={(v) => (renderStore.bitrateMode = v as "crf" | "bitrate")}
+      />
     </div>
 
     {#if renderStore.bitrateMode === "crf"}
       <div class="rd-row">
         <label class="rd-label" for="rd-crf">{t("exportDialog.crfLabel")}</label>
-        <input id="rd-crf" class="rd-number rd-number-sm" type="number" min="0" max="51" bind:value={renderStore.crf} />
+        <div class="rd-number-wrap-sm">
+          <NumberInput id="rd-crf" min={0} max={51} bind:value={renderStore.crf} />
+        </div>
         <span class="rd-hint muted-2">{t("exportDialog.crfHint")}</span>
       </div>
     {:else}
       <div class="rd-row">
         <label class="rd-label" for="rd-video-bitrate">{t("exportDialog.videoBitrateLabel")}</label>
-        <input id="rd-video-bitrate" class="rd-number" type="number" min="1" bind:value={renderStore.videoBitrateKbps} />
+        <div class="rd-number-wrap">
+          <NumberInput id="rd-video-bitrate" min={1} bind:value={renderStore.videoBitrateKbps} />
+        </div>
         <span class="rd-hint muted-2">kbps</span>
       </div>
     {/if}
@@ -225,7 +227,9 @@
 
     <div class="rd-row">
       <label class="rd-label" for="rd-audio-bitrate">{t("exportDialog.audioBitrateLabel")}</label>
-      <input id="rd-audio-bitrate" class="rd-number" type="number" min="1" bind:value={renderStore.audioBitrateKbps} />
+      <div class="rd-number-wrap">
+        <NumberInput id="rd-audio-bitrate" min={1} bind:value={renderStore.audioBitrateKbps} />
+      </div>
       <span class="rd-hint muted-2">kbps</span>
     </div>
   </Panel>
@@ -278,9 +282,7 @@
       {#if renderStore.progress.error}
         <ErrorState message={t("exportDialog.renderFailed", { error: renderStore.progress.error })} />
       {:else if renderStore.progress.done}
-        <p class="rd-success">
-          {t("exportDialog.renderComplete", { path: renderStore.progress.output_path ?? "" })}
-        </p>
+        <SuccessBanner message={t("exportDialog.renderComplete", { path: renderStore.progress.output_path ?? "" })} />
       {:else}
         <ProgressBar
           value={renderStore.progress.fraction ?? 0}
@@ -312,16 +314,16 @@
 </Modal>
 
 <style>
-  /* Design System retrofit (Phase D7a, `STUDIO_PLAN.md`): the dialog shell,
-     section headings, finite-option selects, buttons, error/loading text,
-     and the progress track are all gone from here — `Modal`/`Panel`/
-     `Select`/`Button`/`ErrorState`/`LoadingState`/`ProgressBar` (Design
-     System) own that chrome now. Only what has no Design System equivalent
-     remains: the preset-card grid (needs a "selected" visual state Card.svelte
-     doesn't expose), the numeric inputs (Input.svelte doesn't support
-     type="number"), the CRF/bitrate radio pair (no Radio component exists),
-     and small layout-only helpers (row/label/select-wrap sizing, the hw list,
-     the success banner). */
+  /* Design System retrofit (Phase D7a/D9, `STUDIO_PLAN.md`): the dialog
+     shell, section headings, finite-option selects, buttons, error/loading
+     text, the progress track, the numeric fields, the CRF/bitrate radio
+     pair, and the render-complete message are all gone from here —
+     `Modal`/`Panel`/`Select`/`Button`/`ErrorState`/`LoadingState`/
+     `ProgressBar`/`NumberInput`/`RadioGroup`/`SuccessBanner` (Design System)
+     own that chrome now. Only what has no Design System equivalent remains:
+     the preset-card grid (needs a "selected" visual state Card.svelte
+     doesn't expose) and small layout-only helpers (row/label/select-wrap/
+     number-wrap sizing, the hw list). */
   .rd-preset-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -371,36 +373,24 @@
     flex: 1;
     min-width: 0;
   }
-  .rd-number {
+  /* Fixed-width wrappers around NumberInput (Phase D9) — NumberInput's own
+     `.ui-input` fills its container (width: 100%), so these small,
+     layout-only wrapper divs reproduce the original literal `.rd-number`/
+     `.rd-number-sm` field widths (100px/76px) without needing a size prop on
+     the shared component itself. */
+  .rd-number-wrap {
     width: 100px;
-    height: 26px;
-    padding: 0 8px;
-    background: var(--input);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    color: var(--foreground);
-    font: inherit;
-    font-size: 11.5px;
+    flex-shrink: 0;
   }
-  .rd-number-sm {
+  .rd-number-wrap-sm {
     width: 76px;
+    flex-shrink: 0;
   }
   .rd-x {
     flex-shrink: 0;
   }
   .rd-hint {
     font-size: 10.5px;
-  }
-  .rd-radio-group {
-    display: flex;
-    gap: 14px;
-  }
-  .rd-radio {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 11.5px;
-    cursor: pointer;
   }
   .rd-hw-active {
     margin: 0;
@@ -418,16 +408,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .rd-success {
-    margin: 0;
-    padding: 8px 10px;
-    font-size: 11.5px;
-    color: var(--pos, #3fb950);
-    background: hsl(140 60% 50% / 0.08);
-    border: 1px solid hsl(140 60% 50% / 0.3);
-    border-radius: var(--radius-sm);
-    word-break: break-all;
   }
   .rd-footer-spacer {
     flex: 1;

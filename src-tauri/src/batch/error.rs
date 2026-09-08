@@ -53,6 +53,33 @@ pub enum BatchError {
 
     #[error("job {job_id} is not in a Failed state and cannot be retried")]
     NotRetryable { job_id: String },
+
+    /// `max_concurrent_jobs` out of `batch::settings`'s own real, sane bounds
+    /// (Phase D11, `STUDIO_PLAN.md`) — this app really does spawn `value`
+    /// real OS worker threads for this, so "unlimited" was never on offer.
+    #[error("max_concurrent_jobs must be between {min} and {max} (got {value})")]
+    InvalidMaxConcurrentJobs {
+        value: usize,
+        min: usize,
+        max: usize,
+    },
+
+    /// Resolving `$APPLOCALDATA` itself failed (Phase D11) — the same
+    /// failure mode `AssetError::StorageUnavailable`/
+    /// `AutomationError::StorageUnavailable` already model for their own
+    /// on-disk state.
+    #[error("could not access application settings storage: {details}")]
+    SettingsStorageUnavailable { details: String },
+
+    /// A real read/write failure against `batch_settings.json` itself (Phase
+    /// D11) — disk full, permissions, a corrupt-beyond-parsing file being
+    /// overwritten, etc. Deliberately distinct from a missing/corrupt file on
+    /// the *read* path, which `batch::settings::load_max_concurrent_jobs`
+    /// treats as "use the default" rather than an error (that function's own
+    /// doc comment) — this variant is only ever raised by the *write* path,
+    /// which must never silently discard a user's settings change.
+    #[error("could not save worker pool settings: {details}")]
+    SettingsIoFailed { details: String },
 }
 
 impl From<&BatchError> for AppErrorPayload {
@@ -132,6 +159,26 @@ impl From<&BatchError> for AppErrorPayload {
                     .recoverable(true)
                     .with_suggestion("Only a Failed job can be retried.")
             }
+            BatchError::InvalidMaxConcurrentJobs { value, min, max } => {
+                AppErrorPayload::new("BATCH_INVALID_MAX_CONCURRENT_JOBS", message)
+                    .with_details(format!("got {value}, allowed range is {min}..={max}"))
+                    .recoverable(true)
+                    .with_suggestion(format!("Choose a value between {min} and {max}."))
+            }
+            BatchError::SettingsStorageUnavailable { details } => {
+                AppErrorPayload::new("BATCH_SETTINGS_STORAGE_UNAVAILABLE", message)
+                    .with_details(details.clone())
+                    .recoverable(false)
+                    .with_suggestion("Check that the app's local data directory is accessible.")
+            }
+            BatchError::SettingsIoFailed { details } => {
+                AppErrorPayload::new("BATCH_SETTINGS_IO_FAILED", message)
+                    .with_details(details.clone())
+                    .recoverable(true)
+                    .with_suggestion(
+                        "Check available disk space and folder permissions, then try again.",
+                    )
+            }
         }
     }
 }
@@ -198,6 +245,26 @@ mod tests {
             (
                 BatchError::NotRetryable { job_id: "x".into() },
                 "BATCH_JOB_NOT_RETRYABLE",
+            ),
+            (
+                BatchError::InvalidMaxConcurrentJobs {
+                    value: 99,
+                    min: 1,
+                    max: 16,
+                },
+                "BATCH_INVALID_MAX_CONCURRENT_JOBS",
+            ),
+            (
+                BatchError::SettingsStorageUnavailable {
+                    details: "x".into(),
+                },
+                "BATCH_SETTINGS_STORAGE_UNAVAILABLE",
+            ),
+            (
+                BatchError::SettingsIoFailed {
+                    details: "x".into(),
+                },
+                "BATCH_SETTINGS_IO_FAILED",
             ),
         ];
         for (err, expected_code) in cases {

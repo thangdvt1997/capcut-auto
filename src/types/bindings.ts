@@ -541,6 +541,29 @@ async bulkSetCaptionStyle(captionIds: string[], styleId: string | null) : Promis
 }
 },
 /**
+ * **Apply** (`STUDIO_PLAN.md` Phase D12): the real, explicit "Accept and
+ * Apply" step `ai::translate`'s own module doc comment says is a separate
+ * frontend action — writes a caller-accepted subset of AI-proposed
+ * translations (`ai::translate::translate_captions`'s own
+ * `Vec<TranslatedCaption>` output, unchanged) into the matching real
+ * captions' `text`, through the exact same `Command::Batch` of
+ * `SetCaption` + undo-history path [`bulk_set_caption_style`]/
+ * [`find_replace_captions`] above already use — one atomic undo step,
+ * never a second mutation path. This is the only command in this crate
+ * that ever turns a translation proposal into a real project mutation; the
+ * frontend is responsible for only ever passing entries a human has
+ * actually reviewed and accepted (never wiring this to run automatically
+ * after `translate_captions`).
+ */
+async applyCaptionTranslations(translations: TranslatedCaption[]) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("apply_caption_translations", { translations }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * **Analyze** (master prompt §12): extracts 16kHz mono PCM from
  * `media_path` and scores it with `SileroVadProvider`, caching the result
  * in `VadCache` under `media_id`. This is the expensive, model-dependent
@@ -1484,6 +1507,41 @@ async retryBatchJob(jobId: string) : Promise<Result<null, AppErrorPayload>> {
  */
 async getWorkerPoolStatus() : Promise<WorkerPoolStatus> {
     return await TAURI_INVOKE("get_worker_pool_status");
+},
+/**
+ * Reads the persisted `max_concurrent_jobs` worker-pool-size setting (Phase
+ * D11, `STUDIO_PLAN.md`) alongside the currently-*active* pool size the
+ * running app was actually started with (`WorkerPoolStatus::workers`), so
+ * the frontend can tell whether a just-saved change is still waiting for a
+ * restart to take effect. See `batch::settings` module doc comment for why
+ * this is a real, deliberately-chosen restart-to-apply setting rather than
+ * a live-resizable one.
+ */
+async getMaxConcurrentJobs() : Promise<Result<MaxConcurrentJobsSetting, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_max_concurrent_jobs") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Validates and persists a new `max_concurrent_jobs` value. Does **not**
+ * resize the currently-running worker pool — a real, deliberate choice (see
+ * `batch::settings` module doc comment): it only takes effect the next time
+ * the app starts, when `lib.rs`'s own `setup` hook reads this same
+ * persisted file before calling `batch::manager::spawn_worker_pool`. The
+ * returned snapshot's `active` field will still show the pool's current
+ * (unchanged) size, so the frontend can honestly show "restart to apply"
+ * exactly when `persisted != active`.
+ */
+async setMaxConcurrentJobs(value: number) : Promise<Result<MaxConcurrentJobsSetting, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_max_concurrent_jobs", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 async dryRunBatchJob(mediaPath: string, config: BatchPipelineConfig, aiSettings: AiProviderSettings | null) : Promise<Result<DryRunResult, AppErrorPayload>> {
     try {
@@ -2727,6 +2785,31 @@ property: string; time_offset_us: number; value: number;
  * can be added later without another schema version bump.
  */
 curve: string }
+/**
+ * A real, live snapshot of this setting (`commands::batch::get_max_concurrent_jobs`/
+ * `set_max_concurrent_jobs`) — carries both the value persisted to disk
+ * (what the *next* app startup will use) and the value the
+ * currently-running worker pool was actually spawned with
+ * (`BatchJobManager::worker_pool_status().workers`), plus the real bounds
+ * the frontend's numeric input should enforce. Having both numbers in one
+ * place is what lets the UI honestly show "this won't take effect until you
+ * restart" exactly when (and only when) the two actually differ, rather
+ * than always displaying a blanket disclaimer or silently hiding the
+ * distinction.
+ */
+export type MaxConcurrentJobsSetting = { 
+/**
+ * The value persisted to `batch_settings.json` — what the *next* app
+ * startup's `spawn_worker_pool` call will use.
+ */
+persisted: number; 
+/**
+ * The value the currently-running worker pool was actually spawned
+ * with. May differ from `persisted` immediately after a change, until
+ * the app is restarted (Phase D11: a real, deliberate restart-to-apply
+ * setting — see this module's own doc comment for why).
+ */
+active: number; min: number; max: number }
 export type MediaItem = { id: string; kind: MediaKind; 
 /**
  * Absolute or project-relative path.

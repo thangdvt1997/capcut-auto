@@ -23,12 +23,21 @@
   Phase D7b retrofit: shell/sections/buttons now come from the Design
   System (`Modal`/`Panel`/`Button`/`ErrorState`, Phase D1). Every store call
   (`setMode`/`checkNow`/`installNow`) and every `disabled`/conditional-
-  render expression is unchanged. No RadioGroup component exists yet, so
-  the three check-mode options stay hand-rolled `<input type="radio">`
-  rows; the status line stays a plain paragraph (its text is a full
-  sentence, not a short label, so `Badge` — built for short pills — isn't a
-  fit) with its color reusing the shared `--pos`/`--warn` tokens instead of
-  a hex-fallback literal. See `STUDIO_PLAN.md`'s Phase D7b section.
+  render expression is unchanged. The status line stays a plain paragraph
+  (its text is a full sentence, not a short label, so `Badge` — built for
+  short pills — isn't a fit) with its color reusing the shared `--pos`/
+  `--warn` tokens instead of a hex-fallback literal. See `STUDIO_PLAN.md`'s
+  Phase D7b section.
+
+  **Phase D9 gap-fill retrofit (`STUDIO_PLAN.md`):** the three check-mode
+  options now use the new `RadioGroup.svelte` (`orientation="vertical"`,
+  matching this dialog's own original one-row-per-line layout) — same
+  `name`/`checked`/`onchange` semantics as the hand-rolled rows it replaces,
+  via `updateSettingsStore.setMode`. The status line stays bespoke — it's
+  multi-state (idle/disabled/up-to-date/available/deferred/check-failed/
+  installing), not a single positive outcome, so the new `SuccessBanner`
+  isn't a fit for it either, for the same "not just a short pill" reason
+  `Badge` wasn't.
 -->
 <script lang="ts">
   import { updateSettingsStore, UPDATE_CHECK_MODES } from "../../stores/updateSettings.svelte";
@@ -38,6 +47,7 @@
   import Panel from "../ui/Panel.svelte";
   import Button from "../ui/Button.svelte";
   import ErrorState from "../ui/ErrorState.svelte";
+  import RadioGroup from "../ui/RadioGroup.svelte";
 
   function modeLabel(mode: UpdateCheckMode): string {
     switch (mode) {
@@ -79,18 +89,13 @@
   <p class="us-explainer muted-2">{t("updateSettings.explainer")}</p>
 
   <Panel title={t("updateSettings.modeSectionTitle")}>
-    {#each UPDATE_CHECK_MODES as mode (mode)}
-      <label class="us-radio-row">
-        <input
-          type="radio"
-          name="update-check-mode"
-          value={mode}
-          checked={updateSettingsStore.mode === mode}
-          onchange={() => updateSettingsStore.setMode(mode)}
-        />
-        <span>{modeLabel(mode)}</span>
-      </label>
-    {/each}
+    <RadioGroup
+      name="update-check-mode"
+      orientation="vertical"
+      value={updateSettingsStore.mode}
+      options={UPDATE_CHECK_MODES.map((mode) => ({ value: mode, label: modeLabel(mode) }))}
+      onchange={(v) => updateSettingsStore.setMode(v as UpdateCheckMode)}
+    />
   </Panel>
 
   <Panel title={t("updateSettings.checkSectionTitle")}>
@@ -129,13 +134,6 @@
     margin: 0;
     font-size: 11.5px;
     line-height: 1.5;
-  }
-  .us-radio-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    font-size: 12px;
-    cursor: pointer;
   }
   .us-row {
     display: flex;

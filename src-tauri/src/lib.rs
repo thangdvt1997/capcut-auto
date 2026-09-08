@@ -106,6 +106,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::captions::retime_caption,
         commands::captions::find_replace_captions,
         commands::captions::bulk_set_caption_style,
+        commands::captions::apply_caption_translations,
         commands::vad::score_media_silence,
         commands::vad::segment_media_silence,
         commands::vad::build_silence_cutlist,
@@ -178,6 +179,8 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::batch::cancel_batch_job,
         commands::batch::retry_batch_job,
         commands::batch::get_worker_pool_status,
+        commands::batch::get_max_concurrent_jobs,
+        commands::batch::set_max_concurrent_jobs,
         commands::batch::dry_run_batch_job,
         commands::history::list_history,
         commands::history::get_history_entry,
@@ -380,19 +383,37 @@ pub fn run() {
             // thread's own loop re-fetches `app.state::<BatchJobManager>()`
             // fresh every iteration (`batch::manager::spawn_worker_pool`'s
             // own doc comment) and that call would panic if the state
-            // container didn't already hold this type. No settings-
-            // persistence UI exists yet for `max_concurrent_jobs`, so this
-            // pass's own real, honest default
-            // (`batch::manager::DEFAULT_MAX_CONCURRENT_JOBS`, matching
-            // `promt.md` §5's own "Max concurrent videos: 3" example) is
-            // used directly — a real, changeable constructor argument, not
-            // a value hidden away where nothing could ever override it.
+            // container didn't already hold this type.
+            //
+            // Phase D11 (`STUDIO_PLAN.md`): `max_concurrent_jobs` is now a
+            // real, persisted setting (`batch::settings`, `commands::batch`'s
+            // `get_max_concurrent_jobs`/`set_max_concurrent_jobs`) rather
+            // than always the hardcoded `DEFAULT_MAX_CONCURRENT_JOBS` — this
+            // is the one, deliberately-chosen "read the persisted value"
+            // point: `batch::settings::load_max_concurrent_jobs` falls back
+            // to `DEFAULT_MAX_CONCURRENT_JOBS` on its own for a missing file,
+            // corrupt JSON, or a resolution failure, so this call site never
+            // needs its own separate fallback branch. This is a real
+            // restart-to-apply setting (`batch::settings` module doc
+            // comment's "why this is a restart-to-apply setting" section):
+            // this exact startup read is the only place a saved change ever
+            // takes effect.
             {
                 let batch_manager = tauri::Manager::state::<crate::batch::BatchJobManager>(app);
+                let max_concurrent_jobs =
+                    match crate::commands::batch::batch_settings_file(app.handle()) {
+                        Ok(path) => crate::batch::settings::load_max_concurrent_jobs(&path),
+                        Err(e) => {
+                            tracing::warn!(
+                                "failed to resolve batch settings file at startup, using default: {e}"
+                            );
+                            crate::batch::manager::DEFAULT_MAX_CONCURRENT_JOBS
+                        }
+                    };
                 crate::batch::manager::spawn_worker_pool(
                     &batch_manager,
                     app.handle().clone(),
-                    crate::batch::manager::DEFAULT_MAX_CONCURRENT_JOBS,
+                    max_concurrent_jobs,
                 );
             }
             // Smart Automation (upgrade spec §27, `UPGRADE_PLAN.md` Phase

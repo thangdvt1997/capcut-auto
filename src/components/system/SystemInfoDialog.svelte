@@ -35,9 +35,11 @@
   paragraph and the field key/value list (`.si-list`/`.si-row`, a `<dl>` of
   ~13 label/value pairs) — matches `FirstRunWizard.svelte`'s own `.frw-kv`
   precedent, since no Design System primitive covers a plain label/value
-  detail list, and the "copy done" success text (a plain inline confirmation,
-  not a pill — same honest gap `ExportDialog.svelte`/`ModelManagerDialog.svelte`
-  document for their own success messages).
+  detail list.
+
+  **Phase D9 gap-fill retrofit (`STUDIO_PLAN.md`):** the "copy done" inline
+  confirmation now uses the new `SuccessBanner.svelte` — the real "no success
+  banner primitive exists" gap this file's own Phase D7a retrofit documented.
 -->
 <script lang="ts">
   import { systemInfoStore } from "../../stores/systemInfo.svelte";
@@ -46,6 +48,7 @@
   import Button from "../ui/Button.svelte";
   import ErrorState from "../ui/ErrorState.svelte";
   import LoadingState from "../ui/LoadingState.svelte";
+  import SuccessBanner from "../ui/SuccessBanner.svelte";
 
   const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB"];
 
@@ -166,7 +169,7 @@
     </Button>
     <span class="si-footer-spacer"></span>
     {#if systemInfoStore.copyDone}
-      <span class="si-copy-done">{t("systemInfo.copyDone")}</span>
+      <SuccessBanner message={t("systemInfo.copyDone")} />
     {/if}
     <Button disabled={!systemInfoStore.data} onclick={() => void systemInfoStore.copyToClipboard()}>
       {t("systemInfo.copyButton")}
@@ -176,12 +179,12 @@
 </Modal>
 
 <style>
-  /* Design System retrofit (Phase D7a, `STUDIO_PLAN.md`): the dialog shell,
-     error banners, loading message, and every button are all gone from here —
-     `Modal`/`ErrorState`/`LoadingState`/`Button` (Design System) own that
-     chrome now. Only what has no Design System equivalent remains: the
-     explainer paragraph, the field key/value list, and the inline
-     "copy done" confirmation text. */
+  /* Design System retrofit (Phase D7a/D9, `STUDIO_PLAN.md`): the dialog
+     shell, error banners, loading message, every button, and the "copy done"
+     confirmation are all gone from here — `Modal`/`ErrorState`/
+     `LoadingState`/`Button`/`SuccessBanner` (Design System) own that chrome
+     now. Only what has no Design System equivalent remains: the explainer
+     paragraph and the field key/value list. */
   .si-explainer {
     margin: 0;
     font-size: 11.5px;
@@ -219,9 +222,5 @@
   }
   .si-footer-spacer {
     flex: 1;
-  }
-  .si-copy-done {
-    font-size: 11px;
-    color: var(--pos, #3fb950);
   }
 </style>

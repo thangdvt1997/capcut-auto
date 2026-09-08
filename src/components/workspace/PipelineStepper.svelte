@@ -8,9 +8,14 @@
   - **Subtitle**: `stores/captions.svelte.ts`'s real `generating`/
     `generateError`/`captions` — the exact same state `CaptionsPanel.svelte`
     already renders, just summarized into one step here.
-  - **Translate**: the real translate-in-flight/error/result state
-    `WorkspaceSimple.svelte` owns (passed down as props) — backed by the
-    real `ai::translate_captions` command, not a timer or a fake value.
+  - **Translate**: `stores/translationReview.svelte.ts`'s real
+    translating/error/`appliedThisSession` state (`STUDIO_PLAN.md` Phase
+    D12) — backed by the real `translate_captions`/`apply_caption_translations`
+    commands, not a timer or a fake value. `success` means at least one
+    translation has actually been accepted and applied to the real project
+    this session, not merely proposed — matching the Render step's own
+    "reflect a real terminal outcome, not an in-flight preview" standard
+    below.
   - **Voice**: always `pending`. Honest, not an oversight —
     `src-tauri/src/commands/voice.rs`'s own doc comment states plainly that
     no `synthesize_speech` command exists yet (Phase S7 built the provider
@@ -34,15 +39,10 @@
 <script lang="ts">
   import { captionsStore } from "../../stores/captions.svelte";
   import { batchStore } from "../../stores/batch.svelte";
+  import { translationReviewStore } from "../../stores/translationReview.svelte";
   import { t } from "../../lib/i18n.svelte";
   import type { BatchJob } from "../../types/bindings";
   import Tooltip from "../ui/Tooltip.svelte";
-
-  let {
-    translating,
-    translateError,
-    hasTranslated,
-  }: { translating: boolean; translateError: string | null; hasTranslated: boolean } = $props();
 
   type StepState = "pending" | "running" | "success" | "failed";
 
@@ -55,9 +55,9 @@
   });
 
   let translateState = $derived.by((): StepState => {
-    if (translateError) return "failed";
-    if (translating) return "running";
-    return hasTranslated ? "success" : "pending";
+    if (translationReviewStore.translateError || translationReviewStore.applyError) return "failed";
+    if (translationReviewStore.translating || translationReviewStore.applying) return "running";
+    return translationReviewStore.appliedThisSession ? "success" : "pending";
   });
 
   /** The job with the latest real `started_at` across every job this
