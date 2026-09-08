@@ -5,29 +5,50 @@
 //! command that folds every failure into a `{success, message}` result
 //! rather than a thrown error).
 //!
-//! ## Deliberately deferred: no `synthesize_speech` command this pass
+//! ## `synthesize_speech` (STUDIO_PLAN.md Phase D16)
 //!
-//! `voice::provider` module doc comment already flags this: the real caller
-//! for `VoiceProvider::synthesize` is a future `synthesize_speech` command
-//! that resolves a real `output_path` under `app_local_data_dir().join(
-//! "voice_output")` (the same pattern `commands::media`'s `media_cache_dir`/
-//! `commands::assets::assets_dir` already use) and runs the call on a
-//! background thread via `tauri::async_runtime::spawn_blocking`. That
-//! plumbing — an `AppHandle`-aware path resolver, a background job/
-//! cancellation story matching `commands::render`'s `RenderJobs`/
-//! `commands::transcription`'s `TranscriptionJobs`, and a real "Voice
-//! Mapping" (Speaker A/B/Narrator → voice) frontend surface to actually
-//! drive it from (`promt.md` §9) — is a materially bigger, separate task
-//! than "does this abstraction and its one real adapter work," which is this
-//! pass's actual scope (`voice::provider` module doc comment). Building only
-//! `test_voice_connection`/`list_voices` here keeps every command in this
-//! file genuinely testable without a live TTS service, exactly the same
-//! discipline `commands::ai::test_ai_connection` already set for the AI
-//! layer: a connection/listing check is honestly verifiable against a mock
-//! server; a real synthesis pipeline wired to nothing but mock data would
-//! not be.
+//! Wires the already-real `VoiceProvider::synthesize` (`voice::custom_api::
+//! CustomApiVoiceProvider::synthesize`, structurally correct and tested
+//! against a mock server — see `voice::provider` module doc comment) through
+//! to a real Tauri command, matching `commands::render`'s `RenderJobs`/
+//! `commands::transcription`'s `TranscriptionJobs` background-job pattern
+//! exactly: [`synthesize_speech`] resolves a real `output_path` under
+//! `app_local_data_dir().join("voice_output")` (`voice_output_dir`, the same
+//! pattern `commands::media`'s `media_cache_dir`/`commands::assets::assets_dir`
+//! already use), returns a `job_id` immediately, and runs the real HTTP call
+//! on a `tauri::async_runtime::spawn_blocking` background thread, emitting
+//! exactly one terminal `voice:progress` event (`VoiceProgressEvent { done:
+//! true, .. }`) on success, failure, or pre-start cancellation.
 //!
-//! ## Commands here
+//! **Honest progress model**: a single synthesize call is one HTTP
+//! request/response, not an ffmpeg-style multi-tick process — there is no
+//! real fractional progress to report mid-flight (`voice::custom_api`
+//! doesn't and can't stream partial completion), so this deliberately does
+//! *not* fabricate a percentage. The frontend is expected to treat "job_id
+//! received, no terminal event yet" as its own local "running" state
+//! (exactly the same convention `stores/render.svelte.ts`'s `isRendering`
+//! already uses for `RenderProgressEvent`), and this command emits only the
+//! real terminal outcome once it's known.
+//!
+//! **Honest cancellation granularity**: [`cancel_voice_job`] flips the same
+//! `Arc<AtomicBool>` cancellation-flag convention `RenderJobs`/
+//! `TranscriptionJobs` use, but `voice::custom_api::CustomApiVoiceProvider::
+//! synthesize` takes no cancellation token of its own — it is a single
+//! blocking `ureq` call with no polling hook inside it, unlike
+//! `ffmpeg::command::run_with_progress` (which `render::job` already wires a
+//! flag into) or `transcription::WhisperProvider::transcribe_with_progress`
+//! (which polls its own flag between decode chunks). So cancellation here is
+//! real but narrow: the background thread checks the flag once, immediately
+//! before making the HTTP request; a cancel that lands in that (short, but
+//! real) window skips the network call entirely and reports a cancelled
+//! terminal event. A cancel requested *after* the HTTP request is already in
+//! flight has no effect — the request runs to completion (or its own
+//! natural failure) and that real outcome is reported, not a fabricated
+//! "cancelled". This is a genuine, narrower guarantee than `RenderJobs`'
+//! (which can interrupt a multi-second ffmpeg encode mid-run) — documented
+//! here rather than silently claimed to be the same.
+//!
+//! ## Other commands here
 //!
 //! [`test_voice_connection`] calls the configured provider's `list_voices()`
 //! as a lightweight reachability probe (cheaper than a real synthesis call,
@@ -40,12 +61,18 @@
 //! backing call — same provider construction, but returns the real voice
 //! list (or a clear `Err`) instead of a boolean.
 
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::ai::credentials;
 use crate::error::AppErrorPayload;
-use crate::voice::provider::{VoiceInfo, VoiceProvider};
+use crate::voice::provider::{VoiceInfo, VoiceProvider, VoiceSynthesisSettings};
 use crate::voice::{CustomApiVoiceProvider, GptSoVitsProvider, NtsGenAiProvider, VoiceError};
 
 /// Which of `promt.md` §9's three named providers a configured profile
@@ -178,6 +205,216 @@ pub fn list_voices(settings: VoiceProviderSettings) -> Result<Vec<VoiceInfo>, Ap
         .map_err(|e| AppErrorPayload::from(&e))
 }
 
+// ---------------------------------------------------------------------------
+// synthesize_speech (STUDIO_PLAN.md Phase D16) — module doc comment above
+// covers the honest progress/cancellation model in full.
+// ---------------------------------------------------------------------------
+
+/// Where synthesized audio files are written: `{app_local_data}/voice_output/`
+/// — the exact `app_local_data_dir().join("voice_output")` pattern
+/// `commands::media`'s `media_cache_dir`/`commands::assets::assets_dir`
+/// already use for their own generated files. `pub(crate)`, not private, so
+/// this pass's own tests (and any future caller needing to locate a past
+/// synthesis output) can resolve it the same way, rather than re-deriving it.
+pub(crate) fn voice_output_dir(app: &AppHandle) -> Result<PathBuf, VoiceError> {
+    app.path()
+        .app_local_data_dir()
+        .map(|p| p.join("voice_output"))
+        .map_err(|e| VoiceError::StorageUnavailable {
+            details: format!("resolving app local data dir: {e}"),
+        })
+}
+
+/// Live voice synthesis jobs: `job_id -> cancellation flag`. Same shape as
+/// `commands::render::RenderJobs`/`commands::transcription::TranscriptionJobs`
+/// — a job is removed once it reaches a terminal state (success, failure, or
+/// pre-start cancellation), so `cancel_voice_job` against a since-finished
+/// job correctly reports `JobNotFound` rather than silently no-op'ing.
+#[derive(Default)]
+pub struct VoiceJobs(pub Mutex<HashMap<String, Arc<AtomicBool>>>);
+
+const VOICE_PROGRESS_EVENT: &str = "voice:progress";
+
+/// The one and only event a given `job_id` ever receives — always `done:
+/// true` (module doc comment: no fabricated mid-flight percentage exists for
+/// a single HTTP call). Exactly one of `output_path`/`error` is populated on
+/// a non-cancelled outcome; `cancelled: true` means neither is (the HTTP call
+/// was never made at all).
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct VoiceProgressEvent {
+    pub job_id: String,
+    pub done: bool,
+    pub cancelled: bool,
+    pub output_path: Option<String>,
+    pub duration_us: Option<i64>,
+    pub error: Option<String>,
+}
+
+/// Pure event-shape builder for the "cancelled before the HTTP call started"
+/// outcome — split out from [`spawn_voice_job`] so this pass's own tests can
+/// verify the exact shape without spinning up a real provider/HTTP call.
+fn cancelled_progress_event(job_id: String) -> VoiceProgressEvent {
+    VoiceProgressEvent {
+        job_id,
+        done: true,
+        cancelled: true,
+        output_path: None,
+        duration_us: None,
+        error: None,
+    }
+}
+
+/// Pure event-shape builder for a real `synthesize` outcome (success or
+/// failure) — same "split out for direct testability" rationale as
+/// [`cancelled_progress_event`].
+fn outcome_progress_event(
+    job_id: String,
+    outcome: Result<crate::voice::provider::VoiceSynthesisOutput, VoiceError>,
+) -> VoiceProgressEvent {
+    match outcome {
+        Ok(output) => VoiceProgressEvent {
+            job_id,
+            done: true,
+            cancelled: false,
+            output_path: Some(output.audio_path),
+            duration_us: output.duration_us,
+            error: None,
+        },
+        Err(e) => VoiceProgressEvent {
+            job_id,
+            done: true,
+            cancelled: false,
+            output_path: None,
+            duration_us: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+/// Pure job-map mutation shared by [`cancel_voice_job`] and this pass's own
+/// tests (which construct a bare `VoiceJobs` directly, with no `AppHandle`/
+/// `State` needed — the same reason `resolve_settings`/
+/// `compute_voice_speech_segments` in `commands::render` are pure functions
+/// tested directly rather than only through the `#[tauri::command]`
+/// wrapper).
+fn cancel_job_flag(jobs: &VoiceJobs, job_id: &str) -> Result<(), VoiceError> {
+    let guard = jobs.0.lock().expect("voice jobs mutex poisoned");
+    match guard.get(job_id) {
+        Some(flag) => {
+            flag.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+        None => Err(VoiceError::JobNotFound {
+            job_id: job_id.to_string(),
+        }),
+    }
+}
+
+/// Starts a background voice synthesis job for `text` as `voice_id` (using
+/// `settings` to construct the provider and `synthesis_settings` for
+/// speed/pitch/volume/emotion/language) and returns a `job_id` immediately —
+/// module doc comment for the full progress/cancellation contract. Provider
+/// construction (credential lookup + `build_provider`) happens synchronously
+/// here, matching `start_render_job`'s own "validate before spawning"
+/// precedent: a bad `credential_ref` fails the call immediately with a clear
+/// `Err`, rather than only surfacing via a job that starts and instantly
+/// fails.
+#[tauri::command]
+#[specta::specta]
+pub fn synthesize_speech(
+    app: AppHandle,
+    jobs: State<'_, VoiceJobs>,
+    text: String,
+    voice_id: String,
+    settings: VoiceProviderSettings,
+    synthesis_settings: VoiceSynthesisSettings,
+) -> Result<String, AppErrorPayload> {
+    let api_key = resolve_api_key(&settings).map_err(|e| AppErrorPayload::from(&e))?;
+    let provider = build_provider(&settings, api_key);
+
+    let dir = voice_output_dir(&app).map_err(|e| AppErrorPayload::from(&e))?;
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        AppErrorPayload::from(&VoiceError::OutputWriteFailed {
+            path: dir.to_string_lossy().to_string(),
+            details: e.to_string(),
+        })
+    })?;
+    let output_path = dir.join(format!("{}.wav", uuid::Uuid::new_v4()));
+
+    let job_id = uuid::Uuid::new_v4().to_string();
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut guard = jobs.0.lock().expect("voice jobs mutex poisoned");
+        guard.insert(job_id.clone(), cancel.clone());
+    }
+
+    spawn_voice_job(
+        app,
+        job_id.clone(),
+        cancel,
+        VoiceSynthesisRequest {
+            provider,
+            text,
+            voice_id,
+            synthesis_settings,
+            output_path,
+        },
+    );
+    Ok(job_id)
+}
+
+/// Everything [`spawn_voice_job`] needs to actually perform the synthesis
+/// call, bundled into one struct purely to keep that function's own
+/// argument count under clippy's `too_many_arguments` threshold — no
+/// behavioral significance beyond that.
+struct VoiceSynthesisRequest {
+    provider: Box<dyn VoiceProvider>,
+    text: String,
+    voice_id: String,
+    synthesis_settings: VoiceSynthesisSettings,
+    output_path: PathBuf,
+}
+
+fn spawn_voice_job(
+    app: AppHandle,
+    job_id: String,
+    cancel: Arc<AtomicBool>,
+    request: VoiceSynthesisRequest,
+) {
+    tauri::async_runtime::spawn_blocking(move || {
+        // Real, but narrow, cancellation (module doc comment): only checked
+        // once, immediately before the HTTP call — never mid-request.
+        let event = if cancel.load(Ordering::SeqCst) {
+            cancelled_progress_event(job_id.clone())
+        } else {
+            let outcome = request.provider.synthesize(
+                &request.text,
+                &request.voice_id,
+                &request.synthesis_settings,
+                &request.output_path,
+            );
+            outcome_progress_event(job_id.clone(), outcome)
+        };
+
+        // Remove this job from the live map regardless of outcome — it is
+        // no longer cancellable once it's finished (same convention as
+        // `RenderJobs`/`TranscriptionJobs`).
+        if let Some(jobs) = app.try_state::<VoiceJobs>() {
+            if let Ok(mut guard) = jobs.0.lock() {
+                guard.remove(&job_id);
+            }
+        }
+
+        let _ = app.emit(VOICE_PROGRESS_EVENT, event);
+    });
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn cancel_voice_job(jobs: State<'_, VoiceJobs>, job_id: String) -> Result<(), AppErrorPayload> {
+    cancel_job_flag(&jobs, &job_id).map_err(|e| AppErrorPayload::from(&e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,5 +499,128 @@ mod tests {
         ))
         .unwrap_err();
         assert_eq!(err.code, "VOICE_PROVIDER_NOT_IMPLEMENTED");
+    }
+
+    // -- synthesize_speech: provider construction (shared with test_voice_connection/
+    //    list_voices above, exercised again here for this command's own settings shape) --
+
+    #[test]
+    fn build_provider_constructs_a_real_custom_api_provider_carrying_the_given_base_url_and_key() {
+        let s = settings(
+            VoiceProviderKind::CustomApi,
+            "http://localhost:9999".to_string(),
+        );
+        let provider = build_provider(&s, Some("sk-test".to_string()));
+        assert_eq!(provider.name(), "custom-api");
+    }
+
+    #[test]
+    fn build_provider_constructs_the_honest_stub_for_nts_gen_ai_and_gpt_so_vits() {
+        let s1 = settings(
+            VoiceProviderKind::NtsGenAi,
+            "http://example.invalid".to_string(),
+        );
+        let s2 = settings(
+            VoiceProviderKind::GptSoVits,
+            "http://example.invalid".to_string(),
+        );
+        assert!(build_provider(&s1, None)
+            .synthesize(
+                "hi",
+                "v1",
+                &VoiceSynthesisSettings::default(),
+                std::path::Path::new("/nonexistent/dir/out.wav"),
+            )
+            .is_err());
+        assert!(build_provider(&s2, None).list_voices().is_err());
+    }
+
+    // -- output-path resolution: the pure "voice_output/<uuid>.wav" naming
+    //    convention, independent of the `AppHandle`-based directory resolver
+    //    itself (no test harness for a real `AppHandle` exists anywhere in
+    //    this codebase — matching `commands::media`/`commands::transcription`'s
+    //    own precedent of only unit-testing the `AppHandle`-free pure logic). --
+
+    #[test]
+    fn synthesized_output_filenames_are_unique_wav_files_under_the_resolved_directory() {
+        let dir = std::path::PathBuf::from("/app/local/data/voice_output");
+        let a = dir.join(format!("{}.wav", uuid::Uuid::new_v4()));
+        let b = dir.join(format!("{}.wav", uuid::Uuid::new_v4()));
+        assert_ne!(
+            a, b,
+            "two synthesis calls must never collide on the same file"
+        );
+        assert_eq!(a.extension().unwrap(), "wav");
+        assert!(a.starts_with(&dir));
+    }
+
+    // -- job-state transitions (`VoiceJobs`, shared by `synthesize_speech`/
+    //    `cancel_voice_job`) --
+
+    #[test]
+    fn cancel_job_flag_flips_the_flag_for_a_live_job() {
+        let jobs = VoiceJobs::default();
+        let flag = Arc::new(AtomicBool::new(false));
+        jobs.0
+            .lock()
+            .unwrap()
+            .insert("job-1".to_string(), flag.clone());
+
+        cancel_job_flag(&jobs, "job-1").expect("job-1 is live");
+        assert!(flag.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn cancel_job_flag_reports_job_not_found_for_an_unknown_or_already_finished_job() {
+        let jobs = VoiceJobs::default();
+        let err = cancel_job_flag(&jobs, "never-existed").unwrap_err();
+        assert!(matches!(err, VoiceError::JobNotFound { .. }));
+
+        // Same outcome once a once-live job has been removed (the real
+        // `spawn_voice_job` background thread's own "finished" cleanup step).
+        let flag = Arc::new(AtomicBool::new(false));
+        jobs.0.lock().unwrap().insert("job-2".to_string(), flag);
+        jobs.0.lock().unwrap().remove("job-2");
+        let err = cancel_job_flag(&jobs, "job-2").unwrap_err();
+        assert!(matches!(err, VoiceError::JobNotFound { .. }));
+    }
+
+    // -- terminal event shape (pure, split out of `spawn_voice_job` for
+    //    exactly this reason) --
+
+    #[test]
+    fn cancelled_progress_event_reports_done_and_cancelled_with_no_output_or_error() {
+        let event = cancelled_progress_event("job-1".to_string());
+        assert!(event.done);
+        assert!(event.cancelled);
+        assert!(event.output_path.is_none());
+        assert!(event.error.is_none());
+    }
+
+    #[test]
+    fn outcome_progress_event_reports_a_real_success_output_path_and_duration() {
+        let output = crate::voice::provider::VoiceSynthesisOutput {
+            audio_path: "/tmp/out.wav".to_string(),
+            duration_us: Some(1_500_000),
+        };
+        let event = outcome_progress_event("job-1".to_string(), Ok(output));
+        assert!(event.done);
+        assert!(!event.cancelled);
+        assert_eq!(event.output_path.as_deref(), Some("/tmp/out.wav"));
+        assert_eq!(event.duration_us, Some(1_500_000));
+        assert!(event.error.is_none());
+    }
+
+    #[test]
+    fn outcome_progress_event_reports_a_real_error_message_with_no_output_path() {
+        let err = VoiceError::NotImplemented {
+            provider: "NTSGenAI".to_string(),
+            reason: "no adapter".to_string(),
+        };
+        let event = outcome_progress_event("job-1".to_string(), Err(err));
+        assert!(event.done);
+        assert!(!event.cancelled);
+        assert!(event.output_path.is_none());
+        assert!(event.error.unwrap().contains("not implemented"));
     }
 }

@@ -16,13 +16,20 @@
 
   Pure UI over `stores/voiceSettings.svelte.ts` — read that store's own
   module doc comment for the full reasoning behind the write-only credential
-  posture and the "Voice Mapping is saved but not yet consumed by any real
-  pipeline" honesty note (stated again below, in-dialog, not just in code).
+  posture. As of STUDIO_PLAN.md Phase D16, Voice Mapping is no longer purely
+  saved-but-unconsumed: the "Generate Voice" section below (over
+  `stores/voiceSynthesis.svelte.ts`) is a real, working "test this mapping
+  end-to-end" trigger for the real `synthesize_speech` command — read that
+  store's own module doc comment for exactly what is (a standalone one-line
+  generation) and is NOT (the full per-caption dubbing pipeline, `promt.md`
+  §3 — still a separate, larger, unbuilt gap) in scope here.
 -->
 <script lang="ts">
   import { voiceSettingsStore, VOICE_PROVIDER_KINDS } from "../../stores/voiceSettings.svelte";
+  import { voiceSynthesisStore } from "../../stores/voiceSynthesis.svelte";
+  import { captionsStore } from "../../stores/captions.svelte";
   import { t } from "../../lib/i18n.svelte";
-  import type { VoiceInfo, VoiceProviderKind } from "../../types/bindings";
+  import type { VoiceInfo, VoiceProviderKind, VoiceSynthesisSettings } from "../../types/bindings";
   import Modal from "../ui/Modal.svelte";
   import Panel from "../ui/Panel.svelte";
   import Select from "../ui/Select.svelte";
@@ -30,6 +37,8 @@
   import Button from "../ui/Button.svelte";
   import ErrorState from "../ui/ErrorState.svelte";
   import EmptyState from "../ui/EmptyState.svelte";
+  import LoadingState from "../ui/LoadingState.svelte";
+  import SuccessBanner from "../ui/SuccessBanner.svelte";
   import type { SelectOption } from "../ui/Select.svelte";
 
   function providerLabel(kind: VoiceProviderKind): string {
@@ -70,6 +79,55 @@
     const voice = voiceSettingsStore.voices.find((v) => v.voice_id === selectedVoiceId);
     if (!voice) return;
     voiceSettingsStore.addMapping(voice);
+  }
+
+  // -------------------------------------------------------------------
+  // Generate Voice (STUDIO_PLAN.md Phase D16) — a real, standalone
+  // "does this mapping actually produce audio" trigger over
+  // `stores/voiceSynthesis.svelte.ts`. Not the full per-caption dubbing
+  // pipeline (`promt.md` §3) — see this file's own module doc comment.
+  // -------------------------------------------------------------------
+
+  const mappingOptions = $derived<SelectOption[]>(
+    voiceSettingsStore.roleMappings.map((m) => ({ value: m.role, label: `${m.role} → ${m.voiceName}` })),
+  );
+  let selectedMappingRole = $state<string>("");
+  let generateText = $state("");
+
+  const captionOptions = $derived<SelectOption[]>(
+    captionsStore.captions.map((c, i) => ({
+      value: c.id,
+      label: c.text.trim() === "" ? `#${i + 1} (${t("voiceSettings.emptyCaption")})` : `#${i + 1}: ${c.text.slice(0, 60)}`,
+    })),
+  );
+
+  function insertCaptionText(captionId: string): void {
+    const caption = captionsStore.captions.find((c) => c.id === captionId);
+    if (caption) generateText = caption.text;
+  }
+
+  /** No synthesis-settings (speed/pitch/etc.) UI exists in this dialog yet
+   * (out of this task's scope, per its own brief) — unity defaults, same as
+   * `VoiceSynthesisSettings::default()` on the Rust side. */
+  function defaultSynthesisSettings(): VoiceSynthesisSettings {
+    return { speed: 1, pitch: 1, volume: 1, emotion: null, language: null };
+  }
+
+  const selectedMapping = $derived(voiceSettingsStore.roleMappings.find((m) => m.role === selectedMappingRole) ?? null);
+  const canGenerate = $derived(
+    selectedMapping !== null && generateText.trim() !== "" && !voiceSynthesisStore.isRunning && !voiceSynthesisStore.starting,
+  );
+
+  async function generateVoice(): Promise<void> {
+    const mapping = selectedMapping;
+    if (!mapping || generateText.trim() === "") return;
+    voiceSynthesisStore.reset();
+    await voiceSynthesisStore.generate(
+      generateText.trim(),
+      mapping.voiceId,
+      voiceSettingsStore.settingsSnapshot(),
+      defaultSynthesisSettings(),
+    );
   }
 </script>
 
@@ -217,6 +275,71 @@
     {/if}
   </Panel>
 
+  <Panel title={t("voiceSettings.generateSectionTitle")}>
+    <p class="vs-hint muted-2">{t("voiceSettings.generateExplainer")}</p>
+    {#if voiceSettingsStore.roleMappings.length === 0}
+      <EmptyState title={t("voiceSettings.generateNeedsMappingTitle")} />
+    {:else}
+      <div class="vs-row">
+        <Select
+          id="vs-generate-mapping"
+          label={t("voiceSettings.generateMappingLabel")}
+          value={selectedMappingRole}
+          options={mappingOptions}
+          placeholder={t("voiceSettings.generateMappingPlaceholder")}
+          onchange={(v) => (selectedMappingRole = v)}
+        />
+      </div>
+      {#if captionOptions.length > 0}
+        <div class="vs-row">
+          <Select
+            id="vs-generate-caption"
+            label={t("voiceSettings.generateCaptionLabel")}
+            value=""
+            options={captionOptions}
+            placeholder={t("voiceSettings.generateCaptionPlaceholder")}
+            onchange={insertCaptionText}
+          />
+        </div>
+      {/if}
+      <div class="vs-row">
+        <textarea
+          class="ui-input vs-generate-text"
+          rows="3"
+          placeholder={t("voiceSettings.generateTextPlaceholder")}
+          bind:value={generateText}
+        ></textarea>
+      </div>
+      <div class="vs-row">
+        <Button disabled={!canGenerate} onclick={() => void generateVoice()}>
+          {voiceSynthesisStore.starting || voiceSynthesisStore.isRunning
+            ? t("voiceSettings.generating")
+            : t("voiceSettings.generateButton")}
+        </Button>
+        {#if voiceSynthesisStore.isRunning}
+          <Button variant="ghost" disabled={voiceSynthesisStore.cancelling} onclick={() => void voiceSynthesisStore.cancel()}>
+            {t("voiceSettings.generateCancelButton")}
+          </Button>
+        {/if}
+      </div>
+      {#if voiceSynthesisStore.startError}
+        <ErrorState message={voiceSynthesisStore.startError} />
+      {:else if voiceSynthesisStore.isRunning}
+        <LoadingState message={t("voiceSettings.generating")} />
+      {:else if voiceSynthesisStore.progress}
+        {#if voiceSynthesisStore.progress.cancelled}
+          <ErrorState message={t("voiceSettings.generateCancelledNote")} />
+        {:else if voiceSynthesisStore.progress.error}
+          <ErrorState message={voiceSynthesisStore.progress.error} />
+        {:else if voiceSynthesisStore.progress.output_path}
+          <SuccessBanner
+            message={t("voiceSettings.generateSuccess", { path: voiceSynthesisStore.progress.output_path })}
+          />
+        {/if}
+      {/if}
+    {/if}
+  </Panel>
+
   {#snippet footer()}
     <Button variant="ghost" onclick={() => voiceSettingsStore.close()}>{t("voiceSettings.close")}</Button>
   {/snippet}
@@ -249,6 +372,12 @@
   .vs-role-input {
     flex: 1;
     min-width: 0;
+  }
+  .vs-generate-text {
+    flex: 1;
+    min-width: 0;
+    resize: vertical;
+    font-family: inherit;
   }
   /* Same "no success-state component exists" gap as AiSettingsDialog's own
      .as-test-ok. */

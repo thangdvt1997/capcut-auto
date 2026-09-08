@@ -325,6 +325,16 @@ class VoiceSettingsStore {
     this.roleMappings = this.roleMappings.filter((m) => m.role !== role);
     saveMappings(this.roleMappings);
   }
+
+  /** Bulk replace — added for `stores/presets.svelte.ts::apply()` (Phase
+   * D17), which restores a saved preset's *entire* role-mapping list in one
+   * shot rather than one `addMapping` call per role. Persists exactly like
+   * `addMapping`/`removeMapping` already do, so a preset applied this
+   * session survives a restart the same way a manually-added mapping does. */
+  setRoleMappings(mappings: VoiceRoleMapping[]): void {
+    this.roleMappings = mappings;
+    saveMappings(this.roleMappings);
+  }
 }
 
 export const voiceSettingsStore = new VoiceSettingsStore();

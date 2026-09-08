@@ -7,11 +7,16 @@
 //! `CredentialNotFound`/`CredentialStoreFailed`) since a `VoiceProvider`
 //! talking to a configured HTTP endpoint through a credential looked up in
 //! the same `ai::credentials::CredentialStore` is structurally the same
-//! kind of problem `AIProvider` already solves — plus two voice-specific
+//! kind of problem `AIProvider` already solves — plus four voice-specific
 //! cases this subsystem alone needs: `OutputWriteFailed` (writing the
-//! synthesized audio to disk failed) and `NotImplemented` (the honestly-
+//! synthesized audio to disk failed), `NotImplemented` (the honestly-
 //! stubbed `NtsGenAi`/`GptSoVits` provider kinds — see `voice::stub` module
-//! doc comment).
+//! doc comment), `StorageUnavailable` (resolving the `voice_output`
+//! directory itself failed — `commands::voice::voice_output_dir`'s only
+//! failure mode, matching `transcription::ModelError::StorageUnavailable`'s
+//! own precedent), and `JobNotFound` (`cancel_voice_job` against an
+//! already-finished or never-existed job id, matching
+//! `RenderError::JobNotFound`/`TranscriptionError::JobNotFound`).
 
 use serde::Serialize;
 use specta::Type;
@@ -49,6 +54,12 @@ pub enum VoiceError {
 
     #[error("voice provider {provider} is not implemented: {reason}")]
     NotImplemented { provider: String, reason: String },
+
+    #[error("could not access voice output storage: {details}")]
+    StorageUnavailable { details: String },
+
+    #[error("no voice synthesis job found for id {job_id}")]
+    JobNotFound { job_id: String },
 }
 
 impl From<&VoiceError> for AppErrorPayload {
@@ -111,6 +122,20 @@ impl From<&VoiceError> for AppErrorPayload {
                     .with_details(reason.clone())
                     .recoverable(false)
                     .with_suggestion("Choose Custom API, or wait for this provider to be implemented.")
+            }
+            VoiceError::StorageUnavailable { details } => {
+                AppErrorPayload::new("VOICE_STORAGE_UNAVAILABLE", message)
+                    .with_details(details.clone())
+                    .recoverable(false)
+                    .with_suggestion(
+                        "This app could not resolve its local data directory for voice output; check disk/OS permissions.",
+                    )
+            }
+            VoiceError::JobNotFound { job_id } => {
+                AppErrorPayload::new("VOICE_JOB_NOT_FOUND", message)
+                    .with_details(job_id.clone())
+                    .recoverable(false)
+                    .with_suggestion("This voice synthesis job has already finished or never existed.")
             }
         }
     }
@@ -176,6 +201,18 @@ mod tests {
                     reason: "r".into(),
                 },
                 "VOICE_PROVIDER_NOT_IMPLEMENTED",
+            ),
+            (
+                VoiceError::StorageUnavailable {
+                    details: "d".into(),
+                },
+                "VOICE_STORAGE_UNAVAILABLE",
+            ),
+            (
+                VoiceError::JobNotFound {
+                    job_id: "j1".into(),
+                },
+                "VOICE_JOB_NOT_FOUND",
             ),
         ];
         for (err, code) in cases {

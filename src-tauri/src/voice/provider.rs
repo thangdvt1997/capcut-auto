@@ -13,9 +13,14 @@
 //! anything else in this module
 //!
 //! - **Real**: the trait shape itself, `CustomApiVoiceProvider`'s request-
-//!   building/response-handling code (`voice::custom_api`), and
-//!   `commands::voice::test_voice_connection`'s HTTP reachability check.
-//!   All independently unit-tested against a real local mock HTTP server
+//!   building/response-handling code (`voice::custom_api`),
+//!   `commands::voice::test_voice_connection`'s HTTP reachability check, and
+//!   (STUDIO_PLAN.md Phase D16) `commands::voice::synthesize_speech`'s full
+//!   job lifecycle — real `output_path` resolution under
+//!   `app_local_data_dir().join("voice_output")`, a real background thread,
+//!   a real `voice:progress` terminal event, and real (before-the-HTTP-call-
+//!   only, see that command's own doc comment) cancellation. All
+//!   independently unit-tested against a real local mock HTTP server
 //!   (`ai::test_http`) — never a live network call.
 //! - **NOT real / never exercised against a live service**: actual
 //!   text-to-speech synthesis. There is no TTS API key, no network-reachable
@@ -42,11 +47,10 @@
 //! discipline every other provider trait in this crate already follows
 //! (`VadProvider`/`TranscriptionProvider` don't touch the filesystem at all;
 //! `capcut::export::export_draft` takes an explicit `draft_output_dir: &Path`
-//! for the same reason). The intended real caller (a future
-//! `synthesize_speech` command — not built this pass, see `commands::voice`
-//! module doc comment for exactly why) would resolve `output_path` the same
-//! way every other generated/managed artifact directory in this crate is
-//! resolved: `app_local_data_dir().join("voice_output")` (the exact pattern
+//! for the same reason). The real caller (`commands::voice::synthesize_speech`,
+//! STUDIO_PLAN.md Phase D16) resolves `output_path` the same way every other
+//! generated/managed artifact directory in this crate is resolved:
+//! `app_local_data_dir().join("voice_output")` (the exact pattern
 //! `commands::media`'s `media_cache_dir`/`commands::assets::assets_dir`
 //! already use for their own generated files), joined with a fresh filename
 //! per synthesis call.

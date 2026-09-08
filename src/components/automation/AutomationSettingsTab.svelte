@@ -51,6 +51,7 @@
   import { automationStore } from "../../stores/automation.svelte";
   import { updateSettingsStore, UPDATE_CHECK_MODES } from "../../stores/updateSettings.svelte";
   import { voiceSettingsStore } from "../../stores/voiceSettings.svelte";
+  import { presetsStore } from "../../stores/presets.svelte";
   import type { AiProviderKind, AutomationRule, UpdateCheckMode, VoiceProviderKind } from "../../types/bindings";
 
   // Real data load for the two stores whose status this tab shows before
@@ -325,6 +326,21 @@
           <div class="ast-actions">
             <Button size="sm" variant="primary" onclick={() => voiceSettingsStore.openDialog()}>
               {t("automationSettingsTab.voice.openButton")}
+            </Button>
+          </div>
+        </Card>
+      </Panel>
+
+      <Panel title={t("automationSettingsTab.presets.title")}>
+        <Card>
+          <div class="ast-row">
+            <span class="ast-row-label muted-2">{t("automationSettingsTab.presets.countRowLabel")}</span>
+            <span class="ast-row-value">{presetsStore.presets.length}</span>
+          </div>
+          <p class="ast-status-line muted-2">{t("automationSettingsTab.presets.hint")}</p>
+          <div class="ast-actions">
+            <Button size="sm" variant="primary" onclick={() => presetsStore.openDialog()}>
+              {t("automationSettingsTab.presets.openButton")}
             </Button>
           </div>
         </Card>

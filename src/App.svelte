@@ -57,6 +57,7 @@
   import HistoryDialog from "./components/history/HistoryDialog.svelte";
   import TemplateGeneratorDialog from "./components/templates/TemplateGeneratorDialog.svelte";
   import AutomationRulesDialog from "./components/automation/AutomationRulesDialog.svelte";
+  import PresetManagerDialog from "./components/presets/PresetManagerDialog.svelte";
 
   let activeAppTab = $state("workspace");
 </script>
@@ -203,6 +204,12 @@
        `templatesStore.allTemplates` catalog `StartBatchDialog.svelte`
        already reads from, so nothing else needs mounting here. -->
   <AutomationRulesDialog />
+
+  <!-- Phase D17 (`STUDIO_PLAN.md`, `promt.md` §18): the Preset Manager
+       dialog — same "one shared store-backed dialog, reachable from a Tab 2
+       button" reason as the dialogs above — see PresetManagerDialog.svelte's
+       own doc comment. -->
+  <PresetManagerDialog />
 </main>
 
 <style>

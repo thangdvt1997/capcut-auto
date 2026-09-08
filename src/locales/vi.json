@@ -1271,7 +1271,7 @@
       "generatingButton": "Đang tạo…",
       "translateButton": "Dịch…",
       "generateVoiceButton": "Tạo giọng nói",
-      "voiceNotWiredTooltip": "Tạo giọng nói chưa được kết nối với lệnh thực thi nào — lớp trừu tượng nhà cung cấp giọng nói đã có ở backend, nhưng chưa có bước synthesize_speech trong pipeline.",
+      "voiceNotWiredTooltip": "Đã có bài test \"Tạo giọng nói\" thật trong Cài đặt Giọng nói (một dòng văn bản -> một file âm thanh thật), nhưng đó là bài test độc lập, chưa phải một bước trong pipeline của dự án — nó không đọc phụ đề của dự án này hay ghi kết quả trở lại vào đó.",
       "syncTimelineButton": "Đồng bộ Timeline",
       "syncNotWiredTooltip": "Đồng bộ Timeline chưa phải là một phần của pipeline này.",
       "noTranscriptHint": "Hãy chạy Speech-to-Text từ tab Bản chép lời (chế độ Nâng cao) trước."
@@ -1320,9 +1320,54 @@
       "mappingsRowLabel": "Số vai trò đã gán",
       "openButton": "Mở Cài đặt Giọng nói…"
     },
+    "presets": {
+      "title": "Preset",
+      "countRowLabel": "Số preset đã lưu",
+      "hint": "Đóng gói cài đặt AI, Dịch thuật, Giọng nói, Render và CapCut hiện tại của bạn thành một preset có tên, có thể chia sẻ — ví dụ \"Spanish Crime Movie\" hoặc \"TikTok Auto Dub\".",
+      "openButton": "Quản lý Preset…"
+    },
     "gaps": {
       "title": "Chưa xây dựng (khoảng trống thật)",
-      "desc": "Dịch thuật, Hiệu năng và Lưu trữ chưa có hộp thoại cài đặt hay store phía sau thật nào cả, nên không có công tắc nào cho chúng được hiển thị ở đây — thêm các công tắc giả không có chức năng thật phía sau sẽ phản ánh sai những gì ứng dụng này thực sự làm được hôm nay. Giọng nói giờ đã có hộp thoại cài đặt thật (Nhà cung cấp/Khóa API/Test Connection/Refresh Voices/Voice Mapping) — xem phần Voice Settings trong STUDIO_PLAN.md — nhưng chưa có pipeline tổng hợp giọng nói thật nào, nên Voice Mapping đã lưu chưa được bất kỳ tính năng thật nào sử dụng."
+      "desc": "Dịch thuật, Hiệu năng và Lưu trữ chưa có hộp thoại cài đặt hay store phía sau thật nào cả, nên không có công tắc nào cho chúng được hiển thị ở đây — thêm các công tắc giả không có chức năng thật phía sau sẽ phản ánh sai những gì ứng dụng này thực sự làm được hôm nay. Giọng nói giờ đã có hộp thoại cài đặt thật (Nhà cung cấp/Khóa API/Test Connection/Refresh Voices/Voice Mapping) cùng một nút Generate Voice thật, tổng hợp ra một file âm thanh thật cho mỗi voice mapping — xem phần Voice Settings và Voice Synthesis trong STUDIO_PLAN.md — nhưng toàn bộ pipeline lồng tiếng theo từng phụ đề (dịch mọi phụ đề, tạo một file âm thanh cho mỗi dòng, đồng bộ vào timeline) vẫn chưa tồn tại."
+    }
+  },
+  "presetManager": {
+    "title": "Quản lý Preset",
+    "explainer": "Một preset đóng gói cài đặt AI, Dịch thuật, Giọng nói, Render/Xuất và CapCut hiện tại của bạn thành một bản chụp có tên, có thể tái sử dụng. Không có khóa API hay bất kỳ bí mật nào từng được đưa vào preset — chỉ ghi nhớ preset này cần nhà cung cấp nào được cấu hình (\"preset này cần một khóa OpenAI\").",
+    "close": "Đóng",
+    "importButton": "Nhập Preset từ tệp…",
+    "importing": "Đang nhập…",
+    "importFailed": "Không thể nhập preset: {{error}}",
+    "exportFailed": "Không thể xuất preset: {{error}}",
+    "saveForm": {
+      "title": "Lưu cài đặt hiện tại thành preset",
+      "nameLabel": "Tên preset",
+      "namePlaceholder": "ví dụ: Spanish Crime Movie",
+      "saveButton": "Lưu",
+      "hint": "Chụp lại cài đặt AI, Dịch thuật, Giọng nói, Render/Xuất và CapCut hiện tại của bạn đúng như hiện trạng."
+    },
+    "summary": {
+      "ai": "AI: {{provider}}/{{model}}",
+      "translation": "Dịch thuật: {{lang}} ({{genre}})",
+      "noGenre": "không thể loại",
+      "voice": "Giọng nói: {{provider}} ({{count}} gán vai trò)",
+      "export": "Xuất: {{preset}}",
+      "noExportPreset": "không có",
+      "capcut": "CapCut: {{path}}",
+      "autoDetected": "tự động phát hiện"
+    },
+    "list": {
+      "empty": "Chưa có preset nào được lưu. Cấu hình cài đặt của bạn, sau đó dùng \"Lưu cài đặt hiện tại thành preset\" ở trên.",
+      "colName": "Tên",
+      "colSummary": "Nội dung",
+      "colActions": "Hành động",
+      "applyButton": "Áp dụng",
+      "applying": "Đang áp dụng…",
+      "exportButton": "Xuất…",
+      "exporting": "Đang xuất…",
+      "deleteButton": "Xóa",
+      "deleteConfirmButton": "Xác nhận Xóa",
+      "deleteCancelButton": "Hủy"
     }
   },
   "voiceSettings": {
@@ -1354,13 +1399,27 @@
     "loadingVoices": "Đang tải…",
     "refreshVoicesButton": "Tải lại danh sách giọng",
     "mappingSectionTitle": "Ánh xạ giọng nói",
-    "mappingNotConsumedNote": "Được lưu ở đây để dùng sau, nhưng app này chưa có pipeline tạo giọng nói nào cả — ánh xạ này chưa được bất kỳ tính năng thật nào sử dụng hôm nay.",
+    "mappingNotConsumedNote": "Được lưu ở đây để dùng lại, và giờ đã được phần \"Tạo giọng nói\" bên dưới sử dụng thật — nhưng chỉ là một bài test độc lập từng dòng, không phải toàn bộ pipeline lồng tiếng theo từng phụ đề (pipeline đó vẫn chưa tồn tại trong app này).",
     "mappingNeedsVoicesTitle": "Bấm Tải lại danh sách giọng ở trên để gán một vai trò cho giọng.",
     "roleNamePlaceholder": "Tên vai trò (vd: Người dẫn chuyện, Người nói A)",
     "selectVoicePlaceholder": "Chọn một giọng…",
     "addMappingButton": "Thêm",
     "noMappingsYet": "Chưa có ánh xạ vai trò nào.",
     "removeMappingButton": "Xóa",
+    "generateSectionTitle": "Tạo giọng nói",
+    "generateExplainer": "Một bài kiểm tra thật, độc lập: chọn một ánh xạ đã lưu, gõ hoặc dán một dòng văn bản (hoặc lấy từ một phụ đề thật đã tải bên dưới), rồi tạo ra một file âm thanh thật từ đầu đến cuối. Đây không phải toàn bộ pipeline lồng tiếng theo từng phụ đề — pipeline đó (dịch mọi phụ đề, tạo một dòng âm thanh cho mỗi phụ đề, đồng bộ vào timeline) vẫn chưa tồn tại trong app này.",
+    "generateNeedsMappingTitle": "Hãy thêm một Ánh xạ giọng nói ở trên trước.",
+    "generateMappingLabel": "Ánh xạ",
+    "generateMappingPlaceholder": "Chọn một ánh xạ…",
+    "generateCaptionLabel": "Chèn từ phụ đề",
+    "generateCaptionPlaceholder": "Chọn một phụ đề đã tải…",
+    "emptyCaption": "trống",
+    "generateTextPlaceholder": "Gõ hoặc dán dòng cần tổng hợp…",
+    "generateButton": "Tạo",
+    "generating": "Đang tạo…",
+    "generateCancelButton": "Hủy",
+    "generateCancelledNote": "Đã hủy trước khi yêu cầu đến được máy chủ.",
+    "generateSuccess": "Đã tạo: {{path}}",
     "close": "Đóng"
   },
   "translationReview": {

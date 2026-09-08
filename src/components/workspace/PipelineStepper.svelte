@@ -16,13 +16,25 @@
     this session, not merely proposed — matching the Render step's own
     "reflect a real terminal outcome, not an in-flight preview" standard
     below.
-  - **Voice**: always `pending`. Honest, not an oversight —
-    `src-tauri/src/commands/voice.rs`'s own doc comment states plainly that
-    no `synthesize_speech` command exists yet (Phase S7 built the provider
-    abstraction + connection/listing commands only), so there is nothing
-    real to reflect. Shown disabled-looking with a tooltip explaining why,
-    matching this codebase's own `voice::stub` "return a clear NotImplemented
-    rather than silently no-op" honesty convention.
+  - **Voice**: always `pending`, still — a deliberate re-confirmation, not
+    an oversight, made again in STUDIO_PLAN.md Phase D16. `commands::voice::
+    synthesize_speech` is now real (Phase D16 built the full background-job/
+    cancellation/`voice:progress` wiring around `voice::custom_api::
+    CustomApiVoiceProvider::synthesize`), and `VoiceSettingsDialog.svelte`'s
+    own "Generate Voice" section calls it end-to-end. But that section is a
+    standalone, manually-triggered "does this mapping produce audio" test —
+    it consumes free-typed/pasted text (or a copy of one caption's text
+    pulled in on request), not this project's real caption list, and its
+    output isn't written back into `stores/captions.svelte.ts`/the timeline
+    in any way. This step represents *this project's* pipeline progress the
+    same way Subtitle/Translate/Render do (real counts/state that describe
+    the actual project), so a mapping's own standalone test run — which
+    touches no project state at all — correctly does not move it off
+    `pending`. It will become real here only once a per-caption voice-
+    generation stage (`promt.md` §3's still-unbuilt 10-step vision) actually
+    writes results into the project. Shown disabled-looking with a tooltip
+    explaining why, matching this codebase's own `voice::stub` "return a
+    clear NotImplemented rather than silently no-op" honesty convention.
   - **Sync**: always `pending`, for the same reason — "Sync Timeline" as
     promt.md's own pipeline concept has no corresponding real command; the
     existing Timeline's own sync-groups feature is a different, unrelated

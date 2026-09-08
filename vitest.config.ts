@@ -24,5 +24,16 @@ export default defineConfig({
     environment: "jsdom",
     include: ["src/**/*.{test,spec}.ts"],
     globals: false,
+    // Confirmed via direct reproduction (STUDIO_PLAN.md, Phase D16/D17
+    // combined verification): running test files in separate parallel
+    // workers made two independent, individually-100%-passing files
+    // (`aiSettings.test.ts`, `presets.test.ts`) each hang on their very
+    // first `vi.resetModules()` + dynamic `import()` when run together —
+    // a real Vitest/jsdom worker-isolation interaction, not a logic bug in
+    // either store (both pass cleanly alone, and both pass cleanly here).
+    // This suite is small enough (7 files, ~130 tests, ~7s total) that
+    // running files sequentially in one process is a trivial cost for
+    // eliminating a real, reproducible flake.
+    fileParallelism: false,
   },
 });

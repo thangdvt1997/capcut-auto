@@ -199,6 +199,10 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::diagnostics::get_live_system_stats,
         commands::voice::test_voice_connection,
         commands::voice::list_voices,
+        commands::voice::synthesize_speech,
+        commands::voice::cancel_voice_job,
+        commands::presets::export_preset_to_file,
+        commands::presets::import_preset_from_file,
         fcpxml::export::export_fcpxml,
         capcut::export::export_project_to_capcut_draft,
     ])
@@ -398,6 +402,10 @@ pub fn run() {
                 app,
                 crate::commands::transcription::TranscriptionJobs::default(),
             );
+            // Live voice synthesis jobs (Phase D16, `STUDIO_PLAN.md`), same
+            // `id -> Arc<AtomicBool>` cancellation-map pattern as `RenderJobs`
+            // above — see `commands::voice::VoiceJobs` doc comment.
+            tauri::Manager::manage(app, crate::commands::voice::VoiceJobs::default());
             // Live batch jobs (Phase 11, master prompt §42/§43): one
             // `BatchJobManager` for the whole app, tracking every in-flight
             // batch job by id — see `batch::manager` module doc comment.

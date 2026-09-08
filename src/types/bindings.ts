@@ -1762,6 +1762,60 @@ async listVoices(settings: VoiceProviderSettings) : Promise<Result<VoiceInfo[], 
 }
 },
 /**
+ * Starts a background voice synthesis job for `text` as `voice_id` (using
+ * `settings` to construct the provider and `synthesis_settings` for
+ * speed/pitch/volume/emotion/language) and returns a `job_id` immediately —
+ * module doc comment for the full progress/cancellation contract. Provider
+ * construction (credential lookup + `build_provider`) happens synchronously
+ * here, matching `start_render_job`'s own "validate before spawning"
+ * precedent: a bad `credential_ref` fails the call immediately with a clear
+ * `Err`, rather than only surfacing via a job that starts and instantly
+ * fails.
+ */
+async synthesizeSpeech(text: string, voiceId: string, settings: VoiceProviderSettings, synthesisSettings: VoiceSynthesisSettings) : Promise<Result<string, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("synthesize_speech", { text, voiceId, settings, synthesisSettings }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cancelVoiceJob(jobId: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_voice_job", { jobId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Writes `json` (an already-serialized preset — the frontend's
+ * responsibility to build, per this module's own doc comment) to `path`,
+ * atomically: `<path>.tmp` -> fsync -> rename over `path`.
+ */
+async exportPresetToFile(json: string, path: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("export_preset_to_file", { json, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Reads the raw text contents of `path` back — the frontend parses and
+ * validates the JSON itself (`presets.svelte.ts`'s own import path), the
+ * same "backend hands back bytes, frontend owns the schema" split
+ * `commands::templates::import_template` uses for a typed template instead.
+ */
+async importPresetFromFile(path: string) : Promise<Result<string, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("import_preset_from_file", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Tauri command: export `project` as a FCPXML 1.11 file at `output_path`.
  * Specta-typed, following `commands/timeline.rs`/`commands/vad.rs`'s
  * naming/error-envelope conventions.
@@ -3686,6 +3740,35 @@ base_url: string;
  * `None` for a keyless server, or when a stub provider is selected.
  */
 credential_ref: string | null }
+/**
+ * Playback/generation parameters (`promt.md` §9: Speed/Pitch/Volume/
+ * Emotion/Language) — everything a `synthesize` call needs beyond the text
+ * itself and which voice to use.
+ */
+export type VoiceSynthesisSettings = { 
+/**
+ * 1.0 = normal speed.
+ */
+speed: number; 
+/**
+ * 1.0 = normal pitch.
+ */
+pitch: number; 
+/**
+ * 1.0 = normal (unattenuated) volume.
+ */
+volume: number; 
+/**
+ * Provider-defined emotion label (e.g. `"neutral"`, `"happy"`,
+ * `"sad"`) — no fixed enum here since `promt.md` §9 names no closed
+ * set and different providers support different vocabularies.
+ */
+emotion: string | null; 
+/**
+ * ISO 639-1 language code (e.g. `"en"`, `"vi"`). `None` lets the
+ * provider use its own default/auto-detected language.
+ */
+language: string | null }
 /**
  * Corner/center placement for a watermark or logo overlay (upgrade spec
  * §3's own `position: top-right` example). Deliberately a new, small enum

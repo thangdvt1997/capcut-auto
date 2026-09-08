@@ -1271,7 +1271,7 @@
       "generatingButton": "Generating…",
       "translateButton": "Translate…",
       "generateVoiceButton": "Generate Voice",
-      "voiceNotWiredTooltip": "Voice synthesis isn't wired to a command yet (the backend provider abstraction exists, but no synthesize_speech pipeline stage does).",
+      "voiceNotWiredTooltip": "A real \"Generate Voice\" test exists in Voice Settings (one line of text -> one real audio file), but it's a standalone test, not a project pipeline stage yet — it doesn't read this project's captions or write results back into it.",
       "syncTimelineButton": "Sync Timeline",
       "syncNotWiredTooltip": "Timeline sync isn't part of this pipeline yet.",
       "noTranscriptHint": "Run Speech-to-Text from the Transcript tab (Advanced mode) first."
@@ -1320,9 +1320,54 @@
       "mappingsRowLabel": "Role mappings",
       "openButton": "Open Voice Settings…"
     },
+    "presets": {
+      "title": "Presets",
+      "countRowLabel": "Saved presets",
+      "hint": "Bundle your current AI, Translation, Voice, Render, and CapCut settings into a named, shareable preset — e.g. \"Spanish Crime Movie\" or \"TikTok Auto Dub\".",
+      "openButton": "Manage Presets…"
+    },
     "gaps": {
       "title": "Not built yet (honest gap)",
-      "desc": "Translation, Performance, and Storage don't have real settings dialogs or backend stores yet, so no toggles for them are shown here — adding placeholder switches with nothing real behind them would misrepresent what this app can actually do today. Voice now has a real settings dialog (Provider/API Key/Test Connection/Refresh Voices/Voice Mapping) — see STUDIO_PLAN.md's Voice Settings phase — but no synthesize-speech pipeline exists yet, so a saved Voice Mapping is not consumed by anything real today."
+      "desc": "Translation, Performance, and Storage don't have real settings dialogs or backend stores yet, so no toggles for them are shown here — adding placeholder switches with nothing real behind them would misrepresent what this app can actually do today. Voice now has a real settings dialog (Provider/API Key/Test Connection/Refresh Voices/Voice Mapping) plus a real Generate Voice trigger that synthesizes one real audio file per mapping — see STUDIO_PLAN.md's Voice Settings and Voice Synthesis phases — but the full per-caption dubbing pipeline (translate every caption, generate one audio file per line, sync into the timeline) still does not exist."
+    }
+  },
+  "presetManager": {
+    "title": "Preset Manager",
+    "explainer": "A preset bundles your current AI, Translation, Voice, Render/Export, and CapCut settings into one named, reusable snapshot. No API key or other secret is ever included in a preset — only which provider it expects you to have configured (\"this preset expects an OpenAI key\") is remembered.",
+    "close": "Close",
+    "importButton": "Import Preset from File…",
+    "importing": "Importing…",
+    "importFailed": "Could not import preset: {{error}}",
+    "exportFailed": "Could not export preset: {{error}}",
+    "saveForm": {
+      "title": "Save current settings as preset",
+      "nameLabel": "Preset name",
+      "namePlaceholder": "e.g. Spanish Crime Movie",
+      "saveButton": "Save",
+      "hint": "Snapshots your current AI, Translation, Voice, Render/Export, and CapCut settings exactly as they stand right now."
+    },
+    "summary": {
+      "ai": "AI: {{provider}}/{{model}}",
+      "translation": "Translation: {{lang}} ({{genre}})",
+      "noGenre": "no genre",
+      "voice": "Voice: {{provider}} ({{count}} mappings)",
+      "export": "Export: {{preset}}",
+      "noExportPreset": "none",
+      "capcut": "CapCut: {{path}}",
+      "autoDetected": "auto-detected"
+    },
+    "list": {
+      "empty": "No presets saved yet. Configure your settings, then use \"Save current settings as preset\" above.",
+      "colName": "Name",
+      "colSummary": "Bundles",
+      "colActions": "Actions",
+      "applyButton": "Apply",
+      "applying": "Applying…",
+      "exportButton": "Export…",
+      "exporting": "Exporting…",
+      "deleteButton": "Delete",
+      "deleteConfirmButton": "Confirm Delete",
+      "deleteCancelButton": "Cancel"
     }
   },
   "voiceSettings": {
@@ -1354,13 +1399,27 @@
     "loadingVoices": "Loading…",
     "refreshVoicesButton": "Refresh Voices",
     "mappingSectionTitle": "Voice Mapping",
-    "mappingNotConsumedNote": "Saved here for later use, but no voice-generation pipeline exists yet in this app — this mapping is not consumed by anything real today.",
+    "mappingNotConsumedNote": "Saved here for reuse, and now consumed by the real \"Generate Voice\" section below — but only as a standalone one-line test, not the full per-caption dubbing pipeline (that still does not exist in this app).",
     "mappingNeedsVoicesTitle": "Refresh Voices above to map a role to one.",
     "roleNamePlaceholder": "Role name (e.g. Narrator, Speaker A)",
     "selectVoicePlaceholder": "Select a voice…",
     "addMappingButton": "Add",
     "noMappingsYet": "No role mappings yet.",
     "removeMappingButton": "Remove",
+    "generateSectionTitle": "Generate Voice",
+    "generateExplainer": "A real, standalone test: pick a saved mapping, type or paste one line of text (or pull one in from a real loaded caption below), and generate one real audio file end-to-end. This is not the full per-caption dubbing pipeline — that (translate every caption, generate one line per caption, sync into the timeline) does not exist in this app yet.",
+    "generateNeedsMappingTitle": "Add a Voice Mapping above first.",
+    "generateMappingLabel": "Mapping",
+    "generateMappingPlaceholder": "Select a mapping…",
+    "generateCaptionLabel": "Insert from caption",
+    "generateCaptionPlaceholder": "Pick a loaded caption…",
+    "emptyCaption": "empty",
+    "generateTextPlaceholder": "Type or paste the line to synthesize…",
+    "generateButton": "Generate",
+    "generating": "Generating…",
+    "generateCancelButton": "Cancel",
+    "generateCancelledNote": "Cancelled before the request reached the server.",
+    "generateSuccess": "Generated: {{path}}",
     "close": "Close"
   },
   "translationReview": {
