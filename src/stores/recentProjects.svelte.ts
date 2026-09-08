@@ -28,9 +28,9 @@
 // unavailable (private browsing, disabled storage) — this list simply won't
 // survive a restart in that case, never a thrown error.
 
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { timeline } from "./timeline.svelte";
-import { projectFolderStore } from "./projectFolder.svelte";
+import { projectFolderStore, defaultSavePath } from "./projectFolder.svelte";
 
 const STORAGE_KEY = "ave:recentProjects";
 
@@ -161,6 +161,40 @@ class RecentProjectsStore {
       return this.open(selected);
     }
     return false;
+  }
+
+  /**
+   * `STUDIO_PLAN.md` Phase D19: the real "Save Project As…" dialog+save
+   * flow, factored out here (byte-for-byte the same steps `TopBar.svelte`'s
+   * own File-menu "Save Project As…" handler already runs inline) so a
+   * second real call site — `WorkspaceSimple.svelte`'s new Ctrl+S shortcut —
+   * can trigger the exact same real flow without duplicating it, mirroring
+   * this store's own `browseAndOpen()` precedent for "open". `TopBar.svelte`
+   * itself is left as-is (not refactored to call this) to keep this pass's
+   * diff minimal and avoid touching a file a concurrent pass might also be
+   * editing; the two call sites' logic is intentionally identical, not
+   * accidentally duplicated.
+   *
+   * This app tracks no "already has a known save path" state for the
+   * current session project — `timeline`'s own `saveProjectAs` doc comment
+   * confirms every save, including this one, always goes through the native
+   * picker (there is no `load_timeline_project`/`ProjectV1` field recording
+   * "the path this session's project was last saved to or opened from" to
+   * silently reuse). So Ctrl+S always takes this same picker path rather
+   * than trying to guess a path and silently no-op-ing when it can't.
+   * Returns `true` only on a real, successful save.
+   */
+  async saveCurrentProjectAs(): Promise<boolean> {
+    const project = timeline.project;
+    if (!project) return false;
+    const chosen = await save({
+      filters: [{ name: "Project", extensions: ["json"] }],
+      defaultPath: defaultSavePath(`${project.project.name}.json`),
+    });
+    if (!chosen) return false;
+    const ok = await timeline.saveProjectAs(chosen);
+    if (ok) this.record(chosen, project.project.name);
+    return ok;
   }
 }
 

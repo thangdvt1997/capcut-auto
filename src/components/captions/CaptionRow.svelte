@@ -38,6 +38,15 @@
 
   let selected = $derived(captionsStore.selectedCaptionIds.has(caption.id));
   let busy = $derived(captionsStore.busyCaptionId === caption.id);
+  // Real "current subtitle" signal (promt.md §3.1) — `activeCaptionId` was
+  // already computed off the real playhead (`findActiveCaption`, karaoke
+  // overlay's own data source), just never consumed for a visual highlight
+  // anywhere until this pass. `playheadInside` below is a distinct, narrower
+  // check (exact caption span, used to gate the Split action) that happens
+  // to compute the same boundary condition `findActiveCaption` uses — see
+  // that function's own doc comment for why they're not literally the same
+  // derivation (hidden-track handling).
+  let isActive = $derived(captionsStore.activeCaptionId === caption.id);
   let playheadInside = $derived(timeline.playheadUs >= caption.start_us && timeline.playheadUs < caption.end_us);
   let canSplit = $derived(playheadInside && caption.words.length > 0 && !busy);
   let retimeDirty = $derived(startSecBuffer !== usToSec(caption.start_us) || endSecBuffer !== usToSec(caption.end_us));
@@ -49,7 +58,7 @@
   }
 </script>
 
-<div class="row" class:selected>
+<div class="row" class:selected class:active={isActive}>
   <input
     type="checkbox"
     checked={selected}
@@ -59,7 +68,19 @@
 
   <div class="main">
     <div class="time-line">
-      <span class="mono time">{formatTimecode(caption.start_us)} – {formatTimecode(caption.end_us)}</span>
+      <!--
+        Jump-to-caption (promt.md §3.1's "Jump đến subtitle khi click subtitle
+        row") — the timecode is the natural non-interactive click target in
+        this row (the split button/style select right next to it already own
+        clicks for their own actions). `title` doubles as the affordance hint
+        since this plain `<span>` has no other visual "this is clickable" cue.
+      -->
+      <button
+        type="button"
+        class="time-jump mono"
+        onclick={() => captionsStore.seekToCaption(caption)}
+        title={t("captionsPanel.jumpToCaption")}
+      >{formatTimecode(caption.start_us)} – {formatTimecode(caption.end_us)}</button>
       <button class="btn btn-ghost btn-xs" disabled={!canSplit} onclick={() => void captionsStore.splitAtPlayhead(caption)} title={t("captionsPanel.splitAtPlayhead")}>
         {t("captionsPanel.splitButton")}
       </button>
@@ -109,6 +130,14 @@
   .row.selected {
     background: hsl(213 94% 68% / 0.08);
   }
+  /* Real "current subtitle" highlight (promt.md §3.1) — `isActive` above is
+     computed from the real playhead via `captionsStore.activeCaptionId`, not
+     a fabricated/timed animation. Left border rather than a competing
+     background so it stays legible alongside `.selected`'s own background
+     tint when a caption is both the active one and multi-selected. */
+  .row.active {
+    border-left: 2px solid var(--accent);
+  }
   .main {
     flex: 1;
     min-width: 0;
@@ -121,9 +150,17 @@
     align-items: center;
     gap: 6px;
   }
-  .time {
+  .time-jump {
     font-size: 10.5px;
     color: var(--muted);
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+  }
+  .time-jump:hover {
+    color: var(--foreground);
+    text-decoration: underline;
   }
   .style-select {
     margin-left: auto;

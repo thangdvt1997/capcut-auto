@@ -1,7 +1,7 @@
 //! Caption Tauri command surface: generation from the current project's
 //! transcript, the built-in style template catalog, the correction
-//! operations (split/merge/retime/find-replace/bulk-style), and the real
-//! "Accept and Apply" step for AI-proposed translations
+//! operations (split/merge/retime/find-replace/bulk-style/duplicate/delete),
+//! and the real "Accept and Apply" step for AI-proposed translations
 //! ([`apply_caption_translations`], `STUDIO_PLAN.md` Phase D12). Thin per
 //! master prompt §66 — all real logic lives in `crate::captions::{generate,
 //! styles}` and `crate::timeline::captions`; this module only translates
@@ -169,6 +169,38 @@ pub fn bulk_set_caption_style(
     with_session(&state, |session| {
         let command =
             caption_ops::bulk_set_caption_style(&session.project, &caption_ids, style_id)?;
+        session.apply(command)?;
+        Ok(session.project.clone())
+    })
+}
+
+/// Duplicates one caption (`STUDIO_PLAN.md` Phase D18, `promt.md` §3.2's
+/// "Duplicate" row action) — see `timeline::captions::duplicate_caption`'s
+/// own doc comment for the placement/word-timing choice.
+#[tauri::command]
+#[specta::specta]
+pub fn duplicate_caption(
+    state: State<'_, TimelineState>,
+    caption_id: String,
+) -> Result<ProjectV1, AppErrorPayload> {
+    with_session(&state, |session| {
+        let command = caption_ops::duplicate_caption(&session.project, &caption_id)?;
+        session.apply(command)?;
+        Ok(session.project.clone())
+    })
+}
+
+/// Deletes one or more captions in a single undo step (`STUDIO_PLAN.md`
+/// Phase D18, `promt.md` §3.2's per-row "Delete" and the toolbar's bulk
+/// delete over a multi-selection).
+#[tauri::command]
+#[specta::specta]
+pub fn delete_captions(
+    state: State<'_, TimelineState>,
+    caption_ids: Vec<String>,
+) -> Result<ProjectV1, AppErrorPayload> {
+    with_session(&state, |session| {
+        let command = caption_ops::delete_captions(&session.project, &caption_ids)?;
         session.apply(command)?;
         Ok(session.project.clone())
     })

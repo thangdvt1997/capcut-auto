@@ -108,6 +108,8 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::captions::retime_caption,
         commands::captions::find_replace_captions,
         commands::captions::bulk_set_caption_style,
+        commands::captions::duplicate_caption,
+        commands::captions::delete_captions,
         commands::captions::apply_caption_translations,
         commands::vad::score_media_silence,
         commands::vad::segment_media_silence,

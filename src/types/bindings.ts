@@ -576,6 +576,32 @@ async bulkSetCaptionStyle(captionIds: string[], styleId: string | null) : Promis
 }
 },
 /**
+ * Duplicates one caption (`STUDIO_PLAN.md` Phase D18, `promt.md` §3.2's
+ * "Duplicate" row action) — see `timeline::captions::duplicate_caption`'s
+ * own doc comment for the placement/word-timing choice.
+ */
+async duplicateCaption(captionId: string) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("duplicate_caption", { captionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Deletes one or more captions in a single undo step (`STUDIO_PLAN.md`
+ * Phase D18, `promt.md` §3.2's per-row "Delete" and the toolbar's bulk
+ * delete over a multi-selection).
+ */
+async deleteCaptions(captionIds: string[]) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_captions", { captionIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * **Apply** (`STUDIO_PLAN.md` Phase D12): the real, explicit "Accept and
  * Apply" step `ai::translate`'s own module doc comment says is a separate
  * frontend action — writes a caller-accepted subset of AI-proposed

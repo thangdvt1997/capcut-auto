@@ -1,6 +1,8 @@
 //! Caption correction operations (master prompt §28): split, merge, retime
 //! (drag-boundaries is the same operation from a UI drag gesture — no
-//! separate primitive), find/replace, and bulk style. Every function here is
+//! separate primitive), find/replace, bulk style, duplicate, and delete
+//! (`duplicate_caption`/`delete_captions`, `STUDIO_PLAN.md` Phase D18 — the
+//! per-row Script Editor's own actions, `promt.md` §3.2). Every function here is
 //! a pure builder — reads `&ProjectV1`, returns a `timeline::command::Command`
 //! — exactly the same discipline `timeline::ops`/`silence`/`sync` already
 //! follow (see `timeline::ops` module doc comment): it never mutates the
@@ -406,6 +408,96 @@ pub fn bulk_set_caption_style(
         commands.push(Command::SetCaption(SetCaptionCommand {
             old: caption.clone(),
             new: new_caption,
+        }));
+    }
+    Ok(Command::Batch(BatchCommand { commands }))
+}
+
+// ---------------------------------------------------------------------------
+// Duplicate (`STUDIO_PLAN.md` Phase D18 — the per-row Script Editor's
+// "Duplicate" action, `promt.md` §3.2)
+// ---------------------------------------------------------------------------
+
+/// Creates an exact copy of `caption_id` — same `text`/`style_id`/`track_id`
+/// — placed immediately after the original's own end time, offset by
+/// exactly the original's own duration. **Placement choice, documented**:
+/// an *offset* copy (never overlapping the original on the same track) was
+/// chosen over an *overlapping* copy (same `start_us`/`end_us` as the
+/// original) because this codebase's caption model has no rule against two
+/// captions overlapping on one track today, but a duplicate landing exactly
+/// on top of its source would be visually indistinguishable from the
+/// original in any time-ordered view (this table included) until the user
+/// drags it — an offset placement is immediately visible as "a new, real
+/// row" the moment it's created, and the user is free to retime it
+/// anywhere afterward (`retime_caption`, already real). Since the shift is
+/// a constant, rigid translation in time (not a rescale — the duplicate's
+/// span is exactly the same length as the original's), `words` is
+/// preserved with every timestamp shifted by that same constant offset,
+/// rather than cleared — unlike `retime_caption`'s proportional rescale or
+/// `find_replace_captions`'/`apply_caption_translations`'s "changed text
+/// invalidates old timing" cases, nothing about a duplicate's *content*
+/// changes, so its old per-word timing is still exactly as valid, just
+/// shifted. A single `InsertCaption` (never a `Batch` — only one new
+/// caption is created).
+pub fn duplicate_caption(project: &ProjectV1, caption_id: &str) -> Result<Command, TimelineError> {
+    let caption = find_caption(project, caption_id)?;
+    let offset = (caption.end_us - caption.start_us).max(0);
+    let new_start_us = caption.end_us;
+    let new_end_us = new_start_us + offset;
+    let words = caption
+        .words
+        .iter()
+        .map(|w| Word {
+            text: w.text.clone(),
+            start_us: w.start_us + offset,
+            end_us: w.end_us + offset,
+            confidence: w.confidence,
+        })
+        .collect();
+
+    Ok(Command::InsertCaption(InsertCaptionCommand {
+        caption: Caption {
+            id: uuid::Uuid::new_v4().to_string(),
+            track_id: caption.track_id.clone(),
+            start_us: new_start_us,
+            end_us: new_end_us,
+            text: caption.text.clone(),
+            words,
+            style_id: caption.style_id.clone(),
+        },
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// Delete (`STUDIO_PLAN.md` Phase D18 — the per-row/bulk "Delete" action,
+// `promt.md` §3.2)
+// ---------------------------------------------------------------------------
+
+/// Deletes every caption in `caption_ids` — a `Batch` of `RemoveCaption`,
+/// one per real caption (order of the input list doesn't matter, unlike
+/// [`merge_captions`], since each removal is independent). Every id must
+/// name a real caption in `project` (`TimelineError::CaptionNotFound`) — the
+/// same "caller only ever passes ids it actually knows about" contract every
+/// other multi-id caption operation in this module already uses. An empty
+/// list is rejected the same way [`bulk_set_caption_style`] rejects one
+/// (reusing `CaptionNotFound` with a placeholder id, that function's own
+/// precedent) rather than silently producing a no-op `Batch` — a caller
+/// asking to delete "nothing" is far more likely a bug than an intentional
+/// action.
+pub fn delete_captions(
+    project: &ProjectV1,
+    caption_ids: &[String],
+) -> Result<Command, TimelineError> {
+    if caption_ids.is_empty() {
+        return Err(TimelineError::CaptionNotFound {
+            caption_id: "<none provided>".to_string(),
+        });
+    }
+    let mut commands = Vec::with_capacity(caption_ids.len());
+    for id in caption_ids {
+        let caption = find_caption(project, id)?;
+        commands.push(Command::RemoveCaption(RemoveCaptionCommand {
+            caption: caption.clone(),
         }));
     }
     Ok(Command::Batch(BatchCommand { commands }))
@@ -935,6 +1027,125 @@ mod tests {
             session.project.captions[0].style_id.as_deref(),
             Some("template_tiktok")
         );
+    }
+
+    // -- duplicate (Phase D18) ------------------------------------------
+
+    #[test]
+    fn duplicate_creates_an_offset_copy_shifting_word_timing_by_the_same_offset() {
+        let words = vec![word("hello", 0, 300_000), word("world", 300_000, 600_000)];
+        let mut project =
+            project_with_captions(vec![caption_with_words("c1", "t1", words.clone())]);
+        let cmd = duplicate_caption(&project, "c1").unwrap();
+        apply(&mut project, cmd);
+
+        assert_eq!(project.captions.len(), 2);
+        let original = &project.captions[0];
+        let copy = &project.captions[1];
+        assert_eq!(original.start_us, 0);
+        assert_eq!(original.end_us, 600_000);
+        // Offset == original duration (600_000), placed immediately after.
+        assert_eq!(copy.start_us, 600_000);
+        assert_eq!(copy.end_us, 1_200_000);
+        assert_eq!(copy.text, original.text);
+        assert_eq!(copy.track_id, original.track_id);
+        assert_ne!(copy.id, original.id);
+        // Word timing shifted by the same constant offset, not cleared.
+        assert_eq!(copy.words[0].start_us, 600_000);
+        assert_eq!(copy.words[0].end_us, 900_000);
+        assert_eq!(copy.words[1].start_us, 900_000);
+        assert_eq!(copy.words[1].end_us, 1_200_000);
+    }
+
+    #[test]
+    fn duplicate_rejects_an_unknown_caption_id() {
+        let project = project_with_captions(vec![]);
+        assert!(matches!(
+            duplicate_caption(&project, "does_not_exist").unwrap_err(),
+            TimelineError::CaptionNotFound { caption_id } if caption_id == "does_not_exist"
+        ));
+    }
+
+    #[test]
+    fn duplicate_undo_redo_round_trips_through_session() {
+        let words = vec![word("hi", 0, 100_000)];
+        let mut session = TimelineSession::new(project_with_captions(vec![caption_with_words(
+            "c1", "t1", words,
+        )]));
+        let before = serde_json::to_value(&session.project).unwrap();
+
+        let cmd = duplicate_caption(&session.project, "c1").unwrap();
+        session.apply(cmd).unwrap();
+        assert_eq!(session.project.captions.len(), 2);
+
+        session.undo().unwrap();
+        assert_eq!(serde_json::to_value(&session.project).unwrap(), before);
+        session.redo().unwrap();
+        assert_eq!(session.project.captions.len(), 2);
+    }
+
+    // -- delete (Phase D18) ----------------------------------------------
+
+    #[test]
+    fn delete_removes_every_listed_caption() {
+        let c1 = caption_with_words("c1", "t1", vec![word("a", 0, 100)]);
+        let c2 = caption_with_words("c2", "t1", vec![word("b", 100, 200)]);
+        let c3 = caption_with_words("c3", "t1", vec![word("c", 200, 300)]);
+        let mut project = project_with_captions(vec![c1, c2, c3]);
+        let cmd = delete_captions(&project, &["c1".to_string(), "c3".to_string()]).unwrap();
+        apply(&mut project, cmd);
+
+        assert_eq!(project.captions.len(), 1);
+        assert_eq!(project.captions[0].id, "c2");
+    }
+
+    #[test]
+    fn delete_rejects_an_unknown_caption_id() {
+        let c1 = caption_with_words("c1", "t1", vec![word("a", 0, 100)]);
+        let project = project_with_captions(vec![c1]);
+        assert!(matches!(
+            delete_captions(&project, &["does_not_exist".to_string()]).unwrap_err(),
+            TimelineError::CaptionNotFound { caption_id } if caption_id == "does_not_exist"
+        ));
+    }
+
+    #[test]
+    fn delete_rejects_an_empty_id_list() {
+        let project = project_with_captions(vec![]);
+        assert!(matches!(
+            delete_captions(&project, &[]).unwrap_err(),
+            TimelineError::CaptionNotFound { .. }
+        ));
+    }
+
+    #[test]
+    fn delete_leaves_unlisted_captions_untouched() {
+        let c1 = caption_with_words("c1", "t1", vec![word("a", 0, 100)]);
+        let c2 = caption_with_words("c2", "t1", vec![word("b", 100, 200)]);
+        let mut project = project_with_captions(vec![c1, c2]);
+        let cmd = delete_captions(&project, &["c1".to_string()]).unwrap();
+        apply(&mut project, cmd);
+
+        assert_eq!(project.captions.len(), 1);
+        assert_eq!(project.captions[0].id, "c2");
+        assert_eq!(project.captions[0].words, vec![word("b", 100, 200)]);
+    }
+
+    #[test]
+    fn delete_undo_redo_round_trips_through_session() {
+        let c1 = caption_with_words("c1", "t1", vec![word("a", 0, 100)]);
+        let c2 = caption_with_words("c2", "t1", vec![word("b", 100, 200)]);
+        let mut session = TimelineSession::new(project_with_captions(vec![c1, c2]));
+        let before = serde_json::to_value(&session.project).unwrap();
+
+        let cmd = delete_captions(&session.project, &["c1".to_string()]).unwrap();
+        session.apply(cmd).unwrap();
+        assert_eq!(session.project.captions.len(), 1);
+
+        session.undo().unwrap();
+        assert_eq!(serde_json::to_value(&session.project).unwrap(), before);
+        session.redo().unwrap();
+        assert_eq!(session.project.captions.len(), 1);
     }
 
     // -- translation apply (Phase D12) ----------------------------------

@@ -36,6 +36,7 @@
 
 import { commands } from "../types/bindings";
 import type {
+  Caption,
   ProfanityHandling,
   TranslatedCaption,
   TranslationGenre,
@@ -210,6 +211,83 @@ class TranslationReviewStore {
   // -------------------------------------------------------------------
   // Apply: the real "Accept and Apply" step (Phase D12's new backend command)
   // -------------------------------------------------------------------
+
+  // -------------------------------------------------------------------
+  // Per-row re-translate (`STUDIO_PLAN.md` Phase D18, `promt.md` §3.2's
+  // "Re-translate một dòng"): a lighter, more direct path than reopening
+  // this whole dialog for one line — reuses the exact same
+  // `translate_captions` call and this store's own `proposals` map
+  // `translate()` above already populates (scoped to a one-caption
+  // `known_captions` array, so `parse_and_validate`'s full-coverage
+  // contract still holds: one caption in, exactly one `TranslatedCaption`
+  // out), using whichever source/target language + `TranslationSettings`
+  // are currently configured here — the same settings the full dialog's
+  // own "Generate Translations" button would use. Because the result lands
+  // in the same `proposals` map, `ScriptEditor.svelte`'s existing
+  // Translation column (which already reads `proposals` directly) shows it
+  // immediately, with no separate per-row state to keep in sync.
+  // -------------------------------------------------------------------
+
+  rowTranslating = $state<Set<string>>(new Set());
+  rowTranslateError = $state<Record<string, string>>({});
+
+  async retranslateOne(caption: Caption): Promise<void> {
+    if (this.rowTranslating.has(caption.id) || !this.aiConfigured || this.targetLanguage.trim() === "") {
+      return;
+    }
+    this.rowTranslating = new Set(this.rowTranslating).add(caption.id);
+    const clearedErrors = { ...this.rowTranslateError };
+    delete clearedErrors[caption.id];
+    this.rowTranslateError = clearedErrors;
+    try {
+      const result = await commands.translateCaptions(
+        [caption],
+        this.sourceLanguage.trim() || null,
+        this.targetLanguage.trim(),
+        this.buildSettings(),
+        aiSettingsStore.settingsSnapshot(),
+      );
+      if (result.status === "ok" && result.data[0]) {
+        this.proposals = { ...this.proposals, [caption.id]: result.data[0].translated_text };
+      } else if (result.status === "error") {
+        this.rowTranslateError = { ...this.rowTranslateError, [caption.id]: result.error.message };
+      }
+    } catch (err) {
+      this.rowTranslateError = { ...this.rowTranslateError, [caption.id]: String(err) };
+    } finally {
+      const next = new Set(this.rowTranslating);
+      next.delete(caption.id);
+      this.rowTranslating = next;
+    }
+  }
+
+  /** Discards one row's pending proposal without touching any other row —
+   * the per-row "Reject" half of the inline review (`discard()` above is
+   * the whole-dialog equivalent). */
+  discardOne(captionId: string): void {
+    if (!(captionId in this.proposals)) return;
+    const remaining = { ...this.proposals };
+    delete remaining[captionId];
+    this.proposals = remaining;
+  }
+
+  /** Applies just one row's current proposal — the per-row "Accept" half of
+   * the inline review, going through the exact same real
+   * `apply_caption_translations` command/undo-history path `apply()` below
+   * uses for the whole-dialog case, just for a one-element batch. */
+  async applyOne(captionId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    const text = this.proposals[captionId];
+    if (text === undefined) return { ok: false, error: "no pending proposal for this caption" };
+    const outcome = await timeline.applyExternalProjectResult(
+      commands.applyCaptionTranslations([{ caption_id: captionId, translated_text: text }]),
+    );
+    if (outcome.ok) {
+      const remaining = { ...this.proposals };
+      delete remaining[captionId];
+      this.proposals = remaining;
+    }
+    return outcome;
+  }
 
   async apply(): Promise<void> {
     if (!this.canApply) return;

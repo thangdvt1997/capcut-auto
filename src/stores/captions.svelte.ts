@@ -291,6 +291,24 @@ class CaptionsStore {
   }
 
   // -------------------------------------------------------------------
+  // Preview sync (`STUDIO_PLAN.md` Phase D19, promt.md §3.1's "Jump đến
+  // subtitle khi click subtitle row") — moves the shared timeline playhead
+  // to `caption`'s own real `start_us`. Deliberately just `timeline.
+  // setPlayhead` (already public, already exactly what `Timeline.svelte`'s
+  // own `seekTo` helper calls) rather than a new bespoke seek primitive:
+  // `VideoPlayer.svelte`'s playhead-driven scrubbing `$effect` and this
+  // store's own `activeCaption`/`activeCaptionId` (both already derived off
+  // `timeline.playheadUs`) automatically follow, so moving the playhead is
+  // the one real action a caller needs. Exposed here (not inlined in any one
+  // caller) so both `CaptionRow.svelte` (this pass) and whichever
+  // `ScriptEditor.svelte` table structure lands from the concurrent Phase
+  // D18 pass can call the exact same real action with zero further
+  // coordination.
+  seekToCaption(caption: Caption): void {
+    timeline.setPlayhead(caption.start_us);
+  }
+
+  // -------------------------------------------------------------------
   // Generation (master prompt §26)
   // -------------------------------------------------------------------
 
@@ -341,10 +359,64 @@ class CaptionsStore {
   async mergeSelected(): Promise<void> {
     const ids = Array.from(this.selectedCaptionIds);
     if (ids.length < 2) return;
+    const outcome = await this.mergeCaptionsByIds(ids);
+    if (outcome.ok) this.selectedCaptionIds = new Set();
+  }
+
+  /** Shared merge primitive — `mergeSelected()` above (the multi-select
+   * toolbar action) and `ScriptEditor.svelte`'s per-row "Merge with next"
+   * action (`STUDIO_PLAN.md` Phase D18, `promt.md` §3.2) both call this
+   * rather than each hand-rolling its own `applyExternalProjectResult`
+   * wiring around `commands.mergeCaptions`. */
+  async mergeCaptionsByIds(ids: string[]): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (ids.length < 2) return { ok: false, error: "merge needs at least two captions" };
     this.correctionError = null;
     const outcome = await timeline.applyExternalProjectResult(commands.mergeCaptions(ids));
-    if (outcome.ok) this.selectedCaptionIds = new Set();
-    else this.correctionError = outcome.error;
+    if (!outcome.ok) this.correctionError = outcome.error;
+    return outcome;
+  }
+
+  // -------------------------------------------------------------------
+  // Duplicate / delete (`STUDIO_PLAN.md` Phase D18, `promt.md` §3.2's
+  // per-row "Duplicate"/"Delete" and the toolbar's bulk delete) — same
+  // `busyCaptionId`/`correctionError` conventions as `splitAtPlayhead`/
+  // `retime` above, backed by the new `duplicate_caption`/`delete_captions`
+  // commands (`timeline::captions` doc comments cover the placement/word-
+  // timing and empty-list-rejection choices).
+  // -------------------------------------------------------------------
+
+  async duplicateCaption(caption: Caption): Promise<void> {
+    if (this.busyCaptionId) return;
+    this.busyCaptionId = caption.id;
+    this.correctionError = null;
+    try {
+      const outcome = await timeline.applyExternalProjectResult(commands.duplicateCaption(caption.id));
+      if (!outcome.ok) this.correctionError = outcome.error;
+    } finally {
+      this.busyCaptionId = null;
+    }
+  }
+
+  async deleteCaption(captionId: string): Promise<void> {
+    return this.deleteCaptions([captionId]);
+  }
+
+  /** Also used for the toolbar's bulk-delete-selected action. */
+  async deleteCaptions(captionIds: string[]): Promise<void> {
+    if (captionIds.length === 0) return;
+    this.correctionError = null;
+    const outcome = await timeline.applyExternalProjectResult(commands.deleteCaptions(captionIds));
+    if (outcome.ok) {
+      const next = new Set(this.selectedCaptionIds);
+      for (const id of captionIds) next.delete(id);
+      this.selectedCaptionIds = next;
+    } else {
+      this.correctionError = outcome.error;
+    }
+  }
+
+  async deleteSelected(): Promise<void> {
+    return this.deleteCaptions(Array.from(this.selectedCaptionIds));
   }
 
   /** Also the backend for a drag-boundary gesture (same primitive, a
