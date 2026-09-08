@@ -2,7 +2,7 @@
 
 Live tracking doc for the spec in `promt.md` (32 sections): a much larger redesign than either prior plan file — a full 3-tab "Video Processing Studio" UI, plus a brand-new dubbing-style pipeline (Extract Subtitle → Speech-to-Text → Translate → Rewrite Script → **Generate Voice (TTS)** → Sync Timeline → Video Processing → Render → Export) that this app has never had any part of before. Tracked separately from `IMPLEMENTATION_PLAN.md` (original master-prompt phases 0–13, 100% complete) and `UPGRADE_PLAN.md` (Auto Video Editor / AI Automation upgrade, phases U1–U4, 100% complete) — do not merge these files.
 
-**Status: audit done for §10/§11 only (this file's first tracked slice, per explicit request); the other ~28 sections of `promt.md` are not yet audited, planned, or started.** See "Full scope, not yet planned" at the bottom for the honest size of what's left.
+**Status (updated): Phases S1–S7 (CapCut integration + video-processing features) and D0–D8 (3-tab shell, Design System, Worker/Slot pool, all dialogs retrofitted, crash-recovery detection, Activity/Log panel) are built and verified — see each phase's own section below. D9/D10/D11 (Design System gap-fill, Voice Settings/Mapping UI, Worker-pool-size setting) were attempted but every dispatch hit a session rate limit before any file was touched — not started, not partially built, real zero progress on those three; safe to re-attempt fresh. A full audit of every remaining `promt.md` section now exists too: see "Full `promt.md` Audit — Remaining Sections" near the end of this file for the honest, current size of what's left.
 
 ## Why only §10/§11 so far
 
@@ -877,3 +877,82 @@ New top-level `"activityLog"` namespace (`title`/`expand`/`collapse`/`filterAll`
 ### Files created/changed
 
 New: `src/stores/activityLog.svelte.ts`, `src/components/layout/ActivityLogPanel.svelte`. Changed: `src/App.svelte` (new import + `<ActivityLogPanel />` mounted as a 4th shell row, `.shell`'s `grid-template-rows` extended, top-of-file doc comment updated with one short paragraph), `src/locales/en.json`/`src/locales/vi.json` (new `activityLog` namespace, 10 keys each). No `src-tauri/` file touched.
+
+---
+
+## Full `promt.md` Audit — Remaining Sections
+
+Real, verified audit of every one of `promt.md`'s 32 sections not already covered by Phase S1–S7/D0–D8 above — grepped/read against the actual current codebase, not assumed. Sections that are pure process instructions (§1 audit-before-code, §25 code architecture, §27 comparison-to-reference, §29/§30 implementation strategy/requirements, §32 "BẮT ĐẦU") describe how to work, not a feature to build, and are excluded below — this project has followed that exact rhythm (audit, then confirm, then build, one phase at a time) since `IMPLEMENTATION_PLAN.md`'s very first phase.
+
+### §3 Tab 1 — Video Workspace: the full rich vision vs. what Phase D2+D3 actually shipped (LARGE gap)
+
+`promt.md` §3.1–§3.3 describes something considerably richer than `WorkspaceSimple.svelte`/`ScriptEditor.svelte`/`PipelineStepper.svelte` (Phase D2+D3) actually built:
+
+- **§3.1 Video Preview**: a real player — play/pause/stop/seek/plus-minus-5-seconds/volume/playback speed/timeline slider/current-subtitle-highlight/jump-to-subtitle-on-row-click, plus keyboard shortcuts (Space, Left/Right, Ctrl+S). Not built in Simple mode — confirmed via live screenshot this session: Simple mode's whole left column is a bare "Select media from the Media Library to preview it" placeholder with zero playback controls. (The Advanced-mode `CenterPreview.svelte` almost certainly already has a real player, since it is the pre-existing Timeline NLE's own preview — this gap is specific to Simple mode's own promised layout, which the D2+D3 task's own writeup already flagged as "real data sources only" for the pipeline stepper but never claimed to build a Simple-mode player.)
+- **§3.2 Subtitle/Script Editor**: a full per-row table — number/Start/End/Duration/Speaker/Original/Translation/Voice/Speed-Ratio/Status/Actions columns, with edit-in-place, multi-select, delete, split/merge/duplicate a subtitle row, re-translate one row, regenerate voice for one row, preview voice, auto-fit voice to subtitle duration, undo/redo, plus an action toolbar (Import SRT/Extract Subtitle/Speech To Text/Translate/Generate Voice/Sync Timeline/Save). `ScriptEditor.svelte` (Phase D2+D3) is a much lighter placeholder — confirmed via live screenshot showing only "No project open / Create or open a project to edit its script and captions," no table, no per-row actions, no toolbar of the kind described. None of split/merge/duplicate/re-translate-one-row/regenerate-voice-one-row/preview-voice/auto-fit-voice/undo-redo exist anywhere in this component.
+- **§3.3 Process Pipeline**: a real 10-step pipeline (Extract Subtitle, Speech Recognition, Translate, Rewrite Script, Generate Voice, Sync Timeline, Video Processing, Subtitle Burn-in, Render, Export), each step independently enable/disable-able, with WAITING/RUNNING/SUCCESS/FAILED/SKIPPED states. `PipelineStepper.svelte` (Phase D2+D3) only has 5 steps (Subtitle/Translate/Voice/Sync/Render) mapped onto real store state, with no per-step enable/disable toggle and no SKIPPED state — an honest, smaller subset by design (that phase's own writeup states it uses only real, already-existing store data, which is why it stops short of the full 10-step vision — several of those steps, see below, don't have any backing command to report real status from yet).
+
+Why this is large, not a quick follow-up: building the full vision requires the still-missing steps to exist for real first (Rewrite Script has no command anywhere — see below; Generate Voice has no `synthesize_speech` command yet — Phase S7's own flagged gap; Sync Timeline has no real meaning yet in this codebase — see below) before a pipeline stepper could honestly report their real status, and the rich per-row script table is a substantial standalone editor component, not a small addition to the existing simple table.
+
+### §8/§9 Translation & Voice — settings surfaces and Accept/Apply UI (gap, was mid-dispatch this session)
+
+Backend for both exists (Phase S6 `ai::translate`, Phase S7 `voice::` plus `test_voice_connection`/`list_voices`). Frontend is genuinely missing for both: no Translation settings dialog, no Accept/Apply review UI for a translation batch, no Voice Settings dialog, no Voice Mapping (Speaker A/B/Narrator to voice) surface. Two agents were dispatched this session to build these and both were terminated immediately by a session rate limit before touching any file (confirmed via `git status` — zero files changed by either) — genuinely not started, not partially built.
+
+### §13 Professional Dashboard Header — not built
+
+Header with Project/Queue/Workers/AI Status/Voice API Status (`promt.md`'s own worked example: "Queue 18, Running 3, Done 41, Failed 1, AI Connected, Voice Connected"). Today's `TopBar.svelte` has none of this — Phase D4's `WorkerPoolWidget` covers the Workers/Queue numbers half (mounted in the Job Queue panel/dialog, not the header), but there is no persistent header surface anywhere showing Project name, Done/Failed counts, or live AI/Voice connection-status indicators. A real, contained gap — the real data (`aiSettingsStore.testResult`, a voice-settings-store's own equivalent once §9 above is built, `batchStore`'s job counts) mostly already exists or is close to existing; what's missing is the header surface itself.
+
+### §14 Status Bar — not built, but has a real partial backend foundation
+
+CPU/RAM/GPU/FFmpeg/CapCut/AI/Voice live bottom status bar. Confirmed via grep: `src-tauri/src/commands/diagnostics.rs::get_system_information` already returns real `cpu_brand`/`cpu_core_count`/`total_memory_bytes`/`used_memory_bytes` via the `sysinfo` crate (already a real dependency, `src-tauri/Cargo.toml`) — but this is a static, point-in-time system-info snapshot (backing `SystemInfoDialog`), not a live-polling percentage stream (no CPU-usage-percent field, no repeated `refresh_cpu()` delta sampling visible), and nothing in the frontend renders it as an always-visible bottom bar. Building the real thing needs: a live CPU-percent/RAM-percent polling command (or a Tauri interval-based push), and a new bottom-bar frontend surface aggregating that plus FFmpeg/CapCut/AI/Voice status. A real, moderate-sized gap with a partial backend head start, not a from-scratch build.
+
+### §17 Job State/Resume — already tracked (Phase D8a)
+
+Covered in full in Phase D8a's own section above: crash-recovery detection is real and shipped; true stage-skip resume remains an explicitly out-of-scope, large architecture gap (would require restructuring the monolithic `run_pipeline`). Not re-litigated here.
+
+### §18 Preset System — not built as a unified concept
+
+`promt.md` asks for named, full-pipeline presets ("Spanish Crime Movie," "TikTok Auto Dub") bundling AI config reference plus Translation config plus Voice config plus Subtitle config plus Video processing plus Render config plus CapCut config, with the explicit rule that secrets are never stored in a preset export. Confirmed via grep: every existing "preset" concept in this codebase is either a render/export preset (`render::presets`, e.g. "1080p") or a Template (`templates_dir`/Template Generator: intro/outro/watermark/background-music/export-preset only) — neither one bundles AI provider settings, Translation settings, Voice settings, or CapCut config into one named, savable unit. A genuine, unbuilt feature, not an extension of an existing one — it would need its own data model spanning settings that currently live in entirely separate stores/backend modules.
+
+### §19/§20 UI Design System / Color-Status System — mostly done, small named gaps
+
+Phase D1 built the core 18-component library plus token set; Phase D7a/b/c's own writeups already name the exact remaining primitives (a `NumberInput`/numeric `Input` variant, `RadioGroup`, a "success banner" component, `ContextMenu` — the last deferred since Phase D1 itself). An agent dispatched this session to build these was terminated immediately by a session rate limit before touching any file — genuinely not started.
+
+### §21 Responsive Desktop Layout — likely satisfied, not explicitly verified
+
+Every major panel already uses the real `ResizableSplit` component (persisted min/max/initial ratios), which is the right mechanism for 1366x768 through 2560x1440 support — but no pass this session actually resized the live app window to each of the three target resolutions and confirmed the Subtitle editor/Queue table get layout priority as §21 asks. Low-risk, likely-fine, but honestly unverified rather than confirmed.
+
+### §22 UX Improvements — mixed; most already real, three concrete gaps found
+
+Already real and confirmed via this session's own work: drag and drop (Media Library), multi-select (Timeline, dialogs), search/filter (Asset Library, Media Library, several dialogs), sorting (`DataTable`'s real client-side sort, Phase D4/D7), remembered panel sizes (`ResizableSplit`'s own `storageKey`-backed persistence), Timeline undo/redo (`project::types`, the pre-existing NLE's own undo history), project autosave (`crate::project::error`'s own "restore from the most recent autosave/recovery snapshot" — a real, pre-existing mechanism), destructive-action confirmation (the two-step Cancel confirm in `BatchJobsDialog`, and others). Three real, confirmed-missing gaps: (1) Context menu — genuinely doesn't exist anywhere (`grep -rn "oncontextmenu"` returns nothing), matching Phase D1's own deferred `ContextMenu` component; (2) Recent projects — no list/store/command anywhere; (3) Remember window size — no `tauri-plugin-window-state` (or equivalent) dependency in `src-tauri/Cargo.toml`, confirmed absent. A fourth, narrower gap: the new Simple-mode Script Editor (§3.2 above) has no undo/redo of its own — the existing undo/redo is the Advanced-mode Timeline's own, unrelated mechanism.
+
+### §23 Performance — architecturally sound, one claim unverified
+
+FFmpeg/AI/TTS/CapCut/file-scan/render work is already real async/`spawn_blocking` throughout (this session's own live batch-job test confirmed the UI stayed fully responsive during a real render). Svelte 5's fine-grained reactivity plus `DataTable`'s row-keyed rendering means an unrelated job's row shouldn't re-render when only one job's progress changes — architecturally true by construction, not separately profiled this session. "Throttle progress events if too many" — not explicitly verified whether `batch:progress` emission rate is throttled at the source for a fast-moving stage; not a currently-known problem (no jank observed during this session's live test), but not proven either.
+
+### §24 Security — mostly satisfied by established discipline, no dedicated audit pass run
+
+API keys already go through a real credential store (`ai::credentials`), never logged, masked in every Settings dialog's own display (`AiSettingsDialog`/`CapCutSettingsDialog` etc. already show masked/redacted key state, confirmed across every retrofit this session touched). Explicit filename/project-path/output-path sanitization as its own dedicated, named function was not confirmed to exist anywhere (Rust's `PathBuf`/OS path APIs provide some baseline safety implicitly, but a deliberate sanitize-and-reject-unsafe-input layer was not found) — worth a dedicated, focused security pass rather than assuming it is covered, but no evidence of an active vulnerability was found either.
+
+### §26 Data Model — not separately audited this pass
+
+`promt.md`'s own §26 describes a data-model shape for jobs/presets/settings that would only be meaningful to compare once §8/§9/§18 above (Translation/Voice settings, Preset system) actually exist — auditing it in isolation now would mostly restate the gaps already listed above under those sections. Revisit once those are scoped.
+
+### §31 Acceptance Criteria — real, current status against each item
+
+1. Batch video queue works — done (Phase D4/D4a, confirmed via this session's own live end-to-end batch-job test).
+2. Pipeline status clearly shown — partially done: `PipelineStepper.svelte`'s 5 real steps are honest and clear; the full 10-step vision (§3.3 above) is not built.
+3. Concurrency worker/slot — done (Phase D4a, live-confirmed: Workers 3, Running 1, Queued 0 during the real test batch).
+4. AI/Voice/CapCut config reorganized — mostly done: AI/CapCut/Automation/Update settings are real status-hub cards in Tab 2 (Phase D5); Voice settings has no frontend yet (§9 above).
+5. Has preset — not done (§18 above).
+6. Has progress/error/retry — done (real `batch:progress`, per-row Retry, this session's live test showed a real completion; error handling's Retry/Cancel already covered, "one job failing doesn't stop the queue" directly unit-tested).
+7. App restart can resume job — partially done: crash detection (Phase D8a) is real; true stage-skip resume is an explicit, large, out-of-scope gap.
+8. UI does not freeze while processing — done, live-confirmed this session.
+9. No loss of existing functionality — done by discipline: every dialog retrofit (Phase D7a/b/c) was verified byte-for-byte behavior-preserving via `git diff` review; the Advanced-mode Timeline was confirmed byte-identical to its pre-redesign structure (Phase D2+D3).
+10. No hard-coded API secrets — done (credential store discipline, confirmed across every settings dialog).
+11. Build succeeds — done, re-verified after every single phase this session (`pnpm run build`, WSL `cargo test --lib`).
+12. Code structure cleaner than before — subjective, but supported: Design System retrofit measurably reduced hand-rolled markup/CSS across 12-plus dialogs (net minus-931 lines in Phase D7 alone).
+
+### Honest summary: what's real, sized, and next
+
+Large, architecturally-significant gaps: the full §3 Tab-1 rich editor/player (video preview controls, full per-row script table, 10-step pipeline), true job resume (§17), a unified Preset system (§18), and — prerequisite to several of the above — the Voice/TTS `synthesize_speech` pipeline stage plus Rewrite Script and Sync Timeline (neither has any real command anywhere in this codebase; confirmed via grep, not assumed). Small-to-moderate, well-contained gaps: Translation/Voice settings UI (§8/§9, was mid-dispatch), Design System's remaining primitives (§19, was mid-dispatch), the Dashboard Header/Status Bar (§13/§14), Context menu, Recent projects, remembered window size (§22). Likely-fine-but-unverified: responsive layout at specific resolutions (§21), progress-event throttling (§23), a dedicated path/filename sanitization pass (§24). None of these were silently skipped — each is named here with a real reason, matching this file's own established discipline throughout every phase above.
