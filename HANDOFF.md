@@ -6,7 +6,7 @@ Written 2026-09-04 so work can resume on a different machine/agent session witho
 
 Building "AI Video Editor": a Windows 10/11 x64 desktop app (Tauri 2 + Rust + Svelte 5) that unifies two open-source repos into one coherent product — silence/speech auto-cutting, CapCut/Jianying draft export, transcription, AI semantic editing, captions, shorts generation, etc.
 
-**The spec is** `MASTER PROMPT — BUILD AI VIDEO EDITOR FOR WINDOWS.md` at the repo root — 90 sections, read it, it is the actual product requirements, not a summary of them. It explicitly instructs: audit first, then implement phase by phase, compiling/testing/committing at the end of each phase, never faking a feature or claiming something works when it wasn't verified (§75, §90-93).
+**The spec is** `MASTER_SPEC.md` at the repo root (Part 1, "MASTER PROMPT — BUILD AI VIDEO EDITOR FOR WINDOWS" — the original file this note used to point to directly has since been consolidated into this one, alongside the two upgrade specs, to stop three separate scattered spec files from causing confusion) — 90 sections, read it, it is the actual product requirements, not a summary of them. It explicitly instructs: audit first, then implement phase by phase, compiling/testing/committing at the end of each phase, never faking a feature or claiming something works when it wasn't verified (§75, §90-93). Parts 2 and 3 of that same file are the two upgrade specs layered on afterward (tracked by `UPGRADE_PLAN.md` and `STUDIO_PLAN.md` respectively) — `PROMPT_AUDIT.md`/`PLAN_NEXT.md` hold the current, rigorously-verified state of Part 3's own remaining work.
 
 ## Where things stand right now
 
