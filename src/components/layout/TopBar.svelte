@@ -87,8 +87,21 @@
   app-level (a watch-folder rule keeps running regardless of whatever
   project happens to be open), same reasoning `AssetLibraryDialog`/
   `BatchJobsDialog` already established.
+
+  Phase D14 pass (`STUDIO_PLAN.md` "Recent projects — no list/store/command
+  anywhere"): the File dropdown gained real "Open Project…"/"Save Project
+  As…" entries — this app's first real, file-backed project open/save at
+  all (`commands::project::save_project_as`/`open_project`, new this same
+  phase, thin wrappers around the already-tested `ProjectV1::save_atomic`/
+  `load`) — plus a "Recent" list below them (`stores/recentProjects.svelte.ts`,
+  `localStorage`-persisted, capped at 10, deduped by path). Both entries and
+  every Recent row call the exact same `recentProjectsStore.open`/
+  `.browseAndOpen()` methods `ScriptEditor.svelte`'s own "no project open"
+  empty state now also uses — see that store's doc comment for the full
+  "why this is only buildable now" reasoning.
 -->
 <script lang="ts">
+  import { save } from "@tauri-apps/plugin-dialog";
   import { commands } from "../../types/bindings";
   import type { ShellInfo, ProjectV1 } from "../../types/bindings";
   import { t, currentLocale, setLocale, type Locale } from "../../lib/i18n.svelte";
@@ -105,6 +118,8 @@
   import { assetsStore } from "../../stores/assets.svelte";
   import { templateGenerator } from "../../stores/templateGenerator.svelte";
   import { automationStore } from "../../stores/automation.svelte";
+  import { defaultSavePath } from "../../stores/projectFolder.svelte";
+  import { recentProjectsStore } from "../../stores/recentProjects.svelte";
 
   let shellInfo: ShellInfo | null = $state(null);
   let shellInfoError: string | null = $state(null);
@@ -135,6 +150,34 @@
     } catch (err) {
       projectError = String(err);
     }
+  }
+
+  /** "Open Project…" — the real counterpart to `createProject` above, but
+   * file-backed: shows the native picker (`recentProjectsStore.
+   * browseAndOpen`, shared with `ScriptEditor.svelte`'s own no-project empty
+   * state) and, on a real successful `open_project` round trip, records the
+   * file into Recent Projects. */
+  async function openProjectFromDisk() {
+    fileMenuOpen = false;
+    await recentProjectsStore.browseAndOpen();
+  }
+
+  /** "Save Project As…" — the real counterpart for persisting the current
+   * session project to disk for the first time (or to a new location).
+   * Starts the native save picker at the First-Run Wizard's own default
+   * save-browsing location (`stores/projectFolder.svelte.ts`), suggesting
+   * the project's real current name as the filename. */
+  async function saveProjectAsToDisk() {
+    fileMenuOpen = false;
+    const project = timeline.project;
+    if (!project) return;
+    const chosen = await save({
+      filters: [{ name: "Project", extensions: ["json"] }],
+      defaultPath: defaultSavePath(`${project.project.name}.json`),
+    });
+    if (!chosen) return;
+    const ok = await timeline.saveProjectAs(chosen);
+    if (ok) recentProjectsStore.record(chosen, project.project.name);
   }
 
   const inertMenuKeys = ["topBar.menuEdit", "topBar.menuView", "topBar.menuHelp"];
@@ -169,6 +212,44 @@
     {#if fileMenuOpen}
       <div class="file-menu-backdrop" role="presentation" onclick={() => (fileMenuOpen = false)}></div>
       <div class="file-menu-dropdown" role="menu" tabindex="-1" onkeydown={onFileMenuKeydown}>
+        <button class="file-menu-option" role="menuitem" onclick={openProjectFromDisk}>
+          {t("topBar.menuOpenProject")}
+        </button>
+        <button
+          class="file-menu-option"
+          role="menuitem"
+          disabled={!timeline.project}
+          onclick={saveProjectAsToDisk}
+        >
+          {t("topBar.menuSaveProjectAs")}
+        </button>
+        {#if recentProjectsStore.entries.length > 0}
+          <div class="file-menu-divider"></div>
+          <div class="file-menu-section-label">
+            <span>{t("topBar.recentProjectsLabel")}</span>
+            <button
+              class="file-menu-clear"
+              type="button"
+              onclick={() => recentProjectsStore.clear()}
+            >
+              {t("topBar.recentProjectsClear")}
+            </button>
+          </div>
+          {#each recentProjectsStore.entries as entry (entry.path)}
+            <button
+              class="file-menu-option file-menu-option-recent"
+              role="menuitem"
+              title={entry.path}
+              onclick={() => {
+                fileMenuOpen = false;
+                void recentProjectsStore.open(entry.path);
+              }}
+            >
+              {entry.name}
+            </button>
+          {/each}
+        {/if}
+        <div class="file-menu-divider"></div>
         <button
           class="file-menu-option"
           role="menuitem"
@@ -447,5 +528,40 @@
   .file-menu-option:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+  .file-menu-divider {
+    height: 1px;
+    margin: 4px 0;
+    background: var(--border);
+  }
+  .file-menu-section-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    padding: 4px 12px;
+    color: var(--muted-2);
+    font-size: 10.5px;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+  .file-menu-clear {
+    background: none;
+    border: none;
+    color: var(--muted-2);
+    font: inherit;
+    font-size: 10.5px;
+    text-transform: none;
+    letter-spacing: normal;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+  .file-menu-clear:hover {
+    color: var(--foreground);
+  }
+  .file-menu-option-recent {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 </style>

@@ -20,17 +20,28 @@
     default, visible no matter which top-level tab is active; see that
     component's own doc comment for the placement reasoning.
 
+    Phase D13 (`STUDIO_PLAN.md` "Dashboard Header + Status Bar", promt.md
+    §13/§14) adds two more permanent shell rows: `DashboardHeader.svelte`
+    directly below `TopBar` (Project/Queue/Workers/AI Status/Voice API
+    Status — see its own doc comment for why this belongs here rather than
+    inside any one tab), and `StatusBar.svelte` as the very last row, below
+    `ActivityLogPanel` (CPU/RAM/FFmpeg/CapCut/AI API/Voice API plus the
+    "Current: <job>" line — see its own doc comment for the same
+    cross-cutting placement reasoning).
+
     Every dialog below is mounted exactly as before this pass, unconditionally
     (not gated by which top-level tab is active) — none of their own
     opening logic changed.
 -->
 <script lang="ts">
   import TopBar from "./components/layout/TopBar.svelte";
+  import DashboardHeader from "./components/layout/DashboardHeader.svelte";
   import Tabs from "./components/ui/Tabs.svelte";
   import WorkspaceTab from "./components/workspace/WorkspaceTab.svelte";
   import ProjectAssetTab from "./components/projects/ProjectAssetTab.svelte";
   import AutomationSettingsTab from "./components/automation/AutomationSettingsTab.svelte";
   import ActivityLogPanel from "./components/layout/ActivityLogPanel.svelte";
+  import StatusBar from "./components/layout/StatusBar.svelte";
   import { t } from "./lib/i18n.svelte";
   import ExportDialog from "./components/render/ExportDialog.svelte";
   import ModelManagerDialog from "./components/transcription/ModelManagerDialog.svelte";
@@ -52,6 +63,12 @@
 
 <main class="shell">
   <TopBar />
+
+  <!-- Phase D13 (`STUDIO_PLAN.md`): Professional Dashboard Header
+       (promt.md §13) — docked directly below TopBar, above the tab strip,
+       so it stays visible regardless of which of the 3 top-level tabs is
+       active — see DashboardHeader.svelte's own doc comment. -->
+  <DashboardHeader />
 
   <div class="app-tabs">
     <Tabs
@@ -82,6 +99,13 @@
        ActivityLogPanel.svelte's own doc comment for the full placement
        reasoning. -->
   <ActivityLogPanel />
+
+  <!-- Phase D13 (`STUDIO_PLAN.md`): bottom Status Bar (promt.md §14) — the
+       very last shell row, below ActivityLogPanel, so it stays visible
+       (CPU/RAM/FFmpeg/CapCut/AI/Voice plus the real "Current: <job>" line)
+       regardless of which of the 3 top-level tabs is active — see
+       StatusBar.svelte's own doc comment. -->
+  <StatusBar />
 
   <!-- Mounted once here (not inside TopBar/Timeline) since the Export
        dialog has two entry points — TopBar's "File" menu and Timeline's
@@ -184,7 +208,9 @@
 <style>
   .shell {
     display: grid;
-    grid-template-rows: auto auto 1fr auto;
+    /* TopBar, DashboardHeader (Phase D13), tab strip, tab content,
+       ActivityLogPanel, StatusBar (Phase D13). */
+    grid-template-rows: auto auto auto 1fr auto auto;
     height: 100vh;
     overflow: hidden;
   }

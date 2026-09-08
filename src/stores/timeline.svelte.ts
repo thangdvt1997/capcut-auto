@@ -347,6 +347,53 @@ class TimelineStore {
     await this.applyProjectResult(commands.getTimelineProject());
   }
 
+  /**
+   * Opens a project from an arbitrary file `path` via the real
+   * `open_project` command (`STUDIO_PLAN.md` Phase D14 — the first real,
+   * file-backed "open" this app has ever had; `new_project`/`createProject`
+   * in `TopBar.svelte` only ever create an in-memory project with no file
+   * path at all). Feeds the loaded project through `loadProject` above
+   * exactly like every other "open project" moment, so selection/playhead/
+   * markers reset the same way. Returns the loaded `ProjectV1` on success
+   * (callers use its real `project.name` to record a Recent Projects entry)
+   * or `null` on failure, with `lastError` already set via `run`'s shared
+   * envelope handling — same convention as every other backend call in this
+   * store.
+   */
+  async openFromPath(path: string): Promise<ProjectV1 | null> {
+    const project = await this.run(commands.openProject(path));
+    if (project) {
+      await this.loadProject(project);
+    }
+    return project;
+  }
+
+  /**
+   * Saves the current session project to `path` via the real
+   * `save_project_as` command (`STUDIO_PLAN.md` Phase D14). Unlike
+   * `openFromPath`, this does not replace `this.project` or reset any UI
+   * state — saving persists the project that's already open, it doesn't
+   * load a different one. Returns `true` on success; on failure returns
+   * `false` with `lastError` set (same convention as `run`, reimplemented
+   * inline here since `save_project_as` returns `Result<null, ...>`, not a
+   * `ProjectV1` to fold back into state).
+   */
+  async saveProjectAs(path: string): Promise<boolean> {
+    if (!this.project) return false;
+    this.loading = true;
+    try {
+      const result = await commands.saveProjectAs(snap(this.project), path);
+      if (result.status === "ok") {
+        this.lastError = null;
+        return true;
+      }
+      this.lastError = result.error.message;
+      return false;
+    } finally {
+      this.loading = false;
+    }
+  }
+
   /** Replaces the entire session project via `load_timeline_project` without
    * resetting selection/playhead/markers — the shared plumbing behind both
    * `loadProject` (a real "open project" — which *does* reset that UI

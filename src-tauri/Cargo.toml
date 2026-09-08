@@ -135,6 +135,20 @@ notify = "6.1"
 # transitively (Cargo.lock, pulled in by `keyring` and others) at this same
 # 0.22 line, so this adds no new major version to the dependency graph.
 base64 = "0.22"
+# Window size/position/maximized-state persistence (Phase D15, `STUDIO_PLAN.md`
+# "Remember window size — no `tauri-plugin-window-state`"). Tauri's own
+# official window-state plugin — the idiomatic mechanism for this rather than
+# a hand-rolled `on_window_event` + JSON-file save/restore. Pinned to a real,
+# current stable release compatible with this crate's `tauri = "2"` (resolved
+# via `cargo add` against the crates.io index, same "let cargo resolve it,
+# don't hand-guess a version" approach `tauri-plugin-updater`/`-process` above
+# already used), not a bare "2" so `cargo update` can't silently jump onto a
+# yet-newer manifest-schema revision. Purely backend-side: no matching
+# frontend `@tauri-apps/plugin-window-state` npm package is needed for this
+# use case (there isn't one published for this plugin — it works entirely via
+# the builder registration in `lib.rs` plus a `RunEvent::CloseRequested`/
+# `Exit` save hook the plugin wires up itself).
+tauri-plugin-window-state = "2.4.1"
 
 [features]
 default = ["custom-protocol"]

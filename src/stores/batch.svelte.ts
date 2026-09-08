@@ -162,6 +162,22 @@ class BatchStore {
     Object.values(this.jobsById).some((j) => !TERMINAL_JOB_STATUSES.has(j.status)),
   );
 
+  /** The job with the latest real `started_at` across every job this
+   * session knows about — a defined, honest "most likely relevant to what's
+   * being worked on right now" rule, not a random pick. Originally
+   * `PipelineStepper.svelte`'s own local derivation (its Render step); moved
+   * here (Phase D13, `STUDIO_PLAN.md`) so the new `StatusBar.svelte`'s own
+   * "Current: <job> – <percent>" line reuses the exact same rule instead of
+   * re-deriving it a second time — see `PipelineStepper.svelte`'s own doc
+   * comment for the full "why this specific rule" reasoning, unchanged. */
+  latestJob = $derived.by((): BatchJob | null => {
+    const jobs = Object.values(this.jobsById);
+    if (jobs.length === 0) return null;
+    return jobs.reduce((latest, job) =>
+      Date.parse(job.started_at) > Date.parse(latest.started_at) ? job : latest,
+    );
+  });
+
   // -------------------------------------------------------------------
   // Worker/Slot pool status (Phase D4, `get_worker_pool_status` from
   // Phase D4a)

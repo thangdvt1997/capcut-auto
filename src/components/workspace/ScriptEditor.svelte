@@ -35,11 +35,22 @@
   `CaptionRow.svelte`'s own `<p class="text">` — this codebase has no
   `set_caption_text` backend command for freehand text edits (only the
   translation-specific `apply_caption_translations` write path above).
+
+  Phase D14 pass (`STUDIO_PLAN.md` "Recent projects"): the "no project open"
+  `EmptyState` below gained a real action — an "Open Project…" button plus a
+  Recent Projects list (`stores/recentProjects.svelte.ts`), reusing the exact
+  same `recentProjectsStore.browseAndOpen`/`.open` methods `TopBar.svelte`'s
+  File-menu "Open Project…"/"Recent" entries call. Chosen as this feature's
+  second real home (alongside the File menu) because this is the actual
+  screen a user with no project open sees first in Simple mode — the task
+  brief's own "often most useful exactly where a user currently sees 'no
+  project open'" reasoning.
 -->
 <script lang="ts">
   import { captionsStore } from "../../stores/captions.svelte";
   import { timeline } from "../../stores/timeline.svelte";
   import { translationReviewStore } from "../../stores/translationReview.svelte";
+  import { recentProjectsStore } from "../../stores/recentProjects.svelte";
   import type { Caption } from "../../types/bindings";
   import { formatTimecode } from "../../timeline/algebra";
   import { t } from "../../lib/i18n.svelte";
@@ -49,9 +60,31 @@
   import EmptyState from "../ui/EmptyState.svelte";
   import ErrorState from "../ui/ErrorState.svelte";
   import DataTable from "../ui/DataTable.svelte";
+  import Card from "../ui/Card.svelte";
 
   let sortedCaptions = $derived([...captionsStore.captions].sort((a, b) => a.start_us - b.start_us));
 </script>
+
+{#snippet noProjectAction()}
+  <div class="no-project-action">
+    <Button variant="primary" size="sm" onclick={() => void recentProjectsStore.browseAndOpen()}>
+      {t("workspaceTab.script.openProjectButton")}
+    </Button>
+    {#if recentProjectsStore.entries.length > 0}
+      <div class="recent-projects">
+        <p class="recent-projects-label muted-2">{t("topBar.recentProjectsLabel")}</p>
+        {#each recentProjectsStore.entries as entry (entry.path)}
+          <Card interactive padding="sm" onclick={() => void recentProjectsStore.open(entry.path)}>
+            <div class="recent-row">
+              <span class="recent-name">{entry.name}</span>
+              <span class="recent-path muted-2" title={entry.path}>{entry.path}</span>
+            </div>
+          </Card>
+        {/each}
+      </div>
+    {/if}
+  </div>
+{/snippet}
 
 {#snippet indexCell(row: Caption)}
   <span class="mono muted-2">{sortedCaptions.indexOf(row) + 1}</span>
@@ -78,6 +111,7 @@
       <EmptyState
         title={t("workspaceTab.script.noProjectTitle")}
         description={t("workspaceTab.script.noProjectDesc")}
+        action={noProjectAction}
       />
     {:else}
       <DataTable
@@ -148,5 +182,45 @@
   .hint {
     margin: 0;
     font-size: 10.5px;
+  }
+  .no-project-action {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-3);
+    width: 100%;
+  }
+  .recent-projects {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    width: 100%;
+    max-width: 420px;
+  }
+  .recent-projects-label {
+    margin: 0;
+    font-size: 10.5px;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    text-align: left;
+  }
+  .recent-row {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    text-align: left;
+    min-width: 0;
+  }
+  .recent-name {
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .recent-path {
+    font-size: 10.5px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 </style>

@@ -31,17 +31,19 @@
     the single job (across every batch this session has seen a
     `batch:progress` event for) with the latest real `started_at`
     timestamp, a defined, honest "most likely relevant to what's being
-    worked on right now" rule, not a random pick. `running` shows that
-    job's own real `progress` percentage; `success`/`failed` mirror its real
-    terminal `BatchJobStatus`. No batch job at all (nothing started this
-    session) correctly shows `pending`, not a fabricated running animation.
+    worked on right now" rule, not a random pick (`batchStore.latestJob`,
+    Phase D13 — moved into the store itself so `StatusBar.svelte`'s own
+    "Current: <job> – <percent>" line can reuse this exact rule rather than
+    re-deriving it). `running` shows that job's own real `progress`
+    percentage; `success`/`failed` mirror its real terminal `BatchJobStatus`.
+    No batch job at all (nothing started this session) correctly shows
+    `pending`, not a fabricated running animation.
 -->
 <script lang="ts">
   import { captionsStore } from "../../stores/captions.svelte";
   import { batchStore } from "../../stores/batch.svelte";
   import { translationReviewStore } from "../../stores/translationReview.svelte";
   import { t } from "../../lib/i18n.svelte";
-  import type { BatchJob } from "../../types/bindings";
   import Tooltip from "../ui/Tooltip.svelte";
 
   type StepState = "pending" | "running" | "success" | "failed";
@@ -61,12 +63,9 @@
   });
 
   /** The job with the latest real `started_at` across every job this
-   * session knows about (see module doc comment). */
-  let latestJob = $derived.by((): BatchJob | null => {
-    const jobs = Object.values(batchStore.jobsById);
-    if (jobs.length === 0) return null;
-    return jobs.reduce((latest, job) => (Date.parse(job.started_at) > Date.parse(latest.started_at) ? job : latest));
-  });
+   * session knows about — see module doc comment and `batchStore.latestJob`'s
+   * own doc comment. */
+  let latestJob = $derived(batchStore.latestJob);
 
   let renderState = $derived.by((): StepState => {
     if (!latestJob) return "pending";

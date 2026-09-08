@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use serde::Serialize;
 use specta::Type;
@@ -257,6 +258,171 @@ pub fn get_system_information(app: AppHandle) -> Result<SystemInformation, AppEr
         logs_dir: log_dir.display().to_string(),
         disk_space,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Live system stats (Phase D13, `STUDIO_PLAN.md` "Dashboard Header + Status
+// Bar", promt.md §14) — a genuine, freshly-refreshed CPU/RAM usage
+// *percentage*, distinct from `get_system_information` above (that command's
+// `cpu_brand`/`cpu_core_count`/`total_memory_bytes`/`used_memory_bytes` are a
+// static, point-in-time snapshot with no CPU-usage-percent field at all,
+// backing the one-shot `SystemInfoDialog`, not a live-polling status bar).
+//
+// `sysinfo::System::refresh_cpu_usage()`'s own doc comment: "the result will
+// very likely be inaccurate at the first call... You need to call this
+// method at least twice (with a bit of time between each call, like 200 ms)
+// to get accurate value[s] as it uses previous results to compute the next
+// value." Confirmed directly in this crate's own vendored `sysinfo` source
+// (`unix/linux/cpu.rs` / `windows/system.rs`): a refresh only actually
+// recomputes usage when `last_update.elapsed() >= MINIMUM_CPU_UPDATE_INTERVAL`
+// (200 ms on Windows/Linux/macOS) — otherwise it silently keeps the previous
+// cached value.
+//
+// Architecture decision: keep one persistent `System` alive for the whole
+// app's lifetime in Tauri managed state (`LiveSystemStatsState`, below —
+// the same `struct Foo(pub Mutex<T>)` + `.manage()` convention already used
+// by `commands::render::RenderJobs`/`commands::media::MediaLibrary`), and
+// have the *frontend* poll `get_live_system_stats` on a plain interval
+// (`stores/liveSystemStats.svelte.ts`, 2.5s — matching this codebase's own
+// `WorkerPoolWidget.svelte` "poll on a short interval" precedent) rather
+// than a backend-driven interval pushing a Tauri event: the frontend's own
+// 2.5s poll cadence is, by construction, always far more than 200ms since
+// the *previous* call, so every single command invocation after the first
+// gets a real, freshly-computed, non-fabricated CPU percentage for free —
+// no artificial `thread::sleep` needed on the hot path (which would block a
+// command-dispatch call for 200ms every single poll, unnecessary given the
+// frontend already waits seconds between polls). The one call that
+// genuinely *would* be sysinfo's documented "inaccurate first call" is
+// absorbed once, at app startup, by `LiveSystemStatsState::default()`
+// itself seeding a throwaway `refresh_cpu_usage()` well before the
+// frontend's own first poll ever arrives — so even that first real command
+// call already has a true baseline to diff against.
+#[derive(Debug, Clone, Copy, Serialize, Type)]
+pub struct LiveSystemStats {
+    /// `sysinfo::System::global_cpu_usage()` — a real, freshly-refreshed
+    /// value, `0.0..=100.0`. Never fabricated: an idle machine can
+    /// legitimately read very close to `0.0`, and that is shown as-is, not
+    /// substituted with a placeholder.
+    pub cpu_usage_percent: f32,
+    /// `used_memory_bytes / total_memory_bytes * 100`, `0.0` if
+    /// `total_memory_bytes` is somehow `0` (never observed in practice, but
+    /// guards a real division-by-zero rather than panicking).
+    pub ram_usage_percent: f32,
+    pub used_memory_bytes: u64,
+    pub total_memory_bytes: u64,
+}
+
+/// Pure computation over an already-constructed `System` — kept separate
+/// from the `#[tauri::command]` wrapper below so a test can drive the real
+/// refresh-with-a-real-delay sequence directly, with no Tauri `AppHandle`/
+/// managed-state context needed at all.
+pub(crate) fn refresh_and_read_live_stats(sys: &mut System) -> LiveSystemStats {
+    sys.refresh_cpu_usage();
+    sys.refresh_memory();
+    let total_memory_bytes = sys.total_memory();
+    let used_memory_bytes = sys.used_memory();
+    let ram_usage_percent = if total_memory_bytes > 0 {
+        (used_memory_bytes as f64 / total_memory_bytes as f64 * 100.0) as f32
+    } else {
+        0.0
+    };
+    LiveSystemStats {
+        cpu_usage_percent: sys.global_cpu_usage(),
+        ram_usage_percent,
+        used_memory_bytes,
+        total_memory_bytes,
+    }
+}
+
+/// Managed Tauri state: one `System` instance kept alive for the whole app
+/// session (see module doc comment above for why this must be persistent
+/// rather than constructed fresh on every command invocation).
+pub struct LiveSystemStatsState(pub Mutex<System>);
+
+impl Default for LiveSystemStatsState {
+    fn default() -> Self {
+        let mut sys = System::new_all();
+        // Seed a real baseline at construction time (app startup) — the one
+        // deliberate "first call is inaccurate" instance sysinfo's own docs
+        // warn about, absorbed here so the frontend's first real poll
+        // already has a true previous data point to diff against (see
+        // module doc comment).
+        sys.refresh_cpu_usage();
+        Self(Mutex::new(sys))
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn get_live_system_stats(state: tauri::State<'_, LiveSystemStatsState>) -> LiveSystemStats {
+    let mut sys = state.0.lock().expect("live system stats mutex poisoned");
+    refresh_and_read_live_stats(&mut sys)
+}
+
+#[cfg(test)]
+mod live_system_stats_tests {
+    use super::*;
+
+    #[test]
+    fn refresh_and_read_live_stats_reports_real_bounded_percentages() {
+        let mut sys = System::new_all();
+        sys.refresh_cpu_usage();
+        // A real delay, exceeding every platform's own
+        // `sysinfo::MINIMUM_CPU_UPDATE_INTERVAL` (200ms on Windows/Linux/
+        // macOS) — not a fabricated/mocked value, an actual sampled
+        // CPU-usage delta over real wall-clock time, matching this
+        // module's own doc comment.
+        std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL * 2);
+        let stats = refresh_and_read_live_stats(&mut sys);
+
+        assert!(
+            (0.0..=100.0).contains(&stats.cpu_usage_percent),
+            "cpu_usage_percent out of range: {}",
+            stats.cpu_usage_percent
+        );
+        assert!(
+            (0.0..=100.0).contains(&stats.ram_usage_percent),
+            "ram_usage_percent out of range: {}",
+            stats.ram_usage_percent
+        );
+        assert!(
+            stats.total_memory_bytes > 0,
+            "expected a real total memory reading"
+        );
+        assert!(stats.used_memory_bytes <= stats.total_memory_bytes);
+    }
+
+    #[test]
+    fn live_system_stats_state_default_seeds_a_real_baseline() {
+        // Confirms `LiveSystemStatsState::default()` itself already did one
+        // real `refresh_cpu_usage()` call — a second, immediate call through
+        // the same state (no extra sleep here) must not panic and must still
+        // report a real, in-range value (possibly identical to the seeded
+        // baseline if called faster than `MINIMUM_CPU_UPDATE_INTERVAL`, which
+        // is fine — that's the documented, honest "too soon, reuse the last
+        // real value" behavior, not a fabricated one).
+        let state = LiveSystemStatsState::default();
+        let mut sys = state.0.lock().expect("live system stats mutex poisoned");
+        let stats = refresh_and_read_live_stats(&mut sys);
+        assert!((0.0..=100.0).contains(&stats.cpu_usage_percent));
+        assert!(stats.total_memory_bytes > 0);
+    }
+
+    #[test]
+    fn ram_usage_percent_guards_against_division_by_zero() {
+        // Can't force a real `System` to report zero total memory, so this
+        // directly exercises the same guarded arithmetic
+        // `refresh_and_read_live_stats` uses, isolated from any `sysinfo`
+        // call.
+        let total_memory_bytes: u64 = 0;
+        let used_memory_bytes: u64 = 0;
+        let ram_usage_percent = if total_memory_bytes > 0 {
+            (used_memory_bytes as f64 / total_memory_bytes as f64 * 100.0) as f32
+        } else {
+            0.0
+        };
+        assert_eq!(ram_usage_percent, 0.0);
+    }
 }
 
 // ---------------------------------------------------------------------------

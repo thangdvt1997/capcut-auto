@@ -88,6 +88,41 @@ async revealCapcutDraftInExplorer(draftDir: string) : Promise<Result<null, AppEr
 async newProject(name: string) : Promise<ProjectV1> {
     return await TAURI_INVOKE("new_project", { name });
 },
+/**
+ * Atomically writes `project` to `path` (`STUDIO_PLAN.md` Phase D14: the
+ * real "Save Project As…" this app never had a command for — every prior
+ * phase's own doc comments named this exact gap, e.g. this module's
+ * `new_project` above and `commands::diagnostics::SystemInformation::
+ * project_directory`'s "no default project folder ... concept exists
+ * anywhere on the backend"). A thin IPC wrapper around the already-tested
+ * `ProjectV1::save_atomic` (`project::io`, atomic temp-file-then-rename,
+ * covered by that module's own round-trip/Unicode/long-path/UNC-shaped-path
+ * tests) — no new file-I/O logic is introduced here, only the missing
+ * command surface for it.
+ */
+async saveProjectAs(project: ProjectV1, path: string) : Promise<Result<null, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_project_as", { project, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Loads and migrates a project from an arbitrary caller-chosen `path`
+ * (`STUDIO_PLAN.md` Phase D14: the real "Open Project…" counterpart to
+ * `save_project_as` above). A thin IPC wrapper around the already-tested
+ * `ProjectV1::load` (`project::io`) — same "wire up the existing, tested
+ * primitive, add no new logic" scope as `save_project_as`.
+ */
+async openProject(path: string) : Promise<Result<ProjectV1, AppErrorPayload>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_project", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ffmpegDiagnostics() : Promise<Result<FfmpegDiagnostics, AppErrorPayload>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("ffmpeg_diagnostics") };
@@ -1709,6 +1744,9 @@ async openLogsFolder() : Promise<Result<null, AppErrorPayload>> {
 async getLastSessionStatus() : Promise<SessionStatus> {
     return await TAURI_INVOKE("get_last_session_status");
 },
+async getLiveSystemStats() : Promise<LiveSystemStats> {
+    return await TAURI_INVOKE("get_live_system_stats");
+},
 async testVoiceConnection(settings: VoiceProviderSettings) : Promise<VoiceConnectionTestResult> {
     return await TAURI_INVOKE("test_voice_connection", { settings });
 },
@@ -2785,6 +2823,20 @@ property: string; time_offset_us: number; value: number;
  * can be added later without another schema version bump.
  */
 curve: string }
+export type LiveSystemStats = { 
+/**
+ * `sysinfo::System::global_cpu_usage()` — a real, freshly-refreshed
+ * value, `0.0..=100.0`. Never fabricated: an idle machine can
+ * legitimately read very close to `0.0`, and that is shown as-is, not
+ * substituted with a placeholder.
+ */
+cpu_usage_percent: number; 
+/**
+ * `used_memory_bytes / total_memory_bytes * 100`, `0.0` if
+ * `total_memory_bytes` is somehow `0` (never observed in practice, but
+ * guards a real division-by-zero rather than panicking).
+ */
+ram_usage_percent: number; used_memory_bytes: number; total_memory_bytes: number }
 /**
  * A real, live snapshot of this setting (`commands::batch::get_max_concurrent_jobs`/
  * `set_max_concurrent_jobs`) — carries both the value persisted to disk

@@ -63,6 +63,8 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::capcut::validate_capcut_draft,
         commands::capcut::reveal_capcut_draft_in_explorer,
         commands::project::new_project,
+        commands::project::save_project_as,
+        commands::project::open_project,
         commands::media::ffmpeg_diagnostics,
         commands::media::probe_media_file,
         commands::media::import_media_paths,
@@ -194,6 +196,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::diagnostics::get_logs_folder_path,
         commands::diagnostics::open_logs_folder,
         commands::diagnostics::get_last_session_status,
+        commands::diagnostics::get_live_system_stats,
         commands::voice::test_voice_connection,
         commands::voice::list_voices,
         fcpxml::export::export_fcpxml,
@@ -253,6 +256,17 @@ pub fn run() {
         // exit the process itself (Windows does, per that crate's docs).
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // Phase D15 (`STUDIO_PLAN.md` "Remember window size — no
+        // `tauri-plugin-window-state`"): Tauri's own official window-state
+        // plugin. Registered with its default config, which covers every
+        // window declared in `tauri.conf.json` (just `"main"` here) with no
+        // further opt-in needed — it saves size/position/maximized state on
+        // window close / app exit and restores it automatically the next
+        // time each window is created, all without any extra code at this
+        // call site or a matching frontend package (there isn't one for this
+        // plugin's Tauri 2 line; the old `tauri-plugin-window-state-api` JS
+        // package only ever existed for Tauri 1).
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .invoke_handler(specta_builder.invoke_handler())
         .setup(move |app| {
             specta_builder.mount_events(app);
@@ -356,6 +370,17 @@ pub fn run() {
             // the expensive scoring phase is cached here rather than
             // recomputed on every parameter change.
             tauri::Manager::manage(app, crate::vad::VadCache::default());
+            // Phase D13 (`STUDIO_PLAN.md` "Dashboard Header + Status Bar"):
+            // one persistent `sysinfo::System` for the whole app session,
+            // backing `get_live_system_stats` — see
+            // `commands::diagnostics::LiveSystemStatsState`'s own doc
+            // comment for why this must be long-lived rather than
+            // constructed fresh per call. `::default()` also seeds a real
+            // baseline `refresh_cpu_usage()` here at startup.
+            tauri::Manager::manage(
+                app,
+                crate::commands::diagnostics::LiveSystemStatsState::default(),
+            );
             // Live render jobs (job_id -> cancellation flag), managed the
             // same way as `MediaLibrary`/`VadCache` above — see
             // `commands::render::RenderJobs` doc comment.
