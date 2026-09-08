@@ -1,6 +1,6 @@
-# Kế hoạch tiếp theo — dựa trên `PROMPT_AUDIT.md` (2026-09-08)
+# Kế hoạch tiếp theo (2026-09-08)
 
-Tài liệu này thay thế đánh giá "70-75% xong" trước đó (quá lạc quan) bằng một backlog chi tiết, đúng thực tế, ưu tiên theo rủi ro/kích thước. Nguồn dữ liệu: `PROMPT_AUDIT.md` (audit từng dòng, 25 mục tính năng của `promt.md`).
+Backlog chi tiết, đúng thực tế, ưu tiên theo rủi ro/kích thước — thay thế đánh giá "70-75% xong" trước đó (quá lạc quan). Rút ra từ 1 lượt audit nghiêm ngặt, từng dòng, đối chiếu trực tiếp với code thật cho toàn bộ 25 mục tính năng của spec gốc (không phải kiểm tra cấp cao "có tính năng roughly giống vậy không").
 
 Nguyên tắc khi thực hiện (không đổi so với suốt dự án): audit trước khi code, không fake tính năng, mọi claim "xong" phải verify thật (compile + test + click-through), i18n song ngữ đầy đủ, không commit khi chưa verify.
 
@@ -52,4 +52,4 @@ Mỗi việc dưới đây là 1 gap cụ thể, không phụ thuộc việc kh�
 3. Với **Nhóm C**, hỏi lại quyết định phạm vi trước khi dispatch bất kỳ việc nào (đặc biệt #15, #16 — đều là quyết định kiến trúc thật, không phải kỹ thuật thuần tuý).
 4. **Nhóm D** cần làm rõ ý định spec trước khi ước lượng — hỏi lại khi tới lượt.
 
-Mọi việc hoàn thành đều phải: cập nhật `STUDIO_PLAN.md` (thêm phase mới), cập nhật `PROMPT_AUDIT.md` (đổi ❌/⚠️ thành ✅ khi thật sự xong và verify), verify qua WSL (Rust) + pnpm (frontend) + live click-through khi khả thi, rồi mới commit.
+Mọi việc hoàn thành đều phải: xoá mục tương ứng khỏi file này (đổi ❌/⚠️ thành đã xoá khỏi backlog khi thật sự xong và verify), verify qua WSL (Rust) + pnpm (frontend) + live click-through khi khả thi, rồi mới commit.

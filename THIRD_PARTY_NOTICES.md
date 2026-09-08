@@ -108,4 +108,4 @@ Direct dependencies as of Phase 13's final license/attribution audit pass (2026-
 
 **Fonts/icons**: no third-party font files are bundled — UI text uses system/web-safe font stacks declared in CSS, not embedded font assets. `src-tauri/icons/*` remains the Tauri-CLI-generated placeholder set noted in the `autocut` section above, pending real app-branding artwork before a public release.
 
-Run a license-audit pass at the end of each phase per `IMPLEMENTATION_PLAN.md`, and the full `cargo-about`/`pnpm licenses` tool-generated pass specifically before any public/signed release build.
+Run a license-audit pass at the end of each phase, and the full `cargo-about`/`pnpm licenses` tool-generated pass specifically before any public/signed release build.

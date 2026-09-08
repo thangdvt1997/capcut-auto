@@ -4,7 +4,7 @@ A Windows 10/11 x64 desktop video editor (Tauri 2 + Rust + Svelte 5) built aroun
 
 It unifies the editing model of [autocut](https://github.com/cobanov/autocut) (silence/speech-based cutting) with the CapCut/Jianying draft-export approach of [capcut-mate](https://github.com/Hommy-master/capcut-mate) into one coherent, non-destructive editor — plus real local transcription, captions, an AI edit-plan pipeline, and a short-form video generator, none of which either upstream project had.
 
-> **Status**: actively developed against the full spec, now consolidated into [`MASTER_SPEC.md`](./MASTER_SPEC.md) (Part 1 is the original master prompt this note used to link to directly; Parts 2-3 are the two upgrade specs layered on since). The Rust backend and its Svelte frontend are functionally complete through the original 13-phase build (see [`IMPLEMENTATION_PLAN.md`](./IMPLEMENTATION_PLAN.md)) and the first upgrade (see [`UPGRADE_PLAN.md`](./UPGRADE_PLAN.md)); the second, larger Professional Workflow UI upgrade is in progress (see [`STUDIO_PLAN.md`](./STUDIO_PLAN.md) for the live per-phase checklist, and [`PROMPT_AUDIT.md`](./PROMPT_AUDIT.md)/[`PLAN_NEXT.md`](./PLAN_NEXT.md) for the current, rigorously-verified state of what's left). This is not yet a signed, publicly-distributed release.
+> **Status**: the original 13-phase build and the first CapCut/AI-automation upgrade are functionally complete; a second, larger Professional Workflow UI upgrade (3-tab shell, Design System, Worker/Slot manager, a dubbing-style pipeline) is in progress — see [`PLAN_NEXT.md`](./PLAN_NEXT.md) for the current, verified state of what's left to build. This is not yet a signed, publicly-distributed release.
 
 ## Screenshots
 
@@ -33,7 +33,7 @@ See [`docs/feature-matrix.md`](./docs/feature-matrix.md) for exactly which featu
 
 ## Installation
 
-An installer (`AI-Video-Editor-Setup-x64.exe`, NSIS-based) is produced by Phase 12's Windows packaging work — see `IMPLEMENTATION_PLAN.md`'s Phase 12 section for the exact current state (installer configuration, code-signing, and auto-update hosting are tracked there, with any unsigned/placeholder status called out explicitly). Until a signed release is published, running from source (below) is the supported path.
+An installer (`AI-Video-Editor-Setup-x64.exe`, NSIS-based) is produced by the Windows packaging work in `src-tauri/tauri.conf.json`'s bundle configuration — check that file and `.github/workflows/` (if present) for the current, exact installer/code-signing/auto-update state before relying on this for a distributable build. Until a signed release is published, running from source (below) is the supported path.
 
 ## Development setup
 
@@ -75,7 +75,7 @@ pnpm run build   # production Vite build
 cargo tauri build
 ```
 
-Produces a release binary plus (once Phase 12's installer configuration is finalized) an NSIS installer under `src-tauri/target/release/bundle/`. See `IMPLEMENTATION_PLAN.md`'s Phase 12 section for the current, exact state of installer/signing/auto-update configuration before relying on this for a distributable build.
+Produces a release binary plus (once the installer configuration is finalized) an NSIS installer under `src-tauri/target/release/bundle/`. Check `src-tauri/tauri.conf.json`'s bundle section for the current, exact state of installer/signing/auto-update configuration before relying on this for a distributable build.
 
 ## Architecture overview
 
@@ -93,18 +93,18 @@ Transcription runs entirely locally via a real, vendored build of `whisper.cpp` 
 
 ## CapCut integration
 
-The app detects an installed CapCut or Jianying Pro on Windows (both the China-region and international folder conventions) and can export a project as a real CapCut/Jianying draft — a from-scratch Rust port of the draft-format class model, not a call into CapCut itself. See [`docs/feature-matrix.md`](./docs/feature-matrix.md) for exactly which features transfer (captions, transform, and speed all map for real; effects/filters/transitions do not, since this app has no catalog for them yet). **Draft compatibility has not yet been validated against a real, installed CapCut build** — that verification needs a human with CapCut actually installed and is tracked as an open item in `IMPLEMENTATION_PLAN.md`'s Phase 9 section, not something to assume works.
+The app detects an installed CapCut or Jianying Pro on Windows (both the China-region and international folder conventions) and can export a project as a real CapCut/Jianying draft — a from-scratch Rust port of the draft-format class model, not a call into CapCut itself. See [`docs/feature-matrix.md`](./docs/feature-matrix.md) for exactly which features transfer (captions, transform, and speed all map for real; effects/filters/transitions do not, since this app has no catalog for them yet). Draft compatibility has been validated against a real, installed CapCut build (real drafts open and are discoverable in CapCut's own Projects list) — one unresolved edge case remains where CapCut can report a "Couldn't use project — unusual path" error for some exports, root cause not yet found.
 
 ## FFmpeg information
 
-FFmpeg/FFprobe are bundled as sidecar binaries rather than requiring a separate system install. See `IMPLEMENTATION_PLAN.md`'s Phase 12 section and `THIRD_PARTY_NOTICES.md` for the exact chosen build source, version, and license variant (an LGPL build is preferred specifically so GPL-only codecs never trigger a copyleft obligation on the rest of this app) — that section is the authoritative, current source of truth for exactly what's bundled and how it was verified, rather than restating version numbers here where they'd go stale.
+FFmpeg/FFprobe are bundled as sidecar binaries rather than requiring a separate system install. See `THIRD_PARTY_NOTICES.md` for the exact chosen build source, version, and license variant (an LGPL build is preferred specifically so GPL-only codecs never trigger a copyleft obligation on the rest of this app) — that file is the authoritative, current source of truth for exactly what's bundled and how it was verified, rather than restating version numbers here where they'd go stale.
 
 ## Troubleshooting
 
-- **The app won't launch a freshly-built binary during development on some machines**: Windows Smart App Control can silently start blocking execution of newly-compiled, unsigned binaries mid-project on a given machine (this happened during this project's own development — see `HANDOFF.md`'s "Build/test environment" section for the full story and the WSL2-based Rust workflow used to work around it for backend iteration). A **signed** release build is not affected by this the way an ad-hoc local dev build can be.
-- **A generated CapCut draft doesn't look right in CapCut**: see the [CapCut integration](#capcut-integration) note above — real-CapCut validation is an open item, not a solved problem yet. Please report specifics (CapCut vs. Jianying, version, what looked wrong) as an issue.
+- **The app won't launch a freshly-built binary during development on some machines**: Windows Smart App Control can silently start blocking execution of newly-compiled, unsigned binaries mid-project on a given machine. If this happens, building/testing the Rust backend from a WSL2 Linux environment (`cargo build`/`cargo test` against the same source tree) is a reliable workaround for backend iteration; only the final Windows binary needs to run natively. A **signed** release build is not affected by this the way an ad-hoc local dev build can be.
+- **A generated CapCut draft doesn't look right in CapCut**: see the [CapCut integration](#capcut-integration) note above. Please report specifics (CapCut vs. Jianying, version, what looked wrong) as an issue.
 - **Transcription is slow**: CPU inference is the only currently-verified path; try a smaller model size in the Model Manager first.
-- **Logs**: structured logs are written to `%LOCALAPPDATA%\AI Video Editor\logs\` (see `IMPLEMENTATION_PLAN.md`'s Phase 12 section for the exact crash-handling/logging setup) — include the relevant log file when reporting a bug.
+- **Logs**: structured logs are written to `%LOCALAPPDATA%\AI Video Editor\logs\` — include the relevant log file when reporting a bug.
 
 ## License
 

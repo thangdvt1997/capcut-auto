@@ -9,7 +9,7 @@ Four output paths exist for a project, matching `docs/architecture.md`'s adapter
 - **CapCut** — the `CapCutAdapter` (Phase 9), producing a Jianying/CapCut draft folder.
 - **FCPXML** — the FCPXML 1.11 exporter (Phase 6), producing an `.fcpxml` file for Premiere/Resolve/Final Cut.
 
-`yes` = fully transfers. `partial` = transfers with a known, real limitation (documented in the note). `no` = does not transfer at all today (documented gap, not a bug — see each phase's own notes in `IMPLEMENTATION_PLAN.md` for why).
+`yes` = fully transfers. `partial` = transfers with a known, real limitation (documented in the note). `no` = does not transfer at all today (documented gap, not a bug — see each row's own note column for why).
 
 | Feature | Internal | FFmpeg | CapCut | FCPXML | Notes |
 |---|---|---|---|---|---|
