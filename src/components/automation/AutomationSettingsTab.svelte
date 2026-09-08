@@ -50,7 +50,8 @@
   import { capcutStore } from "../../stores/capcut.svelte";
   import { automationStore } from "../../stores/automation.svelte";
   import { updateSettingsStore, UPDATE_CHECK_MODES } from "../../stores/updateSettings.svelte";
-  import type { AiProviderKind, AutomationRule, UpdateCheckMode } from "../../types/bindings";
+  import { voiceSettingsStore } from "../../stores/voiceSettings.svelte";
+  import type { AiProviderKind, AutomationRule, UpdateCheckMode, VoiceProviderKind } from "../../types/bindings";
 
   // Real data load for the two stores whose status this tab shows before
   // their own dialog has ever been opened this session — mirrors each
@@ -74,6 +75,20 @@
         return t("aiSettings.providerAnthropic");
       case "gemini":
         return t("aiSettings.providerGemini");
+    }
+  }
+
+  /** Same "small, self-contained, easier to audit inline than a shared
+   * helper" precedent as `BatchJobsDialog.svelte`'s own local `badgeVariant`
+   * copy — mirrors `VoiceSettingsDialog.svelte`'s own `providerLabel`. */
+  function voiceProviderLabel(kind: VoiceProviderKind): string {
+    switch (kind) {
+      case "custom_api":
+        return t("voiceSettings.providerCustomApi");
+      case "nts_gen_ai":
+        return t("voiceSettings.providerNtsGenAi");
+      case "gpt_so_vits":
+        return t("voiceSettings.providerGptSoVits");
     }
   }
 
@@ -280,6 +295,36 @@
             </Button>
             <Button size="sm" variant="primary" onclick={() => updateSettingsStore.openDialog()}>
               {t("automationSettingsTab.update.openButton")}
+            </Button>
+          </div>
+        </Card>
+      </Panel>
+
+      <Panel title={t("automationSettingsTab.voice.title")}>
+        <Card>
+          <div class="ast-row">
+            <span class="ast-row-label muted-2">{t("automationSettingsTab.voice.providerRowLabel")}</span>
+            <span class="ast-row-value">{voiceProviderLabel(voiceSettingsStore.provider)}</span>
+          </div>
+          {#if voiceSettingsStore.needsConnectionDetails}
+            <div class="ast-row">
+              <span class="ast-row-label muted-2">{t("automationSettingsTab.voice.keyRowLabel")}</span>
+              <Badge variant={voiceSettingsStore.hasKeyConfigured ? "pos" : "neutral"}>
+                {voiceSettingsStore.hasKeyConfigured ? t("aiSettings.keyConfigured") : t("aiSettings.keyNotConfigured")}
+              </Badge>
+            </div>
+          {/if}
+          <div class="ast-row">
+            <span class="ast-row-label muted-2">{t("automationSettingsTab.voice.voicesRowLabel")}</span>
+            <span class="ast-row-value">{voiceSettingsStore.voices.length}</span>
+          </div>
+          <div class="ast-row">
+            <span class="ast-row-label muted-2">{t("automationSettingsTab.voice.mappingsRowLabel")}</span>
+            <span class="ast-row-value">{voiceSettingsStore.roleMappings.length}</span>
+          </div>
+          <div class="ast-actions">
+            <Button size="sm" variant="primary" onclick={() => voiceSettingsStore.openDialog()}>
+              {t("automationSettingsTab.voice.openButton")}
             </Button>
           </div>
         </Card>

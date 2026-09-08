@@ -955,4 +955,32 @@ API keys already go through a real credential store (`ai::credentials`), never l
 
 ### Honest summary: what's real, sized, and next
 
-Large, architecturally-significant gaps: the full §3 Tab-1 rich editor/player (video preview controls, full per-row script table, 10-step pipeline), true job resume (§17), a unified Preset system (§18), and — prerequisite to several of the above — the Voice/TTS `synthesize_speech` pipeline stage plus Rewrite Script and Sync Timeline (neither has any real command anywhere in this codebase; confirmed via grep, not assumed). Small-to-moderate, well-contained gaps: Translation/Voice settings UI (§8/§9, was mid-dispatch), Design System's remaining primitives (§19, was mid-dispatch), the Dashboard Header/Status Bar (§13/§14), Context menu, Recent projects, remembered window size (§22). Likely-fine-but-unverified: responsive layout at specific resolutions (§21), progress-event throttling (§23), a dedicated path/filename sanitization pass (§24). None of these were silently skipped — each is named here with a real reason, matching this file's own established discipline throughout every phase above.
+Large, architecturally-significant gaps: the full §3 Tab-1 rich editor/player (video preview controls, full per-row script table, 10-step pipeline), true job resume (§17), a unified Preset system (§18), and — prerequisite to several of the above — the Voice/TTS `synthesize_speech` pipeline stage plus Rewrite Script and Sync Timeline (neither has any real command anywhere in this codebase; confirmed via grep, not assumed). Small-to-moderate, well-contained gaps: Translation settings UI (§8, still open), Design System's remaining primitives (§19, still open), the Dashboard Header/Status Bar (§13/§14), Context menu, Recent projects, remembered window size (§22), and the worker-pool-size setting (Phase D4a's own flagged gap). Voice settings UI (§9) is now done — see Phase D10 below. Likely-fine-but-unverified: responsive layout at specific resolutions (§21), progress-event throttling (§23), a dedicated path/filename sanitization pass (§24). None of these were silently skipped — each is named here with a real reason, matching this file's own established discipline throughout every phase above.
+
+---
+
+## Phase D10 — Voice Settings + Voice Mapping UI (`promt.md` §9)
+
+The frontend half of Phase S7's `voice::` provider abstraction — closes the exact gap that phase's own "not built this pass" note and this session's audit both flagged.
+
+### What was built
+
+- **`src/stores/voiceSettings.svelte.ts`**: mirrors `stores/aiSettings.svelte.ts`'s own shape closely (read that store in full before writing this one) — non-secret settings (`provider`, `base_url`) persisted to `localStorage`, the API key handled write-only through the exact same `commands.setAiApiKey`/`deleteAiApiKey` credential-store commands `aiSettingsStore` already uses (confirmed via grep that no separate voice-specific credential command exists, and `voice::custom_api`'s own `resolve_api_key` already reuses `ai::credentials::default_store()` directly — so reusing the same frontend commands with a `voice-provider:{provider}` credential ref, instead of the AI store's `ai-provider:{provider}`, is the correct, already-intended pattern, not a workaround). Only `custom_api` (`VoiceProviderKind`) gets real base-URL/credential fields — `nts_gen_ai`/`gpt_so_vits` are honest stubs with neither, and the dialog shows a plain "not implemented yet" hint instead of connection fields for those two, rather than showing dead inputs.
+- **`src/components/voice/VoiceSettingsDialog.svelte`**: same real pattern as `AiSettingsDialog.svelte` (`Modal`/`Panel`/`Select`/`Badge`/`Button`/`ErrorState`/`EmptyState`, Design System) — Provider picker, Server API URL, API Key (masked, write-only, "never redisplayed" note), a real "Test Connection" and "Refresh Voices" pair calling the real `testVoiceConnection`/`listVoices` commands, and a Voice Mapping section (free-text role name, e.g. "Narrator"/"Speaker A", mapped to one of the real voices `listVoices` returned).
+- **Voice Mapping is saved, not consumed by anything real** — stated plainly in the dialog itself ("Saved here for later use, but no voice-generation pipeline exists yet in this app") and in this writeup, not hidden. No `synthesize_speech` command exists anywhere (Phase S7's own note), so there is nothing real for a mapping to drive yet.
+- **Tab 2 integration**: a new "Voice / TTS" card in `AutomationSettingsTab.svelte`, following the exact same shape as its existing AI/CapCut/Automation/Update cards (real status rows — Provider, API key configured, Voices loaded count, Role mappings count — plus an "Open Voice Settings…" button). The tab's own "Not built yet (honest gap)" panel text was updated to remove Voice from the unbuilt list and state its new real scope precisely (settings dialog exists; no synthesis pipeline consumes it yet).
+- `VoiceSettingsDialog` mounted once in `App.svelte`, same "one shared store-backed dialog" pattern as every other dialog there.
+
+### i18n
+
+New `voiceSettings` namespace (34 hand-written English + Vietnamese keys) plus `automationSettingsTab.voice.*` (6 keys) and an updated `automationSettingsTab.gaps.desc`.
+
+### Verification
+
+- Locale key-parity: **1237/1237 keys in `en.json`/`vi.json`, zero one-sided keys**.
+- `pnpm run lint`: 0 problems. `pnpm run check`: 0 errors, 0 warnings, **274 files** (up from 272 — the 2 new files). `pnpm run build`: succeeds, **318 modules** (up from 315).
+- **Live end-to-end verification in the running dev app** (not just static checks): opened Tab 2, confirmed the new Voice card shows real state (Provider: Custom API, API key: Not configured, Voices loaded: 0, Role mappings: 0); opened Voice Settings via its real button; clicked "Test Connection" for real — it returned a genuine, honest backend error, **"no stored credential for ref voice-provider:custom_api"**, proving the full chain (store → generated Tauri command binding → `commands::voice::test_voice_connection` → real credential-store lookup) works end-to-end, not just compiles.
+
+### Files created/changed
+
+New: `src/stores/voiceSettings.svelte.ts`, `src/components/voice/VoiceSettingsDialog.svelte`. Changed: `src/App.svelte` (new import + `<VoiceSettingsDialog />` mount), `src/components/automation/AutomationSettingsTab.svelte` (new Voice card + `voiceProviderLabel` helper + updated gap text), `src/locales/en.json`/`src/locales/vi.json`. No `src-tauri/` file touched — this task was entirely frontend, consuming Phase S7's existing backend commands as-is.

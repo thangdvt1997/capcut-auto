@@ -1309,10 +1309,56 @@
       "statusRowLabel": "Trạng thái",
       "openButton": "Mở Cài đặt Cập nhật…"
     },
+    "voice": {
+      "title": "Giọng nói / TTS",
+      "providerRowLabel": "Nhà cung cấp",
+      "keyRowLabel": "Khóa API",
+      "voicesRowLabel": "Số giọng đã tải",
+      "mappingsRowLabel": "Số vai trò đã gán",
+      "openButton": "Mở Cài đặt Giọng nói…"
+    },
     "gaps": {
       "title": "Chưa xây dựng (khoảng trống thật)",
-      "desc": "Dịch thuật, Giọng nói, Hiệu năng và Lưu trữ chưa có hộp thoại cài đặt hay store phía sau thật nào cả, nên không có công tắc nào cho chúng được hiển thị ở đây — thêm các công tắc giả không có chức năng thật phía sau sẽ phản ánh sai những gì ứng dụng này thực sự làm được hôm nay. Xem phần Phase D5 trong STUDIO_PLAN.md để biết đầy đủ việc rà soát khoảng trống này."
+      "desc": "Dịch thuật, Hiệu năng và Lưu trữ chưa có hộp thoại cài đặt hay store phía sau thật nào cả, nên không có công tắc nào cho chúng được hiển thị ở đây — thêm các công tắc giả không có chức năng thật phía sau sẽ phản ánh sai những gì ứng dụng này thực sự làm được hôm nay. Giọng nói giờ đã có hộp thoại cài đặt thật (Nhà cung cấp/Khóa API/Test Connection/Refresh Voices/Voice Mapping) — xem phần Voice Settings trong STUDIO_PLAN.md — nhưng chưa có pipeline tổng hợp giọng nói thật nào, nên Voice Mapping đã lưu chưa được bất kỳ tính năng thật nào sử dụng."
     }
+  },
+  "voiceSettings": {
+    "title": "Cài đặt Giọng nói",
+    "explainer": "Cấu hình nhà cung cấp giọng nói/TTS mà app này kết nối tới, xem danh sách giọng có sẵn, và lưu ánh xạ Vai trò người nói sang giọng nói. Cài đặt không bí mật (nhà cung cấp, base URL) chỉ lưu trên máy này; khóa API được ghi trực tiếp vào Windows Credential Manager và chỉ được gửi lại khi bạn bấm Lưu.",
+    "providerCustomApi": "API tùy chỉnh",
+    "providerNtsGenAi": "NTS Gen AI",
+    "providerGptSoVits": "GPT-SoVITS",
+    "genderMale": "Nam",
+    "genderFemale": "Nữ",
+    "genderOther": "Khác",
+    "genderUnknown": "Không rõ",
+    "providerSectionTitle": "Nhà cung cấp & Endpoint",
+    "providerLabel": "Nhà cung cấp",
+    "stubProviderHint": "Nhà cung cấp này chưa được triển khai — Test Connection và Refresh Voices sẽ báo trung thực điều đó, không giả vờ thành công.",
+    "baseUrlLabel": "URL API máy chủ",
+    "baseUrlPlaceholder": "https://example.com/voice-api",
+    "credentialsSectionTitle": "Khóa API",
+    "keyConfigured": "Đã cấu hình",
+    "keyNotConfigured": "Chưa cấu hình",
+    "keyInputPlaceholder": "Dán khóa API…",
+    "savingKey": "Đang lưu…",
+    "saveKeyButton": "Lưu Khóa",
+    "deleteKeyButton": "Xóa Khóa",
+    "keyNeverRedisplayedNote": "Vì bảo mật, khóa đã lưu sẽ không bao giờ hiển thị lại — chỉ hiển thị đã cấu hình hay chưa.",
+    "testSectionTitle": "Kết nối & Danh sách giọng",
+    "testing": "Đang kiểm tra…",
+    "testButton": "Kiểm tra kết nối",
+    "loadingVoices": "Đang tải…",
+    "refreshVoicesButton": "Tải lại danh sách giọng",
+    "mappingSectionTitle": "Ánh xạ giọng nói",
+    "mappingNotConsumedNote": "Được lưu ở đây để dùng sau, nhưng app này chưa có pipeline tạo giọng nói nào cả — ánh xạ này chưa được bất kỳ tính năng thật nào sử dụng hôm nay.",
+    "mappingNeedsVoicesTitle": "Bấm Tải lại danh sách giọng ở trên để gán một vai trò cho giọng.",
+    "roleNamePlaceholder": "Tên vai trò (vd: Người dẫn chuyện, Người nói A)",
+    "selectVoicePlaceholder": "Chọn một giọng…",
+    "addMappingButton": "Thêm",
+    "noMappingsYet": "Chưa có ánh xạ vai trò nào.",
+    "removeMappingButton": "Xóa",
+    "close": "Đóng"
   },
   "workerPool": {
     "ariaLabel": "Trạng thái nhóm worker",

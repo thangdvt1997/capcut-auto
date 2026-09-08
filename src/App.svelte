@@ -37,6 +37,7 @@
   import CapCutSettingsDialog from "./components/capcut/CapCutSettingsDialog.svelte";
   import CapCutExportDialog from "./components/capcut/CapCutExportDialog.svelte";
   import AiSettingsDialog from "./components/ai/AiSettingsDialog.svelte";
+  import VoiceSettingsDialog from "./components/voice/VoiceSettingsDialog.svelte";
   import BatchJobsDialog from "./components/batch/BatchJobsDialog.svelte";
   import UpdateSettingsDialog from "./components/update/UpdateSettingsDialog.svelte";
   import SystemInfoDialog from "./components/system/SystemInfoDialog.svelte";
@@ -114,6 +115,14 @@
        `SilenceDetector`/`FillerWordDetector`'s own precedent there (its
        only entry point is that toolbar). -->
   <AiSettingsDialog />
+
+  <!-- Voice Settings dialog (`promt.md` §9, `STUDIO_PLAN.md`'s Voice
+       Settings + Voice Mapping UI phase) — same "one shared store-backed
+       dialog, reachable from a button" reason as the dialogs above, this
+       time from the new Voice card in `AutomationSettingsTab.svelte` (Tab
+       2) rather than TopBar — see VoiceSettingsDialog.svelte's own doc
+       comment. -->
+  <VoiceSettingsDialog />
 
   <!-- Phase 11: mounted once here for the same "one shared store-backed
        dialog, reachable from a TopBar button" reason as the dialogs above —

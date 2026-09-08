@@ -1309,10 +1309,56 @@
       "statusRowLabel": "Status",
       "openButton": "Open Update Settings…"
     },
+    "voice": {
+      "title": "Voice / TTS",
+      "providerRowLabel": "Provider",
+      "keyRowLabel": "API key",
+      "voicesRowLabel": "Voices loaded",
+      "mappingsRowLabel": "Role mappings",
+      "openButton": "Open Voice Settings…"
+    },
     "gaps": {
       "title": "Not built yet (honest gap)",
-      "desc": "Translation, Voice, Performance, and Storage don't have real settings dialogs or backend stores yet, so no toggles for them are shown here — adding placeholder switches with nothing real behind them would misrepresent what this app can actually do today. See STUDIO_PLAN.md's Phase D5 section for the full gap-check."
+      "desc": "Translation, Performance, and Storage don't have real settings dialogs or backend stores yet, so no toggles for them are shown here — adding placeholder switches with nothing real behind them would misrepresent what this app can actually do today. Voice now has a real settings dialog (Provider/API Key/Test Connection/Refresh Voices/Voice Mapping) — see STUDIO_PLAN.md's Voice Settings phase — but no synthesize-speech pipeline exists yet, so a saved Voice Mapping is not consumed by anything real today."
     }
+  },
+  "voiceSettings": {
+    "title": "Voice Settings",
+    "explainer": "Configure which voice/TTS provider this app talks to, list its available voices, and save a Speaker role to voice mapping. Non-secret settings (provider, base URL) are saved on this machine only; the API key is written directly to Windows Credential Manager and sent back only once you Save.",
+    "providerCustomApi": "Custom API",
+    "providerNtsGenAi": "NTS Gen AI",
+    "providerGptSoVits": "GPT-SoVITS",
+    "genderMale": "Male",
+    "genderFemale": "Female",
+    "genderOther": "Other",
+    "genderUnknown": "Unknown",
+    "providerSectionTitle": "Provider & Endpoint",
+    "providerLabel": "Provider",
+    "stubProviderHint": "This provider is not implemented yet — Test Connection and Refresh Voices will honestly report that, not a fabricated success.",
+    "baseUrlLabel": "Server API URL",
+    "baseUrlPlaceholder": "https://example.com/voice-api",
+    "credentialsSectionTitle": "API Key",
+    "keyConfigured": "Configured",
+    "keyNotConfigured": "Not configured",
+    "keyInputPlaceholder": "Paste API key…",
+    "savingKey": "Saving…",
+    "saveKeyButton": "Save Key",
+    "deleteKeyButton": "Delete Key",
+    "keyNeverRedisplayedNote": "For security, a saved key is never displayed again — only whether one is configured.",
+    "testSectionTitle": "Connection & Voices",
+    "testing": "Testing…",
+    "testButton": "Test Connection",
+    "loadingVoices": "Loading…",
+    "refreshVoicesButton": "Refresh Voices",
+    "mappingSectionTitle": "Voice Mapping",
+    "mappingNotConsumedNote": "Saved here for later use, but no voice-generation pipeline exists yet in this app — this mapping is not consumed by anything real today.",
+    "mappingNeedsVoicesTitle": "Refresh Voices above to map a role to one.",
+    "roleNamePlaceholder": "Role name (e.g. Narrator, Speaker A)",
+    "selectVoicePlaceholder": "Select a voice…",
+    "addMappingButton": "Add",
+    "noMappingsYet": "No role mappings yet.",
+    "removeMappingButton": "Remove",
+    "close": "Close"
   },
   "workerPool": {
     "ariaLabel": "Worker pool status",
